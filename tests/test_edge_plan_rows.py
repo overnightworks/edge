@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from edge import releases
+from edge.appkit_step import TARGETS, AppkitPlan
 from edge.apps import (
     AppKind,
     AppPlan,
@@ -35,7 +36,7 @@ from edge.plan import Plan
 from edge.plan_rows import LegalEvent, PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import DETAIL_INDENT, EVENT_WIDTH, Glyph, Group, Row, counted
+from hal_output import DETAIL_INDENT, EVENT_WIDTH, Glyph, Group, Row, counted, write_groups
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
@@ -58,12 +59,15 @@ def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
 
 NO_REALM = RealmPlan()
 NO_LEGAL = LegalPlan(Path(), Path(), {}, {})
+REPOSITORY = Path("/repository")
+NO_APPKIT = AppkitPlan("0.5.0", Path(), REPOSITORY, (), ())
 
 
 def groups_of(
     images: tuple[KeptImage, ...] = (),
     realm: RealmPlan = NO_REALM,
     legal: LegalPlan = NO_LEGAL,
+    appkit: AppkitPlan = NO_APPKIT,
     **parts: Any,
 ) -> tuple[Group, ...]:
     units = {
@@ -77,6 +81,7 @@ def groups_of(
         images=list(images),
         realm=realm,
         legal=legal,
+        appkit=appkit,
         built=list(units.pop("built", ())),
         recreates=list(units.pop("recreates", ())),
         plans=list(units.pop("unit_plans", ())),
@@ -701,3 +706,106 @@ def test_the_legal_rows_stand_first_in_a_group_without_a_heading() -> None:
     groups = groups_of(legal=legal_plan({"datenschutz": PageChange.NEW}))
 
     assert [group.heading for group in groups] == [None, *PlanGroup]
+
+
+def appkit_plan(changed_labels: tuple[str, ...] = (), stale: tuple[str, ...] = ()) -> AppkitPlan:
+    changed = tuple(
+        target.served(REPOSITORY, "0.5.0") for target in TARGETS if target.label in changed_labels
+    )
+    return AppkitPlan("0.5.0", Path(), REPOSITORY, changed, tuple(Path(path) for path in stale))
+
+
+ALL_LABELS = tuple(target.label for target in TARGETS)
+
+
+@pytest.mark.parametrize(
+    ("plan", "expected"),
+    [
+        pytest.param(appkit_plan(), [], id="unchanged prints nothing"),
+        pytest.param(
+            appkit_plan(ALL_LABELS),
+            [Row(Glyph.ADD, "appkit", PlanEvent.NEW_FILES, "0.5.0")],
+            id="every target changed",
+        ),
+        pytest.param(
+            appkit_plan(("login theme",)),
+            [Row(Glyph.ADD, "appkit", PlanEvent.NEW_FILES, "0.5.0 · only login theme")],
+            id="one target changed",
+        ),
+        pytest.param(
+            appkit_plan(("login theme", "account theme")),
+            [
+                Row(
+                    Glyph.ADD,
+                    "appkit",
+                    PlanEvent.NEW_FILES,
+                    "0.5.0 · only login theme, account theme",
+                )
+            ],
+            id="two targets changed",
+        ),
+        pytest.param(
+            appkit_plan(stale=("legal/assets/appkit-0.4.0",)),
+            [Row(Glyph.REMOVE, "appkit", PlanEvent.OLD_FILES, "appkit-0.4.0")],
+            id="stale only, one name",
+        ),
+        pytest.param(
+            appkit_plan(
+                stale=(
+                    "legal/assets/appkit-0.4.0",
+                    "keycloak/themes/hallucinai/login/resources/appkit-0.3.0",
+                    "keycloak/themes/hallucinai/account/resources/appkit-0.4.0",
+                )
+            ),
+            [Row(Glyph.REMOVE, "appkit", PlanEvent.OLD_FILES, "appkit-0.3.0, appkit-0.4.0")],
+            id="stale only, two names sorted and unique",
+        ),
+        pytest.param(
+            appkit_plan(ALL_LABELS, stale=("legal/assets/appkit-0.4.0",)),
+            [Row(Glyph.ADD, "appkit", PlanEvent.NEW_FILES, "0.5.0 · removes appkit-0.4.0")],
+            id="changed plus stale",
+        ),
+        pytest.param(
+            appkit_plan(("account theme",), stale=("legal/assets/appkit-0.4.0",)),
+            [
+                Row(
+                    Glyph.ADD,
+                    "appkit",
+                    PlanEvent.NEW_FILES,
+                    "0.5.0 · only account theme · removes appkit-0.4.0",
+                )
+            ],
+            id="partial plus stale",
+        ),
+    ],
+)
+def test_the_appkit_step_is_one_row_naming_what_differs(
+    plan: AppkitPlan, expected: list[Row]
+) -> None:
+    assert list(groups_of(appkit=plan)[0].rows) == expected
+
+
+def test_the_appkit_row_stands_before_the_legal_rows_in_the_group_without_a_heading() -> None:
+    groups = groups_of(
+        appkit=appkit_plan(ALL_LABELS), legal=legal_plan({"datenschutz": PageChange.NEW})
+    )
+
+    assert [row.subject for row in groups[0].rows] == ["appkit", "legal"]
+
+
+def test_the_appkit_row_counts_toward_the_heading_threshold(capsys: pytest.CaptureFixture) -> None:
+    pages = {"datenschutz": PageChange.NEW}
+    plan_without = groups_of(legal=legal_plan(pages), plans=(app_plan(AppKind.ON),) * 4)
+    plan_with = groups_of(
+        appkit=appkit_plan(ALL_LABELS),
+        legal=legal_plan(pages),
+        plans=(app_plan(AppKind.ON),) * 4,
+    )
+
+    write_groups(plan_without)
+    without = capsys.readouterr().out
+    write_groups(plan_with)
+    with_appkit = capsys.readouterr().out
+
+    assert "apps" not in plain(without).splitlines()
+    assert "apps" in plain(with_appkit).splitlines()

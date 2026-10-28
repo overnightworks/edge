@@ -27,8 +27,10 @@ from test_edge_apply import (
     state,  # noqa: F401 the fixture, requested by name below
     switch,  # noqa: F401 the fixture, requested by name below
 )
+from test_edge_plan_rows import find_row
 
 from edge import appkit_step
+from edge.plan_rows import PlanEvent
 
 VERSION = metadata.version("overnightworks-appkit")
 
@@ -73,13 +75,14 @@ def test_a_fresh_checkout_names_the_new_directory_and_writes_every_target_after_
     declined_exit, declined_out, _ = world.switch(answer="no")
 
     assert declined_exit == 1
-    assert f"appkit {VERSION}: new" in declined_out
+    assert find_row(declined_out, "appkit", PlanEvent.NEW_FILES, VERSION)
+    assert "only" not in declined_out
     assert not any(target.exists() for target in world.targets)
 
     exit_code, out, err = world.switch()
 
     assert exit_code == 0, err
-    assert f"appkit {VERSION}: new" in out
+    assert find_row(out, "appkit", PlanEvent.NEW_FILES, VERSION)
     assert [files_of(target) for target in world.targets] == seeded
 
 
@@ -116,7 +119,7 @@ def test_a_second_apply_changes_nothing_and_says_so(world):
     exit_code, out, err = world.switch(answer="no")
 
     assert exit_code == 0, err
-    assert f"appkit {VERSION}: unchanged" in out
+    assert "appkit" not in out
     assert "nothing to change" in out
 
 
@@ -128,7 +131,7 @@ def test_a_damaged_target_is_named_and_the_others_stay_untouched(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"appkit {VERSION}: new" in out
+    assert find_row(out, "appkit", PlanEvent.NEW_FILES, f"{VERSION} · only login theme")
 
     written = []
 
@@ -153,7 +156,8 @@ def test_only_the_steps_own_stale_directories_are_removed_in_every_target(world)
 
     _, out, _ = world.switch(answer="no")
 
-    assert f"appkit {VERSION}: unchanged, removes {', '.join(sorted(stale))}" in out
+    assert find_row(out, "appkit", PlanEvent.OLD_FILES, "appkit-0.4.0")
+    assert "appkit-0.4.0, appkit-0.4.0" not in out
     assert all((world.repository / path).is_dir() for path in stale)
 
     exit_code, _, err = world.switch()
