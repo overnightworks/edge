@@ -5,6 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 
+from hal_output.command import Verb
+
 
 class ExitCode(IntEnum):
     OK = 0
@@ -24,7 +26,7 @@ class Asks(Enum):
 
 @dataclass(frozen=True)
 class Command:
-    name: str
+    name: Verb
     summary: str
     run: Callable[[argparse.Namespace], ExitCode]
     configure: Callable[[argparse.ArgumentParser], None]

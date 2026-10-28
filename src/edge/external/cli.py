@@ -11,6 +11,7 @@ from typing import Any
 
 from edge import catalog, checkout
 from edge.external import apply, cloudflare_read, host_check, host_probe, secrets, tofu
+from hal_output.command import Verb, command
 
 INTERRUPTED = 130
 
@@ -149,12 +150,13 @@ def _exit_after_interrupt(run: _ApplyRun) -> int:
     return apply.ApplyExit.REFUSED
 
 
+_RUN_HOSTS_CHECK = command(Verb.CHECK, "hosts")
 _CLOSING_LINES = {
     (apply.ClosingCheck.CHECK_NO_CHANGES, host_check.CheckExit.CANNOT_CHECK): (
         "the host check could not run"
     ),
     (apply.ClosingCheck.CHECK_NO_CHANGES, INTERRUPTED): (
-        "the host check was interrupted; run hal check hosts"
+        f"the host check was interrupted; run {_RUN_HOSTS_CHECK}"
     ),
     (apply.ClosingCheck.CHECK_APPLIED, host_check.CheckExit.FINDINGS): (
         "applied; the host check has findings, see above"
@@ -163,7 +165,7 @@ _CLOSING_LINES = {
         "applied, but the host check could not run"
     ),
     (apply.ClosingCheck.CHECK_APPLIED, INTERRUPTED): (
-        "applied; the host check was interrupted; run hal check hosts"
+        f"applied; the host check was interrupted; run {_RUN_HOSTS_CHECK}"
     ),
     (apply.ClosingCheck.CHECK_APPLY_FAILED, host_check.CheckExit.CLEAN): (
         "the apply failed; the host check ran"
@@ -175,7 +177,7 @@ _CLOSING_LINES = {
         "the apply failed; the host check could not run"
     ),
     (apply.ClosingCheck.CHECK_APPLY_FAILED, INTERRUPTED): (
-        "the apply failed; the host check was interrupted; run hal check hosts"
+        f"the apply failed; the host check was interrupted; run {_RUN_HOSTS_CHECK}"
     ),
 }
 

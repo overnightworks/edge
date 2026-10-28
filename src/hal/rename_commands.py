@@ -20,6 +20,7 @@ from hal import rename_rows
 from hal.grammar import Asks, Command, ExitCode
 from hal.rename_rows import Finding, StepKind, StepRow
 from hal_output import printable, write_error
+from hal_output.command import Verb, command
 from home_tools.layout import Layout, registered_worktrees
 
 OWNER = "overnightworks"
@@ -715,12 +716,12 @@ def _execute(steps: Sequence[Step], home: Path) -> Halfway | None:
 def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
     write_error(
         f"stopped halfway at `{halfway.failed.description}`: {halfway.reason}; "
-        f"fix the cause and run `hal rename {old} {new} --apply` again to finish"
+        f"fix the cause and run `{command(Verb.RENAME, old, new, '--apply')}` again to finish"
     )
     for label, steps in (("done", halfway.done), ("not done", halfway.pending)):
         for step in steps:
             print(printable(f"{label}: {step.description}"), file=sys.stderr)
-    print(f"next: hal rename {new} {old} --apply", file=sys.stderr)
+    print(f"next: {command(Verb.RENAME, new, old, '--apply')}", file=sys.stderr)
 
 
 def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
@@ -763,7 +764,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
 
 COMMANDS = (
     Command(
-        "rename",
+        Verb.RENAME,
         "move the clones of a repository renamed on GitHub (shows first, --apply moves)",
         _run,
         _configure,

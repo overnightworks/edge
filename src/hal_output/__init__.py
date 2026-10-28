@@ -1,6 +1,6 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of a row, a verdict, an error and the indented detail lines under a row. It
-imports nothing else of this repository."""
+to show, and the form of a row, a verdict, an error and the indented detail lines under a row.
+`hal_output.command` owns the program name. It imports nothing else of this repository."""
 
 import os
 import sys

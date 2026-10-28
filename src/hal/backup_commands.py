@@ -15,8 +15,10 @@ from edge_backup.runner import Interrupted, StepFailed
 from edge_backup.settings import Settings
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
+from hal_output.command import Verb, command
 
-HAL_BACKUP = "hal backup"
+HAL_BACKUP = command(Verb.BACKUP)
+HAL_RESTORE = command(Verb.RESTORE)
 Ended = StepFailed | Interrupted | KeyboardInterrupt
 
 Step = Callable[[Settings, argparse.Namespace], None]
@@ -103,15 +105,13 @@ def _backup(arguments: argparse.Namespace) -> ExitCode:
 def _restore(arguments: argparse.Namespace) -> ExitCode:
     step = _restore_step(arguments)
     tell_ended = (
-        _tell_restore_test_ended
-        if step is steps.restore_test
-        else _tell_ended_plainly("hal restore")
+        _tell_restore_test_ended if step is steps.restore_test else _tell_ended_plainly(HAL_RESTORE)
     )
-    return _run("hal restore", step, arguments, tell_ended)
+    return _run(HAL_RESTORE, step, arguments, tell_ended)
 
 
 def _tell_restore_test_ended(ended: Ended) -> None:
-    next_step = "hal restore --test"
+    next_step = command(Verb.RESTORE, "--test")
     match ended:
         case StepFailed():
             write_error(ended.error_line or str(ended), ended.next_step or next_step)
@@ -173,7 +173,7 @@ def _run(
 
 COMMANDS = (
     Command(
-        "backup",
+        Verb.BACKUP,
         "dump, scan and back up every app (or one), then forget, prune and check",
         _backup,
         _configure_backup,
@@ -181,7 +181,7 @@ COMMANDS = (
         asks=Asks.NEVER,
     ),
     Command(
-        "restore",
+        Verb.RESTORE,
         "restore one app's backup, prove the backups with --test, or list them with --list",
         _restore,
         _configure_restore,

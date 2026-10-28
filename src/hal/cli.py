@@ -16,6 +16,7 @@ from hal import (
 )
 from hal.grammar import Command, ExitCode
 from hal_output import write_error
+from hal_output.command import PROGRAM
 
 DESCRIPTION = "hal, the daily door of the workstation."
 COMMANDS = (
@@ -45,10 +46,10 @@ class _Parser(argparse.ArgumentParser):
 
 
 def build_parser(commands: Sequence[Command]) -> argparse.ArgumentParser:
-    parser = _Parser(prog="hal", description=DESCRIPTION)
+    parser = _Parser(prog=PROGRAM, description=DESCRIPTION)
     registry = parser.add_subparsers(dest="command", metavar="command", required=True)
     for command in commands:
-        subparser = registry.add_parser(command.name, help=command.summary)
+        subparser = registry.add_parser(command.name.value, help=command.summary)
         command.configure(subparser)
         if command.json:
             subparser.add_argument("--json", action="store_true", help="print the result as JSON")

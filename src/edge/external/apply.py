@@ -20,13 +20,14 @@ from typing import Any, TextIO
 
 from edge import catalog, terminal
 from edge.external import host_probe, secrets, tofu
+from hal_output.command import Verb, command
 
 PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
 _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
 _OWNED_SUFFIXES = {_PLAN_SUFFIX, _LOCK_SUFFIX}
 _STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
-UNCHECKED_CONSEQUENCE = "live services may be partly changed; run hal check hosts"
+UNCHECKED_CONSEQUENCE = f"live services may be partly changed; run {command(Verb.CHECK, 'hosts')}"
 
 
 class ApplyExit(IntEnum):

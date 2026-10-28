@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Protocol
 
 from hal_output import Glyph, Noun, Row, Verdict, write_error, write_row, write_verdict
+from hal_output.command import Verb, command
 
 
 class Event(StrEnum):
@@ -101,7 +102,7 @@ def write_plan(
         fact = _home_as_tilde(row.fact, home)
         write_row(Row(Glyph.CHANGE, subject, planned, fact))
     write_findings(findings, home)
-    next_step = f"hal rename {old} {new} --apply"
+    next_step = command(Verb.RENAME, old, new, "--apply")
     write_verdict(Verdict(Glyph.UNCHANGED, "plan only, nothing changed", (), next_step=next_step))
 
 
