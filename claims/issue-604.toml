@@ -1,8 +1,0 @@
-claim_id = "4c14a54bfd744040932df8fb1d93d866"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "9d5f9ac30f4e3ed22c3ed5ab395f87ae891cbdda"
-branch = "claude/issue-604-s9c-exposure-rows"
-scope = ["docs/backup.md", "docs/design/hal-output.html", "probe/keycloak/README.md", "src/edge_check/inspection.py", "src/hal/check_commands.py", "src/hal/exposure_rows.py", "tests/test_edge_check.py", "tests/test_hal_check.py"]
-opened_commit = "2c020ca7e6cf6bb247d578dc18c9c9365d24459d"
-whole_reason = "The exposure rows land together with the deletion of the table and its pins: the new rows, the removed table helpers, the moved tests and the docs and picture that name the old table, so nothing prints twice and no part keeps its old words."
