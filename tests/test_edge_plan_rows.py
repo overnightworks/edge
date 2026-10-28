@@ -2,6 +2,7 @@
 from typed fields, and the `find_row` helper the apply tests share."""
 
 import re
+from enum import StrEnum
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -31,10 +32,10 @@ from edge.core import (
 )
 from edge.legal_step import BlockChange, Change, LegalPlan, PageChange
 from edge.plan import Plan
-from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
+from edge.plan_rows import LegalEvent, PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import DETAIL_INDENT, Glyph, Group, Row
+from hal_output import DETAIL_INDENT, EVENT_WIDTH, Glyph, Group, Row, counted
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
@@ -100,23 +101,28 @@ def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
     return groups_of(**plan)[2].rows
 
 
-def find_row(out: str, subject: str, event: PlanEvent, fact: str = "") -> re.Match[str] | None:
-    plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+def plain(out: str) -> str:
+    """The output without colour."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", out)
+
+
+def find_row(out: str, subject: str, event: StrEnum, fact: str = "") -> re.Match[str] | None:
     pattern = (
         rf"^  \S {re.escape(subject)} +(?:\d+ )?{re.escape(str(event))}s?\b.*{re.escape(fact)}"
     )
-    return re.search(pattern, plain, re.MULTILINE)
+    return re.search(pattern, plain(out), re.MULTILINE)
 
 
 def detail_lines(out: str) -> list[str]:
     """The lines indented under a row, without colour."""
-    plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
     return [
-        line[len(DETAIL_INDENT) :] for line in plain.splitlines() if line.startswith(DETAIL_INDENT)
+        line[len(DETAIL_INDENT) :]
+        for line in plain(out).splitlines()
+        if line.startswith(DETAIL_INDENT)
     ]
 
 
-def row_at(out: str, subject: str, event: PlanEvent, fact: str = "") -> int:
+def row_at(out: str, subject: str, event: StrEnum, fact: str = "") -> int:
     row = find_row(out, subject, event, fact)
     assert row, out
     return row.start()
@@ -602,7 +608,7 @@ def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_
 
 def legal_plan(
     changed: dict[str, PageChange], blocks: dict[str, tuple[BlockChange, ...]] | None = None
-):
+) -> LegalPlan:
     return LegalPlan(Path(), Path(), {page: "" for page in changed}, changed, blocks or {})
 
 
@@ -615,12 +621,12 @@ FRAME = "legal/frame/datenschutz.html"
     [
         pytest.param(
             legal_plan({"datenschutz": PageChange.NEW}),
-            [Row(Glyph.ADD, "legal", PlanEvent.NEW_PAGE, "datenschutz", 1)],
+            [Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "datenschutz", 1)],
             id="one new page",
         ),
         pytest.param(
             legal_plan({"datenschutz": PageChange.NEW, "nutzungsbedingungen": PageChange.NEW}),
-            [Row(Glyph.ADD, "legal", PlanEvent.NEW_PAGE, "datenschutz, nutzungsbedingungen", 2)],
+            [Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "datenschutz, nutzungsbedingungen", 2)],
             id="several new pages",
         ),
         pytest.param(
@@ -638,17 +644,17 @@ FRAME = "legal/frame/datenschutz.html"
                 Row(
                     Glyph.CHANGE,
                     "legal",
-                    PlanEvent.CHANGED_PAGE,
+                    LegalEvent.EDITED_PAGE,
                     "datenschutz",
                     1,
                     (f"{FRAME} changed", f"{SECTION}#agent-dienst changed", f"{SECTION}#alt left"),
                 )
             ],
-            id="a changed page with frame, changed and left lines",
+            id="a edited page with frame, changed and left lines",
         ),
         pytest.param(
             legal_plan({"datenschutz": PageChange.UNRECORDED, "impressum": PageChange.UNRECORDED}),
-            [Row(Glyph.CHANGE, "legal", PlanEvent.NEW_RECORD, "datenschutz, impressum", 2)],
+            [Row(Glyph.CHANGE, "legal", LegalEvent.NEW_RECORD, "datenschutz, impressum", 2)],
             id="records only",
         ),
         pytest.param(
@@ -661,24 +667,34 @@ FRAME = "legal/frame/datenschutz.html"
                 {"b": (BlockChange(SECTION, Change.NEW, "x"),)},
             ),
             [
-                Row(Glyph.ADD, "legal", PlanEvent.NEW_PAGE, "c", 1),
+                Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "c", 1),
                 Row(
                     Glyph.CHANGE,
                     "legal",
-                    PlanEvent.CHANGED_PAGE,
+                    LegalEvent.EDITED_PAGE,
                     "b",
                     1,
                     (f"{SECTION}#x new",),
                 ),
-                Row(Glyph.CHANGE, "legal", PlanEvent.NEW_RECORD, "a", 1),
+                Row(Glyph.CHANGE, "legal", LegalEvent.NEW_RECORD, "a", 1),
             ],
             id="the kinds stand new, changed, record",
         ),
         pytest.param(legal_plan({}), [], id="nothing changes"),
     ],
 )
-def test_the_legal_pages_are_one_row_per_kind_with_a_count(plan, expected) -> None:
+def test_the_legal_pages_are_one_row_per_kind_with_a_count(
+    plan: LegalPlan, expected: list[Row]
+) -> None:
     assert list(groups_of(legal=plan)[0].rows) == expected
+
+
+@pytest.mark.parametrize("event", list(LegalEvent))
+@pytest.mark.parametrize("count", [1, 2, 3])
+def test_every_legal_event_with_a_count_fits_the_event_column(
+    event: LegalEvent, count: int
+) -> None:
+    assert len(counted(count, event)) <= EVENT_WIDTH
 
 
 def test_the_legal_rows_stand_first_in_a_group_without_a_heading() -> None:

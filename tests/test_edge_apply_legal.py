@@ -35,9 +35,9 @@ from test_edge_apply import (
     unreadable_profile_bind,  # noqa: F401 the fixture, requested by name below
     write_fleet,
 )
-from test_edge_plan_rows import detail_lines, find_row
+from test_edge_plan_rows import detail_lines, find_row, plain
 
-from edge.plan_rows import PlanEvent
+from edge.plan_rows import LegalEvent
 
 FLEET = (
     f"cloudflare:\n  zone: {ZONE}\nservices:\n"
@@ -49,10 +49,6 @@ THE_PAGES = [".gitkeep", "datenschutz.html", "impressum.html", "nutzungsbedingun
 PRIVACY = "legal/sections/allgemein/datenschutz.html"
 AGENT = "legal/sections/agent-service/datenschutz.html"
 NEW_HEADING = b'<h2 id="neu">Neu</h2>\n<p>Text</p>\n'
-
-
-def plain(out: str) -> str:
-    return re.sub(r"\x1b\[[0-9;]*m", "", out)
 
 
 @dataclass
@@ -118,7 +114,9 @@ def test_the_first_apply_names_and_writes_the_three_pages_readable_by_the_unit(w
     exit_code, out, err = world.switch()
 
     assert exit_code == 0, err
-    assert find_row(out, "legal", PlanEvent.NEW_PAGE, "impressum, datenschutz, nutzungsbedingungen")
+    assert find_row(
+        out, "legal", LegalEvent.NEW_PAGE, "impressum, datenschutz, nutzungsbedingungen"
+    )
     assert re.search(r"^  \+ legal +3 new pages ", plain(out), re.MULTILINE)
     assert detail_lines(out) == []
     assert world.built_names() == THE_PAGES
@@ -151,14 +149,14 @@ def test_a_changed_text_goes_live_only_after_yes_and_the_plan_names_its_page(wor
     declined_exit, declined_out, _ = world.switch(answer="no")
 
     assert declined_exit == 1
-    assert find_row(declined_out, "legal", PlanEvent.CHANGED_PAGE, "datenschutz")
+    assert find_row(declined_out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert "nutzungsbedingungen" not in declined_out
     assert 'id="neu"' not in world.built_page("datenschutz")
 
     exit_code, out, _ = world.switch()
 
     assert exit_code == 0
-    assert find_row(out, "legal", PlanEvent.CHANGED_PAGE, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert 'id="neu"' in world.built_page("datenschutz")
 
 
@@ -169,7 +167,7 @@ def test_the_plan_names_the_block_whose_text_changed_and_no_other(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert find_row(out, "legal", PlanEvent.CHANGED_PAGE, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert detail_lines(out) == [f"{AGENT}#agent-dienst changed"]
 
 
@@ -181,7 +179,7 @@ def test_the_plan_names_a_block_whose_title_was_only_shortened(world):
 
     _, out, _ = world.switch(answer="no")
 
-    assert find_row(out, "legal", PlanEvent.CHANGED_PAGE, "nutzungsbedingungen")
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "nutzungsbedingungen")
     assert detail_lines(out) == [f"{terms}#recht changed"]
 
 
@@ -222,7 +220,7 @@ def test_a_block_whose_catalog_entry_left_leaves_the_page(world):
     exit_code, out, _ = world.switch()
 
     assert exit_code == 0
-    assert find_row(out, "legal", PlanEvent.CHANGED_PAGE, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
     assert 'id="agent-dienst"' not in world.built_page("datenschutz")
 
 
@@ -259,8 +257,8 @@ def test_without_a_usable_record_the_plan_names_every_block_as_new(world, record
 
     _, out, _ = world.switch(answer="no")
 
-    assert find_row(out, "legal", PlanEvent.CHANGED_PAGE, "datenschutz")
-    assert find_row(out, "legal", PlanEvent.NEW_RECORD, "impressum, nutzungsbedingungen")
+    assert find_row(out, "legal", LegalEvent.EDITED_PAGE, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.NEW_RECORD, "impressum, nutzungsbedingungen")
     lines = detail_lines(out)
     assert f"{AGENT}#agent-dienst new" in lines
     assert f"{PRIVACY}#verantwortlicher new" in lines
@@ -277,7 +275,7 @@ def test_a_page_that_matches_is_planned_again_when_its_record_is_unusable(world,
         record_file.write_bytes(record)
 
     _, out, _ = world.switch(answer="no")
-    assert find_row(out, "legal", PlanEvent.NEW_RECORD, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.NEW_RECORD, "datenschutz")
     assert detail_lines(out) == []
 
     world.switch()
@@ -324,7 +322,7 @@ def test_the_imprint_plan_line_names_the_page_and_no_block(world):
     """L3."""
     _, out, _ = world.switch(answer="no")
 
-    assert find_row(out, "legal", PlanEvent.NEW_PAGE, "impressum")
+    assert find_row(out, "legal", LegalEvent.NEW_PAGE, "impressum")
     assert detail_lines(out) == []
 
 
@@ -335,7 +333,7 @@ def test_a_unit_switched_off_by_edge_stop_still_gets_its_pages_written(world):
     exit_code, out, _ = world.switch()
 
     assert exit_code == 0
-    assert find_row(out, "legal", PlanEvent.NEW_PAGE, "datenschutz")
+    assert find_row(out, "legal", LegalEvent.NEW_PAGE, "datenschutz")
     assert world.built_names() == THE_PAGES
 
 

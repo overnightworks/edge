@@ -17,7 +17,7 @@ _DIGEST_SHOWN = 4
 _DEFINITION_CHANGED = "definition changed"
 
 
-class PlanEvent(TrailingNoun):
+class PlanEvent(StrEnum):
     RECREATE = "recreate"
     NOT_STARTED = "not started"
     STARTS_LATER = "starts later"
@@ -32,8 +32,11 @@ class PlanEvent(TrailingNoun):
     REALM_HELD = "realm held"
     REALM_LATER = "realm later"
     REALM_SKIPPED = "realm skipped"
+
+
+class LegalEvent(TrailingNoun):
     NEW_PAGE = "new page"
-    CHANGED_PAGE = "changed page"
+    EDITED_PAGE = "edited page"
     NEW_RECORD = "new record"
 
 
@@ -53,9 +56,9 @@ def plan_groups(plan: Plan) -> tuple[Group, ...]:
 
 
 _PAGE_ROWS = (
-    (PageChange.NEW, Glyph.ADD, PlanEvent.NEW_PAGE),
-    (PageChange.CHANGED, Glyph.CHANGE, PlanEvent.CHANGED_PAGE),
-    (PageChange.UNRECORDED, Glyph.CHANGE, PlanEvent.NEW_RECORD),
+    (PageChange.NEW, Glyph.ADD, LegalEvent.NEW_PAGE),
+    (PageChange.CHANGED, Glyph.CHANGE, LegalEvent.EDITED_PAGE),
+    (PageChange.UNRECORDED, Glyph.CHANGE, LegalEvent.NEW_RECORD),
 )
 
 
