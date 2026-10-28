@@ -125,7 +125,9 @@ def test_a_scan_that_cannot_run_is_a_failure_line_and_the_mail_says_so(
     assert "The Exposure check did not run." in message_of(mail_stub.sent[0]).get_content()
 
 
-def test_a_recovered_scan_is_reported_in_the_mail_as_running_again(clean_home, runner, mail_stub) -> None:
+def test_a_recovered_scan_is_reported_in_the_mail_as_running_again(
+    clean_home, runner, mail_stub
+) -> None:
     home_check(clean_home, runner, docker_script="exit 1")
 
     code = home_check(clean_home, runner)
@@ -139,7 +141,7 @@ def test_ctrl_c_during_the_scan_leaves_report_and_state_unchanged(
 ) -> None:
     layout = Layout(clean_home)
 
-    code = home_check(clean_home, runner, docker_script="kill -INT $PPID; exec sleep 5")
+    code = home_check(clean_home, runner, docker_script="kill -INT $PPID; exec tail -f /dev/null")
 
     assert code == 130
     assert not layout.check_report_file.exists()
