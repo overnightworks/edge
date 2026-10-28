@@ -247,7 +247,7 @@ path or file name.
   `last_successful_restore_test` no older than about 5 weeks.
 
 `hal backup` prints a row per app (`✓ <app>  backed up  <snapshot> · <size> · <time>` or `✗ <app>  not backed up  <reason>`;
-a failed app does not stop the others; the size is restic's `total_bytes_processed`, the source size, and the time is the app's whole span from readiness to the status write; a backup summary without the id or the size fails the app), a `repository` row (`pruned` after forget and check, `not pruned`
+a failed app does not stop the others; the size is restic's `total_bytes_processed`, the source size, and the time is the app's whole span from readiness to the status write; a backup summary without the id or the size fails the app), a `repository` row (`pruned  checked · <time>` after forget and check, the time being their span, `not pruned`
 when an app failed) and, on success, `✓ backup done · N apps · <time>`.
 
 `hal restore --test` prints the same way: `✓ <app>  restore proven  <snapshot>` or `✗ <app>  not proven  <reason>`
@@ -256,8 +256,10 @@ failed) and, on success, `✓ restore test done · N apps · <time>`; a failed a
 when one app ran, or `error: 1 of N apps not proven` when several did, and `next: hal restore --test <app>`; with
 `--snapshot` (one app, the realm step's call) it ends with `error: <app>: <reason>` instead.
 
-Exit 0: every phase succeeded. Exit 3: a run failed; `error: <app> not backed up` when one app ran, or
-`error: 1 of N apps not backed up` when several did, with `next: hal backup <app>` after the rows, or `error: <reason>` when the run failed before any app
+Exit 0: every phase succeeded. Exit 3: a run failed; `error: <app> not backed up · last good backup DD.MM. HH:MM` when one app ran, or
+`error: 1 of N apps not backed up · <app>'s last good backup DD.MM. HH:MM` when several did, with `next: hal backup <app>` after the rows
+(the first failed app's `last_successful_backup` from the status file, in local time and with the year when it is not this one; without one the fact reads `<app> has no good backup recorded`, or `no good backup recorded` when one app ran;
+`--pre-apply --json` keeps `error: <app>: <reason>`), or `error: <reason>` when the run failed before any app
 (`hal restore --list`, the real `hal restore`, `hal backup --init` and `--unlock` still print `error: hal <verb>: failed: …`). Exit 2: the flags do not fit together (`--pre-apply` without an app, for
 example); nothing ran. Exit 130: Ctrl-C or SIGTERM; `backup` and the restore test record it in the status file as interrupted.
 

@@ -6,6 +6,7 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TextIO
 
@@ -142,6 +143,15 @@ def format_duration(seconds: float) -> str:
         return f"{whole // SECONDS_PER_MINUTE}m{whole % SECONDS_PER_MINUTE:02d}s"
     minutes = whole % SECONDS_PER_HOUR // SECONDS_PER_MINUTE
     return f"{whole // SECONDS_PER_HOUR}h{minutes:02d}m"
+
+
+def format_moment(moment: datetime, now: datetime) -> str:
+    """The moment on this machine's wall clock: `18.10. 05:00`, with the year when it is not
+    the current one: `18.10.2026 05:00`."""
+    local = moment.astimezone()
+    if local.year == now.astimezone().year:
+        return f"{local:%d.%m. %H:%M}"
+    return f"{local:%d.%m.%Y %H:%M}"
 
 
 BYTE_UNITS = ("B", "KiB", "MiB", "GiB", "TiB")

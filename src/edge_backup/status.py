@@ -117,6 +117,9 @@ class Status:
     def snapshot_of(self, app: str) -> str | None:
         return self._history_of(app).last_snapshot_id
 
+    def last_backup_of(self, app: str) -> datetime | None:
+        return self._history_of(app).last_successful_backup
+
     def entering(self, phase: Phase) -> "Status":
         return replace(self, phase=phase)
 

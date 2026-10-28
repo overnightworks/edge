@@ -6,7 +6,7 @@ import json
 import os
 import stat
 import time
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,15 +39,6 @@ ALLOWED_PLATFORM_INSPECT_FORMAT = (
 )
 INSPECT_CANARY = "CANARY-ENV-VALUE-s3cr3t"
 CANARY_INSPECT_LINE = f"/{INSPECT_CANARY}\trunning\tunhealthy\t0\tedge\n"
-
-
-@pytest.fixture
-def berlin_time(monkeypatch) -> Iterator[None]:
-    monkeypatch.setenv("TZ", "Europe/Berlin")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
 
 
 def symlinked_folder_fix(place: str) -> str:
