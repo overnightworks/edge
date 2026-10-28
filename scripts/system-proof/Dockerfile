@@ -43,7 +43,8 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
         systemd \
         systemd-sysv \
     && update-alternatives --set sudo /usr/bin/sudo.ws \
-    && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output /tmp/kerneloops.deb "$KERNELOOPS_DEB_URL" \
+    && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+        --output /tmp/kerneloops.deb "$KERNELOOPS_DEB_URL" \
     && echo "$KERNELOOPS_DEB_SHA256  /tmp/kerneloops.deb" | sha256sum --check --strict \
     && apt-get install -y --no-install-recommends /tmp/kerneloops.deb \
     && rm /tmp/kerneloops.deb \
