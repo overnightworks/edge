@@ -1,0 +1,8 @@
+claim_id = "ce803637fc274e1db96b79c3f58ba011"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "2e0bfb35d4c78c57a9593f0240a7d05199ed794d"
+branch = "claude/issue-646-distribution-name"
+scope = [".github/workflows/ci.yml", "pyproject.toml", "tests/old_names_baseline.toml", "uv.lock"]
+opened_commit = "805b034afd4beb963176c486103c5796c5ce0b84"
+whole_reason = "The distribution's name, edge-check to overnightworks-hal, in the project metadata, the lock file, the CI wheel proof and the old-names baseline; the packages and the import contracts are H5f2."
