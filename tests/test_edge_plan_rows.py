@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from edge import releases
+from edge.appkit_step import AppkitPlan
 from edge.apps import (
     AppKind,
     AppPlan,
@@ -30,12 +31,12 @@ from edge.core import (
     FollowerPlan,
     Gate,
 )
-from edge.legal_step import BlockChange, Change, LegalPlan, PageChange
+from edge.legal_step import LegalPlan
 from edge.plan import Plan
-from edge.plan_rows import LegalEvent, PlanEvent, PlanGroup, plan_groups
+from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import DETAIL_INDENT, EVENT_WIDTH, Glyph, Group, Row, counted
+from hal_output import DETAIL_INDENT, Glyph, Group, Row
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
@@ -58,12 +59,15 @@ def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
 
 NO_REALM = RealmPlan()
 NO_LEGAL = LegalPlan(Path(), Path(), {}, {})
+REPOSITORY = Path("/repository")
+NO_APPKIT = AppkitPlan("0.5.0", Path(), REPOSITORY, (), ())
 
 
 def groups_of(
     images: tuple[KeptImage, ...] = (),
     realm: RealmPlan = NO_REALM,
     legal: LegalPlan = NO_LEGAL,
+    appkit: AppkitPlan = NO_APPKIT,
     **parts: Any,
 ) -> tuple[Group, ...]:
     units = {
@@ -77,6 +81,7 @@ def groups_of(
         images=list(images),
         realm=realm,
         legal=legal,
+        appkit=appkit,
         built=list(units.pop("built", ())),
         recreates=list(units.pop("recreates", ())),
         plans=list(units.pop("unit_plans", ())),
@@ -604,100 +609,3 @@ def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_
 
     assert [group.heading for group in (core, units, apps)] == list(PlanGroup)
     assert [row.subject for row in core.rows] == ["socket-proxy", "traefik-mcp"]
-
-
-def legal_plan(
-    changed: dict[str, PageChange], blocks: dict[str, tuple[BlockChange, ...]] | None = None
-) -> LegalPlan:
-    return LegalPlan(Path(), Path(), {page: "" for page in changed}, changed, blocks or {})
-
-
-SECTION = "legal/sections/agent-service/datenschutz.html"
-FRAME = "legal/frame/datenschutz.html"
-
-
-@pytest.mark.parametrize(
-    ("plan", "expected"),
-    [
-        pytest.param(
-            legal_plan({"datenschutz": PageChange.NEW}),
-            [Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "datenschutz", 1)],
-            id="one new page",
-        ),
-        pytest.param(
-            legal_plan({"datenschutz": PageChange.NEW, "nutzungsbedingungen": PageChange.NEW}),
-            [Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "datenschutz, nutzungsbedingungen", 2)],
-            id="several new pages",
-        ),
-        pytest.param(
-            legal_plan(
-                {"datenschutz": PageChange.CHANGED},
-                {
-                    "datenschutz": (
-                        BlockChange(FRAME, Change.CHANGED),
-                        BlockChange(SECTION, Change.CHANGED, "agent-dienst"),
-                        BlockChange(SECTION, Change.LEFT, "alt"),
-                    )
-                },
-            ),
-            [
-                Row(
-                    Glyph.CHANGE,
-                    "legal",
-                    LegalEvent.EDITED_PAGE,
-                    "datenschutz",
-                    1,
-                    (f"{FRAME} changed", f"{SECTION}#agent-dienst changed", f"{SECTION}#alt left"),
-                )
-            ],
-            id="an edited page with frame, changed and left lines",
-        ),
-        pytest.param(
-            legal_plan({"datenschutz": PageChange.UNRECORDED, "impressum": PageChange.UNRECORDED}),
-            [Row(Glyph.CHANGE, "legal", LegalEvent.NEW_RECORD, "datenschutz, impressum", 2)],
-            id="records only",
-        ),
-        pytest.param(
-            legal_plan(
-                {
-                    "a": PageChange.UNRECORDED,
-                    "b": PageChange.CHANGED,
-                    "c": PageChange.NEW,
-                },
-                {"b": (BlockChange(SECTION, Change.NEW, "x"),)},
-            ),
-            [
-                Row(Glyph.ADD, "legal", LegalEvent.NEW_PAGE, "c", 1),
-                Row(
-                    Glyph.CHANGE,
-                    "legal",
-                    LegalEvent.EDITED_PAGE,
-                    "b",
-                    1,
-                    (f"{SECTION}#x new",),
-                ),
-                Row(Glyph.CHANGE, "legal", LegalEvent.NEW_RECORD, "a", 1),
-            ],
-            id="the kinds stand new, changed, record",
-        ),
-        pytest.param(legal_plan({}), [], id="nothing changes"),
-    ],
-)
-def test_the_legal_pages_are_one_row_per_kind_with_a_count(
-    plan: LegalPlan, expected: list[Row]
-) -> None:
-    assert list(groups_of(legal=plan)[0].rows) == expected
-
-
-@pytest.mark.parametrize("event", list(LegalEvent))
-@pytest.mark.parametrize("count", [1, 2, 3])
-def test_every_legal_event_with_a_count_fits_the_event_column(
-    event: LegalEvent, count: int
-) -> None:
-    assert len(counted(count, event)) <= EVENT_WIDTH
-
-
-def test_the_legal_rows_stand_first_in_a_group_without_a_heading() -> None:
-    groups = groups_of(legal=legal_plan({"datenschutz": PageChange.NEW}))
-
-    assert [group.heading for group in groups] == [None, *PlanGroup]

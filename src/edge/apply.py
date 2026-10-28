@@ -688,9 +688,7 @@ def _say_interrupted(progress: Progress, interruption: KeyboardInterrupt) -> Non
 
 
 def _write_plan(planned: Plan) -> None:
-    """The plan as it stands: the strings of the parts not yet rows, then the rows."""
-    for line in planned.describe():
-        print(f"  {line}")
+    """The plan as it stands: all rows."""
     write_groups(plan_groups(planned))
 
 
