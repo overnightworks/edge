@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 from hal_output import Row
 from home_tools import hook_check, secrets_setup, secrets_view, setup
 from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
-from home_tools.config import Config
 from home_tools.layout import Layout
 from home_tools.report import ClosedBy, Tally
 
@@ -228,7 +227,7 @@ def render(plan: Plan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _next_from_args(_args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _next_from_args(_args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     sys.stdout.write(render(collect(layout, ports)))
     return 0
 
@@ -255,4 +254,4 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # It reads the secrets view, so an unexpected error is shown without its message, as `home secrets` does.
-    parser.set_defaults(handler=_next_from_args, error_may_quote_a_secret=True, reads_config_as_a_source=True)
+    parser.set_defaults(handler=_next_from_args, error_may_quote_a_secret=True)

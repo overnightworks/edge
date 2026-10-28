@@ -55,7 +55,6 @@ from home_tools.secrets_view import (
     stat_matches,
     unfit_folder,
 )
-from home_tools.config import Config
 from home_tools.layout import Layout
 
 if TYPE_CHECKING:
@@ -665,7 +664,7 @@ unerwarteter Fehler bei einem Geheimnis, 3 sonst unerwarteter Fehler, 130 abgebr
 """
 
 
-def _secrets_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     if args.setup:
         return run_setup(layout, ports.secrets_setup, ports.now)
     return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)
