@@ -42,8 +42,9 @@ read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
 `error: <what>` with, where there is a way on, one `next: <command>` line; the error form is
 `src/hal_output/__init__.py`, the exit codes are in `src/hal/grammar.py`, the fleet rules for command lines are overnightworks/quality#80. Agents run
 `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`
-([docs/architecture.md](docs/architecture.md), section 9). `hal rename OLD NEW [--apply]` moves a
-renamed repository's clones on this PC ([docs/naming.md](docs/naming.md), P1).
+([docs/architecture.md](docs/architecture.md), section 9). `hal rename OLD NEW [--dry-run]` moves a
+renamed repository's clones on this PC, asks one `yes` before it moves, and ends 0, 1 (declined or
+findings), 3 or 4 ([docs/naming.md](docs/naming.md), P1).
 The five stack commands and `hal setup` deviate from the grammar
 (Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints four rows, a verdict
 and, when it stops, an `error:`/`next:` pair, asks one `yes` before it acts (`--dry-run` only shows), and ends 0, 1 (declined), 3 or 4 (no terminal).

@@ -2,29 +2,10 @@
 findings and its refusals."""
 
 import pytest
-from rename_support import HTTPS, make_clone, squeezed
-from terminal_support import put_stdout_on_a_terminal
+from terminal_support import put_stdout_on_a_terminal, type_at_prompt
 
 from hal import cli
 from hal.grammar import ExitCode
-
-
-@pytest.fixture
-def through_cli(cli_world, capsys):
-    """`hal rename` through `hal.cli.main`, returning the exit code and the two streams."""
-
-    def run(*arguments: str):
-        code = cli.main(["rename", *arguments])
-        captured = capsys.readouterr()
-        return code, squeezed(captured.out), squeezed(captured.err)
-
-    return run
-
-
-@pytest.fixture
-def everything(home, locked) -> None:
-    """The clone with two worktrees, memory and a lock file, and a deploy checkout."""
-    make_clone(home / "old-live", HTTPS.format("old"))
 
 
 @pytest.mark.parametrize(
@@ -40,16 +21,16 @@ def everything(home, locked) -> None:
     ],
 )
 def test_the_plan_shows_one_row_for_each_kind_of_step(everything, through_cli, row):
-    code, out, _ = through_cli("old", "fresh")
+    code, out, _ = through_cli("old", "fresh", "--dry-run")
 
     assert code == ExitCode.OK
     assert row in out.splitlines()
 
 
 def test_the_plan_rows_follow_the_order_the_steps_run(everything, through_cli):
-    _, out, _ = through_cli("old", "fresh")
+    _, out, _ = through_cli("old", "fresh", "--dry-run")
 
-    assert [line.split()[1] for line in out.splitlines()[:-2]] == [
+    assert [line.split()[1] for line in out.splitlines()[:-1]] == [
         "clone",
         "worktrees",
         "origin",
@@ -60,14 +41,13 @@ def test_the_plan_rows_follow_the_order_the_steps_run(everything, through_cli):
     ]
 
 
-def test_the_plan_ends_with_its_verdict_and_the_command_that_applies_it(everything, through_cli):
-    code, out, _ = through_cli("old", "fresh")
+def test_a_dry_run_ends_with_its_verdict_and_the_command_that_runs_the_plan(
+    everything, through_cli
+):
+    code, out, _ = through_cli("old", "fresh", "--dry-run")
 
     assert code == ExitCode.OK
-    assert out.splitlines()[-2:] == [
-        "· plan only, nothing changed",
-        "next: hal rename old fresh --apply",
-    ]
+    assert out.splitlines()[-1] == "· plan only, nothing changed · run hal rename old fresh"
 
 
 def test_a_repository_without_a_clone_has_nothing_to_do(home, through_cli):
@@ -83,57 +63,46 @@ def test_a_finding_is_a_row_with_its_subject_and_leaves_the_exit_at_findings(
     link.parent.mkdir(parents=True)
     link.symlink_to(repository / "bin" / "tool")
 
-    code, out, _ = through_cli("old", "fresh")
+    code, out, _ = through_cli("old", "fresh", "--dry-run")
 
     assert code == ExitCode.FINDINGS
     assert "! link check ~/.local/bin/tool points into a moved clone" in out.splitlines()
 
 
-def test_the_next_line_of_a_plan_is_coloured_like_every_command_on_a_terminal(
-    everything, cli_world, monkeypatch
-):
+def test_the_yes_is_bold_in_the_prompt_on_a_terminal(everything, cli_world, monkeypatch):
     out = put_stdout_on_a_terminal(monkeypatch)
+    type_at_prompt(monkeypatch)
 
     cli.main(["rename", "old", "fresh"])
 
-    assert out.getvalue().splitlines()[-1] == "\x1b[36mnext:\x1b[0m hal rename old fresh --apply"
+    assert "Type \x1b[1myes\x1b[0m to apply 7 changes: " in out.getvalue()
 
 
-def test_an_apply_with_a_finding_ends_with_a_needs_you_verdict_that_counts_it(
+def test_the_yes_is_plain_without_colour(everything, cli_world, monkeypatch, capsys):
+    type_at_prompt(monkeypatch)
+
+    cli.main(["rename", "old", "fresh"])
+
+    assert "Type yes to apply 7 changes: " in capsys.readouterr().out
+
+
+def test_a_run_with_a_finding_ends_with_a_needs_you_verdict_that_counts_it(
     home, repository, through_cli
 ):
     link = home / ".local" / "bin" / "tool"
     link.parent.mkdir(parents=True)
     link.symlink_to(repository / "bin" / "tool")
 
-    code, out, _ = through_cli("old", "fresh", "--apply")
+    code, out, _ = through_cli("old", "fresh")
 
     assert code == ExitCode.FINDINGS
-    assert out.splitlines()[-1].startswith("! renamed old → fresh · ")
-    assert out.splitlines()[-1].endswith(", 1 finding")
-
-
-def test_an_apply_prints_each_step_as_done_and_ends_with_the_count(everything, through_cli):
-    code, out, err = through_cli("old", "fresh", "--apply")
-
-    assert code == ExitCode.OK
-    assert out.splitlines() == [
-        "✓ clone moved ~/git/old → ~/git/fresh",
-        "✓ worktrees moved ~/git/old-worktrees → ~/git/fresh-worktrees",
-        "✓ origin url set git@github.com:overnightworks/fresh.git",
-        "✓ worktrees repaired 2 in ~/git/fresh-worktrees",
-        "✓ memory moved Claude project memory of the clone",
-        "✓ origin url set https://github.com/overnightworks/fresh.git · deploy checkout ~/old-live",
-        "✓ venv uv synced in ~/git/fresh",
-        "✓ renamed old → fresh · 7 steps",
-    ]
-    assert err == ""
+    assert out.splitlines()[-1] == "! rename done · 5 changed, 1 finding · <1s"
 
 
 def test_a_refusal_says_why_nothing_changed_and_offers_no_next_step(repository, fakes, through_cli):
     fakes.known.clear()
 
-    code, out, err = through_cli("old", "fresh", "--apply")
+    code, out, err = through_cli("old", "fresh")
 
     assert code == ExitCode.REFUSED
     assert out == ""

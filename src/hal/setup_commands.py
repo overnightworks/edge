@@ -17,7 +17,8 @@ EXIT_OF_SETUP: dict[SetupEnd, ExitCode] = {
 }
 
 SETUP_DESCRIPTION = (
-    "Shows what is missing and asks you to type yes; with --dry-run it only shows."
+    "Shows what is missing and asks you to type yes; with --dry-run it only shows"
+    " (at a terminal sudo still checks the system)."
     " After the yes it sets up quality, the engines and the hook."
     " Then it links, reloads and enables the checkout's user units"
     " (the backup and hal-check timers), installs Ansible and runs the system step,"

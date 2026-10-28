@@ -10,7 +10,7 @@ from hal_output.command import Verb
 
 class ExitCode(IntEnum):
     OK = 0
-    FINDINGS = 1  # the command ran and found something that needs attention
+    FINDINGS = 1  # the command ran and found something that needs attention or the person declined
     USAGE = 2  # the command line is wrong
     FAILURE = 3  # the command could not do its job
     REFUSED = 4  # a guard of the command said no
@@ -39,6 +39,5 @@ def add_dry_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="only show what would change; skip the yes and change nothing "
-        "(at a terminal sudo still checks the system)",
+        help="only show what would change; skip the yes and change nothing",
     )

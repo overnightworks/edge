@@ -93,7 +93,9 @@ Rulings of overnightworks/edge#24 recorded in the table:
 
 1. Before: `aco status` in that repo shows no claim and no live lane.
 2. The operator approves; an agent runs `gh repo rename`.
-3. Run `hal rename OLD NEW` to see the moves, then `hal rename OLD NEW --apply`.
+3. The operator runs `hal rename OLD NEW` in their own terminal: it shows the moves, asks
+   `Type yes`, then moves (`--dry-run` only shows; an agent without a terminal can only
+   `--dry-run`).
    It moves every clone under `~/git` and its `-worktrees`, repairs the
    worktrees, sets `origin` to the new name (never re-clone: the local
    `refs/aco/state` and its fetch refspec must survive; aco reads the identity
@@ -106,7 +108,7 @@ Rulings of overnightworks/edge#24 recorded in the table:
    release and the interpreter install it comes from may change). It deletes nothing.
    It refuses, changing nothing, while a process runs inside a clone, a target
    exists, a symbolic link lies anywhere in a clone, worktree (inside or outside `~/git`,
-   as git lists it), `.venv` or target path, or GitHub does not know the new name. `hal rename NEW OLD` undoes it.
+   as git lists it), `.venv` or target path, or GitHub does not know the new name. `hal rename NEW OLD` undoes it and asks its own yes.
    A step that fails stops it, names the step and what is done; run the same
    command again once the cause is fixed and it finishes the half-moved clones.
 4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that

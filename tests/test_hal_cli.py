@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -218,6 +219,34 @@ def test_ctrl_c_while_git_runs_exits_130_without_a_traceback(tmp_path):
     assert_quiet_run(stdout, stderr)
 
 
+VALID_ARGUMENTS = {
+    "stop": ("unit",),
+    "start": ("unit",),
+    "rename": ("former", "current"),
+    "legal": ("key",),
+    "secrets": ("--by-service",),
+}
+"""The arguments that make a command's line valid; a command not named here needs none."""
+
+
+@pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
+def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypatch):
+    """The one verb grammar has `--dry-run` and no `--apply`; no alias is left."""
+
+    def forbidden(arguments):
+        raise AssertionError(f"hal {command.name} ran on --apply")
+
+    guarded = tuple(replace(one, run=forbidden) if one is command else one for one in cli.COMMANDS)
+    monkeypatch.setattr(cli, "COMMANDS", guarded)
+    line = [command.name, *VALID_ARGUMENTS.get(command.name, ()), "--apply"]
+    with pytest.raises(SystemExit) as stop:
+        cli.main(line)
+
+    captured = capsys.readouterr()
+    assert (stop.value.code, captured.out) == (ExitCode.USAGE, "")
+    assert captured.err.splitlines()[0] == "error: unrecognized arguments: --apply"
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -240,8 +269,7 @@ def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     the one form that reads no home and starts no probe."""
     tree = main_checkout(tmp_path)
 
-    extra_arguments = {"rename": ("former", "current"), "secrets": ("--by-service",)}
-    arguments = extra_arguments.get(command.name, ())
+    arguments = VALID_ARGUMENTS.get(command.name, ())
 
     result = run_hal(tmp_path, hal_program(tree, before=FORBIDDEN_STDIN), command.name, *arguments)
 
