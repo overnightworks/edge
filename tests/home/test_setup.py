@@ -363,19 +363,19 @@ def playbook_runs(sandbox: Sandbox) -> list[str]:
 
 
 def test_the_system_step_comes_after_the_activation_and_asks_for_sudo_once(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """Rule 2 and rule 5: --apply runs Ansible once, with one become prompt and the diff, and only after the activation."""
+    """Rule 2 and rule 5: --apply runs Ansible once, with the diff, and only after the activation; sudo asks, never Ansible."""
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
     assert (code, lines) == (0, FRESH_APPLY)
     assert argv[:2] == [str(sandbox.layout.ansible_playbook_executable), str(system_step.PLAYBOOK)]
-    assert (argv.count("--ask-become-pass"), "--diff" in argv, "--check" in argv) == (1, True, False)
+    assert ("--ask-become-pass" in argv, "--diff" in argv, "--check" in argv) == (False, True, False)
 
 
 def test_the_playbook_gets_home_and_the_tunnel_files_from_layout_and_the_running_user(
     sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Rule 5: @HOME@ and @OPERATOR_USER@ are extra vars from home's Layout and the running user, never facts gathered under become."""
+    """Rule 5: @HOME@ and @OPERATOR_USER@ are extra vars from home's Layout and the running user, never facts gathered as root."""
     run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
@@ -691,38 +691,97 @@ def fake_ansible(tmp_path: Path, script: str) -> Path:
     return playbook
 
 
-def test_the_runner_shows_ansibles_output_and_reads_its_recap(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
-    """Rule 4: the output reaches the terminal as it comes, and the run is judged by its recap."""
+class StubSudo:
+    """A `sudo` first on PATH: it writes one line per call (its argv, working directory and every ANSIBLE_* it received), then runs the rest.
+
+    `-k` only forgets a ticket, so it is recorded and not executed.
+    """
+
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.log = tmp_path / "sudo.log"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sudo = bin_dir / "sudo"
+        sudo.write_text(
+            "#!/bin/sh\n"
+            f'echo "$* | $(pwd) | $(env | grep \'^ANSIBLE_\' | tr \'\\n\' \' \')" >> {self.log}\n'
+            '[ "$1" = "-k" ] && exit 0\n'
+            'exec "$@"\n'
+        )
+        sudo.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+
+    def calls(self) -> list[list[str]]:
+        return [[part.strip() for part in line.split(" | ")] for line in self.log.read_text().splitlines()]
+
+
+@pytest.fixture
+def stub_sudo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StubSudo:
+    return StubSudo(tmp_path, monkeypatch)
+
+
+def test_the_runner_shows_ansibles_output_and_reads_its_recap(tmp_path: Path, stub_sudo: StubSudo, capfd: pytest.CaptureFixture[str]) -> None:
+    """The output reaches the terminal as it comes, and the run is judged by its recap."""
     playbook = fake_ansible(tmp_path, "echo 'TASK [Write edge files]'")
 
-    run = system_step.run_playbook([str(playbook)])
+    run = system_step.run_playbook_as_root([str(playbook)])
 
     assert run == PlaybookRun(True, 2)
     assert "TASK [Write edge files]" in capfd.readouterr().out
 
 
-def test_a_run_leaves_no_ansible_state_in_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
-    """Head ruling 18.10.2026 and rule 4 (the runner): Ansible's home and temp live in a run-scoped directory.
+def test_the_play_runs_under_sudo_in_its_own_directory_and_sudo_forgets_the_ticket_after_it(tmp_path: Path, stub_sudo: StubSudo) -> None:
+    """Ruled E1: one sudo call runs the play; `sudo -k` follows it, so no ticket outlives `hal setup --apply`."""
+    playbook = fake_ansible(tmp_path, "true")
 
-    So no `~/.ansible` is left for `hal check` to flag.
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("ANSIBLE_NOCOLOR", "0")
-    seen = tmp_path / "seen"
-    playbook = fake_ansible(
-        tmp_path,
-        f'mkdir -p "${{ANSIBLE_HOME:-$HOME/.ansible}}" "${{ANSIBLE_LOCAL_TEMP:-$HOME/.ansible/tmp}}"\n'
-        f'echo "$ANSIBLE_HOME $ANSIBLE_NOCOLOR $ANSIBLE_STDOUT_CALLBACK" > {seen}',
-    )
+    system_step.run_playbook_as_root([str(playbook), "--diff"])
 
-    assert system_step.run_playbook([str(playbook)]) == PlaybookRun(True, 2)
+    play_call, forget_call = stub_sudo.calls()
+    assert play_call[0] == f"{playbook} --diff"
+    assert play_call[1] == str(system_step.PLAYBOOK.parent)
+    assert forget_call[0] == "-k"
 
-    ansible_home, nocolor, callback = seen.read_text().split()
-    assert list(home.iterdir()) == []
-    assert not Path(ansible_home).exists()
-    assert (nocolor, callback) == ("1", "default")
+
+def test_no_ansible_variable_reaches_the_play_and_no_become_prompt_is_asked(
+    tmp_path: Path, stub_sudo: StubSudo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sudo's own configuration cannot let the operator's ANSIBLE_CONFIG or callback override the packaged one."""
+    monkeypatch.setenv("ANSIBLE_STDOUT_CALLBACK", "json")
+    monkeypatch.setenv("ANSIBLE_CONFIG", str(tmp_path / "other.cfg"))
+    playbook = fake_ansible(tmp_path, "true")
+
+    system_step.run_playbook_as_root([str(playbook)])
+
+    play_call = stub_sudo.calls()[0]
+    assert play_call[2] == ""
+    assert "--ask-become-pass" not in play_call[0]
+
+
+def test_sudo_forgets_the_ticket_after_a_failing_play(tmp_path: Path, stub_sudo: StubSudo) -> None:
+    playbook = fake_ansible(tmp_path, "exit 2")
+
+    run = system_step.run_playbook_as_root([str(playbook)])
+
+    assert not run.succeeded
+    assert stub_sudo.calls()[-1][0] == "-k"
+
+
+def test_sudo_forgets_the_ticket_after_a_ctrl_c(tmp_path: Path, stub_sudo: StubSudo) -> None:
+    playbook = fake_ansible(tmp_path, "kill -INT $PPID")
+
+    with pytest.raises(KeyboardInterrupt):
+        system_step.run_playbook_as_root([str(playbook)])
+
+    assert stub_sudo.calls()[-1][0] == "-k"
+
+
+def test_a_missing_sudo_fails_alone_without_a_ticket_to_forget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    with pytest.raises(FileNotFoundError) as refusal:
+        system_step.run_playbook_as_root(["ansible-playbook"])
+
+    assert refusal.value.__context__ is None
 
 
 def run_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, list[str], str]:
