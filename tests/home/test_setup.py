@@ -65,7 +65,7 @@ name = "opentofu/passphrase"
 kind = "service-password"
 paths = ["~/.secrets/opentofu/passphrase"]
 read_by = ["hal apply"]
-recreate = "hal secrets --setup"
+recreate = "hal setup --apply"
 '''
 
 
@@ -525,7 +525,7 @@ def test_the_playbook_ships_inside_the_package() -> None:
 
 
 @pytest.mark.parametrize(
-    ("applied_before", "expected", "recorded"),
+    ("applied_before", "expected"),
     [
         (
             False,
@@ -535,25 +535,22 @@ def test_the_playbook_ships_inside_the_package() -> None:
                 UP_TO_DATE[3],
                 "~ setup plan · 1 open, 3 unchanged · 47s · run hal setup --apply",
             ],
-            False,
         ),
-        (True, UP_TO_DATE, True),
+        (True, UP_TO_DATE),
     ],
     ids=["something to change", "nothing to change"],
 )
-def test_a_dry_run_at_a_terminal_checks_with_ansible_and_only_unchanged_counts_as_verified(
-    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], applied_before: bool, expected: list[str], recorded: bool
+def test_a_dry_run_at_a_terminal_checks_with_ansible_and_shows_whether_the_system_step_would_change(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], applied_before: bool, expected: list[str]
 ) -> None:
-    """E1 and rule 7: the dry run asks once for sudo through Ansible's check mode; only `unchanged` records a verified run."""
+    """E1 and rule 7: the dry run asks once for sudo through Ansible's check mode."""
     run_setup(sandbox, capsys, "--apply")
-    sandbox.layout.system_step_record.unlink()
     sandbox.system.playbook.applied = applied_before
 
     code, lines, _ = run_setup(sandbox, capsys)
 
     assert (code, lines) == (0, expected)
     assert playbook_runs(sandbox) == ["apply", "check"]
-    assert sandbox.layout.system_step_record.exists() is recorded
 
 
 def test_without_a_terminal_the_dry_run_says_not_checked_and_never_starts_ansible(
@@ -637,7 +634,6 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
         f"next: {RERUN}",
     ]
     assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
-    assert not sandbox.layout.system_step_record.exists()
 
 
 def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:

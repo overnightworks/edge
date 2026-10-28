@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from hal import check_commands
+from hal import check_commands, secrets_commands
 from hal import cli as hal_cli
 from hal import config as hal_config
 from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
@@ -43,7 +43,7 @@ CANARY_INSPECT_LINE = f"/{INSPECT_CANARY}\trunning\tunhealthy\t0\tedge\n"
 
 
 def symlinked_folder_fix(place: str) -> str:
-    """The command `home secrets` names for a symlink on the way to a secret: the folder it points to, or a new one, takes its place."""
+    """The command `hal secrets` names for a symlink on the way to a secret: the folder it points to, or a new one, takes its place."""
     real_folder = f'if [ -e "$t" ]; then mv -T "$t" {place}; else mkdir {place}; fi'
     return f"t=$(readlink -m {place}) && rm {place} && {real_folder} && chmod 700 {place}"
 
@@ -115,7 +115,7 @@ def stand_in_tunnel_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch
 
 @pytest.fixture
 def use_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Path]:
-    """Points `home secrets` at a manifest written from the given text."""
+    """Points `hal secrets` at a manifest written from the given text."""
 
     def use(text: str) -> Path:
         path = tmp_path / "secrets_manifest.toml"
@@ -539,13 +539,24 @@ def home_check(
         return hal_cli.main(["check", *arguments])
 
 
+def run_hal_secrets(home: Path, probe: FakeProbe, *options: str, now: datetime | None = None, runner=None) -> int:
+    """`hal secrets` through `hal.cli.main`, over the given home and probe instead of this machine."""
+
+    def ports():
+        return cli.build_layout_and_ports(home=home, run=runner, probe=probe, now=now)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(secrets_commands, "build_layout_and_ports", ports)
+        return hal_cli.main(["secrets", *options])
+
+
 UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("
 
 
 def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:
     if command == "check":
         return home_check(home, runner, probe)
-    return cli.main([command], home=home, run=runner, probe=probe)
+    return run_hal_secrets(home, probe, runner=runner)
 
 
 REPORT_DISPLAY = "~/.local/state/hal/check-report.md"

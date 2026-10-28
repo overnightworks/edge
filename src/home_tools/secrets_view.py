@@ -1,4 +1,4 @@
-"""`home secrets` shows every secret the manifest names, and never a value.
+"""`hal secrets` shows every secret the manifest names, and never a value.
 
 It reads secret files by `stat` only and never opens them. The one probe runs
 `gh auth status`, keeps nothing but its exit code and kills its whole process
@@ -31,8 +31,9 @@ from functools import reduce
 from operator import and_
 from pathlib import Path, PurePosixPath
 
+from hal_output.command import Verb, command
 from home_tools.layout import Layout
-from home_tools.report import ClosedBy, Tally, findings_count, markdown_table, write_state_file
+from home_tools.report import findings_count, markdown_table, write_state_file
 from home_tools.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
@@ -100,7 +101,7 @@ class Verification(Enum):
 
 
 class Verifier(Enum):
-    """Every probe `home secrets` may run, spelled as the command it is."""
+    """Every probe `hal secrets` may run, spelled as the command it is."""
 
     GH_AUTH_STATUS = "gh auth status"
 
@@ -110,7 +111,7 @@ class Verifier(Enum):
 
 
 class Provider(Enum):
-    """Where `home secrets --setup` sends the operator to create a token."""
+    """Where the wizard sends the operator to create a token."""
 
     GITHUB = "github"
     CLOUDFLARE = "cloudflare"
@@ -118,7 +119,7 @@ class Provider(Enum):
 
 @dataclass(frozen=True)
 class TokenSource:
-    """Where and with which rights a token is created; the page and the check behind it belong to `home secrets --setup`."""
+    """Where and with which rights a token is created; the page and the check behind it belong to the wizard."""
 
     provider: Provider
     resource: str
@@ -158,18 +159,18 @@ class SecretEntry:
 
     @property
     def written_by_setup(self) -> bool:
-        """`--setup` writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
+        """the wizard writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
         return self.source is not None or self.kind in (SecretKind.SERVICE_PASSWORD, SecretKind.UNVERIFIED_TOKEN)
 
     @property
     def place(self) -> PurePosixPath:
-        """The one file of an entry `--setup` writes; the manifest guarantees one plain path for it."""
+        """The one file of an entry the wizard writes; the manifest guarantees one plain path for it."""
         (path,) = self.paths
         return path
 
 
 class ManifestError(ValueError):
-    """The manifest cannot be trusted; `home secrets` exits 2 on it."""
+    """The manifest cannot be trusted; `hal secrets` exits 2 on it."""
 
 
 # --- manifest --------------------------------------------------------------
@@ -283,7 +284,7 @@ def _is_github_right(right: str) -> bool:
 
 
 def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: SecretKind) -> TokenSource | None:
-    """A token `--setup` guides through names its provider, resource, rights and expiry together; no other kind does."""
+    """A token the wizard guides through names its provider, resource, rights and expiry together; no other kind does."""
     named = SOURCE_KEYS & set(raw)
     if not named:
         return None
@@ -301,7 +302,7 @@ def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: Secre
 
 def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...]) -> None:
     if len(patterns) != 1 or _has_wildcard(patterns[0].name):
-        raise _fail(path, where, "paths of an entry --setup writes must be exactly one place without a wildcard")
+        raise _fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
 
 
 def _entry(path: Path, index: int, raw: object) -> SecretEntry:
@@ -537,23 +538,11 @@ def observe(manifest: tuple[SecretEntry, ...], layout: Layout, probe: ExitCodePr
 
 
 class FindingRule(Enum):
-    """Each rule says who closes its findings, and how bookkeeping is counted, so a reader never decides by its name."""
-
-    tally: Tally | None
-
-    def __new__(cls, value: str, tally: Tally | None = None) -> FindingRule:
-        rule = object.__new__(cls)
-        rule._value_ = value
-        rule.tally = tally
-        return rule
-
-    @property
-    def closed_by(self) -> ClosedBy:
-        return ClosedBy.counted_by(self.tally)
+    """What a finding of the view is about."""
 
     MISSING = "missing"
     PRESENCE_UNKNOWN = "presence-unknown"
-    UNKNOWN_FILE = ("unknown-file", Tally("unknown file in ~/.secrets", "unknown files in ~/.secrets"))
+    UNKNOWN_FILE = "unknown-file"
     LOOSE_MODE = "loose-mode"
     SYMLINKED_FOLDER = "symlinked-folder"
     NOT_A_FOLDER = "not-a-folder"
@@ -581,7 +570,7 @@ class SecretFinding:
     rule: FindingRule
     subject: str
     detail: str = ""
-    # The operator's one action that clears this finding, a command in backticks when it is one; `home next` shows it as a step.
+    # The operator's one action that clears this finding, a command in backticks when it is one.
     fix: str = ""
     kind: SecretKind | None = None
 
@@ -710,9 +699,6 @@ _FOLDER_FLAWS = {
     FindingRule.LOOSE_MODE: _loose,
 }
 
-# `home secrets --setup` stores nothing below a folder `unfit_folder` refuses, so their fix comes before it.
-SETUP_BLOCKERS = frozenset(_FOLDER_FLAWS)
-
 
 def _flaw_finding(rule: FindingRule, relative: PurePosixPath, flaw: _Flaw | None) -> SecretFinding | None:
     return flaw and SecretFinding(rule, f"{HOME_PREFIX}{relative}", flaw.detail, flaw.fix)
@@ -781,7 +767,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
 
 # --- rendering ------------------------------------------------------------
 
-NO_VALUES_NOTE = "No values: home secrets reads secret files by stat only and never opens them."
+NO_VALUES_NOTE = f"No values: {command(Verb.SECRETS)} reads secret files by stat only and never opens them."
 
 
 def places(entry: SecretEntry) -> str:
@@ -799,7 +785,7 @@ def _status_row(status: SecretStatus) -> list[str]:
 
 
 def render_view(view: SecretsView, now: datetime) -> str:
-    header = f"# home secrets {now:%d.%m.%Y %H:%M} | {findings_count(len(view.findings))}"
+    header = f"# {command(Verb.SECRETS)} {now:%d.%m.%Y %H:%M} | {findings_count(len(view.findings))}"
     status_headers = ["Name", "Kind", "File", "Check", "Expiry", "Place", "Recreate"]
     lines = [header, "", *markdown_table(status_headers, [_status_row(status) for status in view.statuses]), ""]
     if view.findings:
@@ -826,7 +812,7 @@ BY_SERVICE_NOTE = "What the manifest names as readers; not proven complete. A re
 def render_by_service(manifest: tuple[SecretEntry, ...]) -> str:
     rows = [[service, ", ".join(names)] for service, names in services_view(manifest).items()]
     mirrors = [[entry.mirror_of, entry.name] for entry in manifest if entry.mirror_of]
-    lines = ["# home secrets --by-service | declared dependencies", "", BY_SERVICE_NOTE, ""]
+    lines = [f"# {command(Verb.SECRETS, '--by-service')} | declared dependencies", "", BY_SERVICE_NOTE, ""]
     lines += [*markdown_table(["Service", "Reads"], rows), ""]
     if mirrors:
         lines += ["## Derived copies", "", *markdown_table(["Source", "Copy"], mirrors), ""]
@@ -837,7 +823,7 @@ def render_by_service(manifest: tuple[SecretEntry, ...]) -> str:
 
 
 def inspect(layout: Layout, probe: ExitCodeProbe, now: datetime) -> tuple[SecretsView, str]:
-    """What `home secrets` without options shows; `hal check` reads the secrets through this."""
+    """What `hal secrets` without options shows; `hal check` reads the secrets through this."""
     manifest = load_manifest(MANIFEST_PATH)
     view = build_view(manifest, observe(manifest, layout, probe))
     return view, render_view(view, now)

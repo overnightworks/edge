@@ -87,13 +87,6 @@ class UserUnits:
             path for path in self.checkout_units.iterdir() if path.suffix in UNIT_SUFFIXES
         )
 
-    def is_verified(self) -> bool:
-        """Whether `verify` holds; a failure to ask systemd or to read the checkout counts as no."""
-        try:
-            return self.verify()
-        except StepFailed:
-            return False
-
     def verify(self) -> bool:
         """Linked, nothing to reload, every timer enabled and active, no dangling link.
 

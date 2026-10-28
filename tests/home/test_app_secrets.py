@@ -10,8 +10,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FakeProbe, Sandbox, plant_secrets
-from test_secrets_setup import FakeDisk, FakeTerminal
+from conftest import FakeProbe, Sandbox, plant_secrets, run_hal_secrets
+from secrets_support import FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
 from test_secrets_view import findings_of
 from test_setup import run_hal_setup
 
@@ -20,7 +20,7 @@ from hal.grammar import ExitCode
 from home_tools import cli as home_cli
 from home_tools import secrets_setup, secrets_view
 from home_tools.cli import main
-from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Terminal, TokenVerifier, Verdict
+from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
 from home_tools.setup import RERUN
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
 
@@ -113,7 +113,7 @@ def test_hopins_session_secret_is_loose_only_beyond_0644(
     secret.write_text("planted")
     secret.chmod(mode)
 
-    main(["secrets"], home=packaged_home.home, probe=probe, now=NOW)
+    run_hal_secrets(packaged_home.home, probe, now=NOW)
 
     assert set(findings_of(capsys.readouterr().out, "loose-mode")) == loose_subjects
 
@@ -121,19 +121,9 @@ def test_hopins_session_secret_is_loose_only_beyond_0644(
 def test_by_service_lists_the_session_secret_under_hopin(
     packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    main(["secrets", "--by-service"], home=packaged_home.home, probe=probe, now=NOW)
+    run_hal_secrets(packaged_home.home, probe, "--by-service", now=NOW)
 
     assert "| hopin | keycloak/clients/*, hopin/session-secret, cloudflare/turn-hopin/key-id, cloudflare/turn-hopin/api-token |" in capsys.readouterr().out
-
-
-def test_home_next_lists_the_step_that_generates_the_missing_session_secret(
-    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
-) -> None:
-    main(["next"], home=packaged_home.home, probe=probe, now=NOW)
-
-    assert f"home secrets --setup (eigenes Terminalfenster) — erwartet: hopin/session-secret generated ~/{HOPIN_SESSION_SECRET} (644) · never shown" in (
-        capsys.readouterr().out
-    )
 
 
 def test_the_packaged_manifest_holds_no_value_of_hopins_session_secret() -> None:
@@ -164,8 +154,8 @@ def never_verified(_source: object, _value: str) -> Verdict:
     pytest.fail("a TURN value is stored unverified and never sent to a provider")
 
 
-def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: FakeTerminal, disk: FakeDisk | None = None) -> tuple[int, str]:
-    boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeDisk()).sync)
+def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: FakeTerminal, disk: FakeSync | None = None) -> tuple[int, str]:
+    boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeSync()).sync)
     code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
     captured = capsys.readouterr()
     return code, captured.out + captured.err
@@ -284,19 +274,11 @@ def test_an_interrupt_between_the_two_turn_values_keeps_the_first_and_the_rerun_
 
 
 def test_the_view_shows_the_stored_turn_values_as_not_verified(packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]) -> None:
-    main(["secrets"], home=packaged_home.home, probe=probe, now=NOW)
+    run_hal_secrets(packaged_home.home, probe, now=NOW)
 
     rows = {line for line in capsys.readouterr().out.splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
     assert len(rows) == 2
     assert all("token, unverified" in row and "not checked" in row for row in rows)
-
-
-def test_home_next_says_the_missing_turn_values_are_stored_not_verified(
-    turn_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
-) -> None:
-    main(["next"], home=turn_home.home, probe=probe, now=NOW)
-
-    assert f"cloudflare/turn-hopin/key-id stored not verified · ~/{TURN_KEY_ID} (644)" in capsys.readouterr().out
 
 
 SECRETS_MANIFEST = """\
@@ -317,20 +299,6 @@ loosest_mode = 0o644
 loosest_mode_reason = "der Container liest es als eigener Nutzer"
 """
 SECRET_FILES = (".secrets/opentofu/passphrase", ".secrets/hopin/session-secret")
-
-
-def secrets_terminal(at_a_terminal: bool) -> Boundaries:
-    """A terminal that must never be asked for a value: the manifest above holds only generated passwords."""
-
-    def never_asked(_prompt: str) -> str:
-        raise AssertionError("the wizard asked a person for a value it generates itself")
-
-    terminal = Terminal(lambda: at_a_terminal, never_asked, never_asked, lambda _page: False)
-    return Boundaries(
-        terminal,
-        lambda _source, _value: pytest.fail("a generated password is never verified"),
-        lambda _descriptor: None,
-    )
 
 
 def run_setup_with_secrets(
@@ -581,11 +549,6 @@ GUIDED_TOKEN = secret_entry(
 )
 
 
-def guided_boundaries(ask_hidden: Callable[[str], str], verify: TokenVerifier) -> Boundaries:
-    terminal = Terminal(lambda: True, lambda _prompt: "", ask_hidden, lambda _page: True)
-    return Boundaries(terminal, verify, lambda _descriptor: None)
-
-
 def fail_to_verify(_source: TokenSource, _value: str) -> None:
     raise RuntimeError("the value stays out of the line")
 
@@ -767,7 +730,7 @@ def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, bro
     """The setup walk of the GitHub token and both TURN values with stdout on a terminal, nothing pasted."""
     (sandbox.home / ".secrets/github/fleet-read").unlink()
     stdout = put_stdout_on_a_terminal(monkeypatch)
-    boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeDisk().sync)
+    boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeSync().sync)
 
     main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
 
