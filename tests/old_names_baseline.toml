@@ -20,7 +20,7 @@
 "src/edge/barrier.py" = 3
 "src/edge/catalog.py" = 1
 "src/edge/checkout.py" = 2
-"src/edge/cli.py" = 2
+"src/edge/cli.py" = 1
 "src/edge/compose.py" = 1
 "src/edge/emergency.py" = 4
 "src/edge/environment.py" = 2

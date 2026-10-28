@@ -1,4 +1,4 @@
-"""`edge`: dispatches to its subcommands (`apply`, `stop`, `start` and `external`)."""
+"""`edge`: dispatches to its subcommands (`apply`, `stop` and `start`)."""
 
 import argparse
 import os
