@@ -5,11 +5,16 @@ directory, no live data) from this checkout. It runs beside the live edge, which
 Traefik entrypoints listen on two free loopback ports it picks (a copy of `traefik.yml` in the
 scratch directory), its admin front end is `http://localhost:<admin port>`, and its keycloak
 network takes a free /24 from 172.31.200.0 up. Both modes need an empty or new `--scratch`
-directory and always tear the stack down. While a probe runs, `hal check exposure` reports its Keycloak as
-`invalid-edge-name`, by design of the `edge.name: PROBE` label that keeps the live Traefik away.
+directory and always tear the stack down. While a probe runs, `hal check exposure` reports its Keycloak as a
+routing name that is not valid, by design of the `edge.name: PROBE` label that keeps the live Traefik away.
 
     flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
         python3 probe/keycloak/probe.py [run|hold] --scratch DIR
+
+Before each `compose up` the probe writes appkit's tokens and fonts into this checkout, where the
+themes read them (`appkit-<version>/` beside each theme's `css/`), through
+`uv run --project <checkout> python -m edge.appkit_step <checkout>`. Any interpreter starts the probe, but
+`uv` must be on `PATH`; a failing write ends the probe before the stack exists.
 
 An exported `DOCKER_GID` overrides the host's `docker` group id in the compose environment; unset
 it if it is stale. The probe reaches Keycloak's admin entrypoint on the `admin_url` and the edge

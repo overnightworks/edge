@@ -895,7 +895,7 @@ Type <span class="w">yes</span> to reopen the tunnel: yes
 <span class="g">  ✓</span> keycloak        restore proven <span class="d">9b07e1d2 · realm rows present · 31s</span>
 <span class="g">  ✓</span> repository      checked        <span class="d">10 % of the data read · 6m02s</span>
 <span class="w">✓ restore test done</span> <span class="d">· 2 apps · 9m13s</span></pre>
-      <p class="was">heute: bei Erfolg keine Zeile, nur Exit 0</p>
+      <p class="was">Angepasst an den Lauf: die Zeile des Repositorys zeigt die Zeit von forget bis check (<code>checked · 1m05s</code>); die behaltenen Snapshots folgen mit S7d-3</p>
     </figure>
     <figure>
       <figcaption><span class="tag fail">neu, kaputt</span> eine App fällt aus, die andere läuft weiter</figcaption>
@@ -905,13 +905,15 @@ Type <span class="w">yes</span> to reopen the tunnel: yes
 <span class="d">  · repository      not pruned     a backup failed</span>
 <span class="rw">error:</span> 1 of 2 apps not backed up · songmaker's last good backup 25.10. 03:04
 <span class="c">next:</span> hal backup songmaker</pre>
-      <p class="was">heute: <code>error: hal backup: fehlgeschlagen: nach 10 Minuten nicht bereit: die Datenbank von songmaker ist nicht bereit</code></p>
+      <p class="was">Angepasst an den Lauf: die Fehlerzeile nennt die letzte gute Sicherung der ersten gescheiterten App aus der Statusdatei, in Ortszeit, mit Jahr ab einem anderen Jahr; ohne Eintrag <code>songmaker has no good backup recorded</code>, bei einer App ohne den Namen noch einmal</p>
     </figure>
     <figure>
       <figcaption><span class="tag new">neu</span> <code>hal check exposure</code>: heute 272 Zeilen für einen Prozess</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal check exposure</span>
-<span class="y">  !</span> python3         listens        <span class="d">272 UDP ports beyond loopback · pid 93017</span>
-<span class="y">! 1 finding</span> <span class="d">· 272 listeners · --json lists each</span></pre>
+<span class="y">  !</span> python3         listens        <span class="d">272 UDP ports beyond loopback</span>
+<span class="y">  !</span> blog            routing name   <span class="d">Blog.App is not a valid name</span>
+<span class="y">! 2 findings</span> <span class="d">· 272 ports · --json lists each</span>
+<span class="d">(clean: </span><span class="g">✓ nothing reaches beyond loopback</span><span class="d">)</span></pre>
       <p class="was">heute: 272 mal <code>listener-beyond-loopback  python3  udp  *  32985</code>, je ein Port</p>
     </figure>
     <figure>

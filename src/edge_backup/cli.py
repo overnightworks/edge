@@ -12,7 +12,7 @@ from edge_backup.apps import App, AppsError, parse_apps
 from edge_backup.runner import Interrupted, Run, StepFailed
 from edge_backup.settings import Settings
 from edge_backup.status import ExitCategory, first_attempt
-from hal_output import Glyph, Noun, Verdict, counted, write_row, write_verdict
+from hal_output import Glyph, Noun, Verdict, counted, format_moment, write_row, write_verdict
 
 # uv installs the project editable, so this file sits in the checkout: src/edge_backup/cli.py.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -82,16 +82,27 @@ def _failed_apps_line(failed: list[str], total: int, outcome: str) -> str:
     return f"{len(failed)} of {counted(total, AppCount.APP)} {outcome}"
 
 
+def _last_good_backup_fact(run: Run, app: str, total: int) -> str:
+    """The app's last good backup from the status record, in local time; the app leads the fact
+    only when several apps ran, since the line names it otherwise."""
+    moment = run.last_backup_of(app)
+    if moment is None:
+        return "no good backup recorded" if total == 1 else f"{app} has no good backup recorded"
+    shown = format_moment(moment, host.now())
+    return f"last good backup {shown}" if total == 1 else f"{app}'s last good backup {shown}"
+
+
 def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
-    """The rows show each reason, so the error line counts; `--json` has no rows, so its error
-    line carries the reason, which the realm step reads."""
+    """The rows show each reason, so the error line counts and names the first failed app's last
+    good backup; `--json` has no rows, so its error line carries the reason, which the realm step
+    reads."""
     failed = run.failed_apps
     total = run.backed_up_apps + len(failed)
-    failure.error_line = (
-        _failed_apps_line(failed, total, "not backed up")
-        if rows
-        else _app_failure_line(run, failure)
-    )
+    if rows:
+        counted_line = _failed_apps_line(failed, total, "not backed up")
+        failure.error_line = f"{counted_line} · {_last_good_backup_fact(run, failed[0], total)}"
+    else:
+        failure.error_line = _app_failure_line(run, failure)
     failure.next_step = f"hal backup {failed[0]}"
 
 

@@ -4,7 +4,8 @@ import json
 import os
 import shutil
 import socket
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -25,12 +26,13 @@ LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
 
 @pytest.fixture
 def seed_appkit() -> Callable[[Path], Path]:
-    """Puts the installed appkit's files where the step serves them in a fake repository, as a
-    finished apply leaves them; returns the repository. A fixture, because a test module that
-    imports from `conftest` breaks in a full run."""
+    """Puts the installed appkit's files where the step writes them (every target) in a fake
+    repository, as a finished apply leaves them; returns the repository. A fixture, because a test
+    module that imports from `conftest` breaks in a full run."""
 
     def seed(repository: Path) -> Path:
-        shutil.copytree(appkit_step.installed_static(), appkit_step.served_directory(repository))
+        for target in appkit_step.served_directories(repository):
+            shutil.copytree(appkit_step.installed_static(), target)
         return repository
 
     return seed
@@ -65,6 +67,15 @@ def home(tmp_path, monkeypatch) -> Path:
     password.write_text(CANARY_PASSWORD)
     password.chmod(0o600)
     return tmp_path
+
+
+@pytest.fixture
+def berlin_time(monkeypatch) -> Iterator[None]:
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture

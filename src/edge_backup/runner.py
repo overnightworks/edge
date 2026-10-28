@@ -9,7 +9,7 @@ import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 from functools import partial
 from pathlib import Path
@@ -153,6 +153,9 @@ class Run:
     def snapshot_of(self, app: str) -> str | None:
         return self._status.snapshot_of(app)
 
+    def last_backup_of(self, app: str) -> datetime | None:
+        return self._status.last_backup_of(app)
+
     def attribute_legacy_evidence(self, settings: Settings, apps: tuple[App, ...]) -> None:
         attributed = attributed_status(settings, self._status, apps)
         if attributed is not self._status:
@@ -247,12 +250,14 @@ def backup(
     if run.failed_apps:
         report(Row(Glyph.UNCHANGED, REPOSITORY, BackupEvent.NOT_PRUNED, "a backup failed"))
     run.raise_first_app_failure()
+    maintenance_started = host.monotonic()
     for app in targets:
         with run.phase(Phase.FORGET):
             restic.forget(settings, app.name, pre_apply=pre_apply)
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=False)
-    report(Row(Glyph.DONE, REPOSITORY, BackupEvent.PRUNED, "checked"))
+    maintenance = format_duration(host.monotonic() - maintenance_started)
+    report(Row(Glyph.DONE, REPOSITORY, BackupEvent.PRUNED, f"checked · {maintenance}"))
 
 
 def _backed_up_facts(summary: restic.BackupSummary, started: float) -> str:

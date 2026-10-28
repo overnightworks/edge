@@ -86,12 +86,7 @@ LOOPBACK_ADDRESS = "127.0.0.1"
 LIVE_EDGE_ADDRESS = f"{LOOPBACK_ADDRESS}:8081"
 LIVE_ADMIN_ADDRESS = f"{LOOPBACK_ADDRESS}:8090"
 # What keycloak/go-live pins for the live edge, which no step over the probe's stack may reach.
-LIVE_GO_LIVE_ADDRESSES = (
-    "localhost:8090",
-    "localhost:8081",
-    LIVE_ADMIN_ADDRESS,
-    LIVE_EDGE_ADDRESS,
-)
+LIVE_GO_LIVE_ADDRESSES = ("localhost:8090", "localhost:8081", LIVE_ADMIN_ADDRESS, LIVE_EDGE_ADDRESS)
 TRAEFIK_CONFIG = "traefik.yml"
 NETWORK_OVERLAY = "network.compose.yaml"
 # Which containers the Docker provider routes: the live one takes any `edge.name` label that
@@ -428,10 +423,23 @@ def is_workload_identity_of(access: dict[str, Any], client_id: str) -> bool:
 # --- The throwaway stack --------------------------------------------------------------------
 
 
+def write_appkit_files() -> None:
+    """The themes bind appkit's files from this checkout, where no apply runs. The repository's own
+    `uv run` writes them, because the interpreter this probe runs under may lack appkit."""
+    result = subprocess.run(
+        ["uv", "run", "--project", str(REPO), "python", "-m", "edge.appkit_step", str(REPO)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    expect(result.returncode == 0, f"appkit step failed:\n{tail(result.stderr)}")
+
+
 @dataclass
 class Stack:
     scratch: Path
     admin_url: str = ""  # a test's stand-in; empty, the admin entrypoint's own free port
+    write_appkit: Callable[[], None] = write_appkit_files  # a test's stand-in writes nothing
     edge_url: str = field(init=False)
     edge_port: int = field(init=False)
     admin_port: int = field(init=False)
@@ -527,16 +535,8 @@ class Stack:
         if bootstrap:
             files.append("keycloak/bootstrap.compose.yaml")
         files.append("probe/keycloak/compose.probe.yaml")
-        command = [
-            "docker",
-            "compose",
-            "--project-name",
-            PROJECT,
-            "--project-directory",
-            str(REPO),
-            "--profile",
-            KEYCLOAK_PROFILE,
-        ]
+        command = ["docker", "compose", "--project-name", PROJECT, "--project-directory", str(REPO)]
+        command += ["--profile", KEYCLOAK_PROFILE]
         for compose_file in files:
             command += ["--file", str(REPO / compose_file)]
         return [*command, "--file", str(self.network_overlay)]
@@ -636,6 +636,7 @@ class Stack:
         )
 
     def up(self, *services: str, bootstrap: bool = False) -> None:
+        self.write_appkit()
         result = self.compose("up", "--detach", "--wait", *services, bootstrap=bootstrap)
         expect(result.returncode == 0, f"compose up failed:\n{tail(result.stderr)}")
 
@@ -717,14 +718,8 @@ def remove_one_offs() -> None:
     # `compose down` skips a one-off `compose run` container that is still running, as an apply
     # is when a SIGTERM kills its compose client.
     listed = docker(
-        "container",
-        "ls",
-        "--all",
-        "--quiet",
-        "--filter",
-        f"label={PROJECT_LABEL}",
-        "--filter",
-        "label=com.docker.compose.oneoff=True",
+        *("container", "ls", "--all", "--quiet", "--filter", f"label={PROJECT_LABEL}"),
+        *("--filter", "label=com.docker.compose.oneoff=True"),
     )
     one_offs = listed.stdout.split()
     if one_offs:

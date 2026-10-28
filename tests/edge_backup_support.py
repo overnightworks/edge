@@ -119,6 +119,8 @@ class Machine:
     """What restic's backup summary reports as `total_bytes_processed`."""
     backup_seconds: float = 0
     """How long restic's backup takes on the machine clock."""
+    maintenance_seconds: float = 0
+    """How long restic's forget and check each take on the machine clock."""
     prints_backup_summary: bool = True
     summary_without: set[str] = field(default_factory=set)
     """Fields restic's backup summary lacks."""
@@ -212,8 +214,8 @@ class Machine:
             "psql": self._psql,
             SERVER_REMOVAL_LABEL: self._silent,
             "restic init": self._silent,
-            "restic forget": self._silent,
-            "restic check": self._silent,
+            "restic forget": self._maintenance,
+            "restic check": self._maintenance,
             "restic unlock": self._silent,
         }
         if label not in answers:
@@ -429,6 +431,10 @@ class Machine:
         return b""
 
     def _silent(self, argv, **_) -> bytes:
+        return b""
+
+    def _maintenance(self, argv, **_) -> bytes:
+        self.clock.sleep(self.maintenance_seconds)
         return b""
 
     def _start_server(self, argv, **_) -> bytes:

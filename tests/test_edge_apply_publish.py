@@ -17,6 +17,7 @@ import pytest
 from app_support import KEY, ScriptedDocker, origin_at, runtime_of
 from test_edge_apply import (
     NOT_SET_UP_LINE,
+    REPOSITORY,
     apply_lock_held,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     ingress,  # noqa: F401 the fixture, requested by name below
@@ -109,7 +110,7 @@ def repository(live_checkout, monkeypatch, seed_appkit) -> Path:  # noqa: F811
     (live_checkout / "traefik.yml").write_text(
         'entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n'
     )
-    (live_checkout / ".gitignore").write_text("/legal/assets/appkit-*/\n")
+    (live_checkout / ".gitignore").write_text((REPOSITORY / ".gitignore").read_text())
     plain_git(live_checkout, "add", "--all")
     commit_catalog(live_checkout, CATALOG)
     seed_appkit(live_checkout)

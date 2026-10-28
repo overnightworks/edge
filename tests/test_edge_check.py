@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -52,6 +53,11 @@ udp UNCONN 0 0 *:33697       *:* uid:62260 cgroup:/system.slice/cloudflared.serv
 """
 SS_SSHD = """\
 tcp LISTEN 0 128 0.0.0.0:22    0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->
+"""
+SS_ONE_PROCESS_ON_THREE_PROTOCOLS = """\
+sctp LISTEN 0 128 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=3)) <->
+tcp LISTEN 0 128 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=4)) <->
+udp UNCONN 0 0 0.0.0.0:3868 0.0.0.0:* users:(("diameterd",pid=910,fd=5)) <->
 """
 SS_DHCP6_LINK_LOCAL = """\
 udp UNCONN 0 0 [fe80::d8e8:44d:1d8e:31f0]%wlp7s0:546      [::]:* ino:18742 sk:f <->
@@ -168,7 +174,7 @@ HOSTS = {
     "publication on a loopback port range": Host(
         docker=inspect_json(container("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
     ),
-    "publication on a 0.0.0.0 port range names the range": Host(
+    "publication on a 0.0.0.0 port range counts the one port Docker picks": Host(
         docker=inspect_json(container("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
         findings=[finding("publication-beyond-loopback", "ranged", "tcp", "0.0.0.0", "8000-8010")],
     ),
@@ -203,6 +209,14 @@ HOSTS = {
     "tcp listener on 0.0.0.0 names its process": Host(
         ss=SS_LOOPBACK_ONLY + SS_SSHD,
         findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+    ),
+    "one process on all three protocols comes once": Host(
+        ss=SS_ONE_PROCESS_ON_THREE_PROTOCOLS,
+        findings=[
+            finding("listener-beyond-loopback", "diameterd", "sctp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "tcp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "udp", "0.0.0.0", 3868),
+        ],
     ),
     "udp listener on * names its systemd unit": Host(
         ss=SS_CLOUDFLARED,
@@ -341,30 +355,141 @@ def test_exits_1_exactly_when_something_reaches_beyond_loopback(run_edge_check, 
     )
 
 
-def test_human_table_names_subject_address_and_port(run_edge_check):
-    exit_code, out, _ = run_edge_check(HOSTS["publication without host IP or host port"])
+ROWS = {
+    "publication on 0.0.0.0": [("grafana", "publishes", "1 TCP port beyond loopback")],
+    "publication on ::": [("dns", "publishes", "1 UDP port beyond loopback")],
+    "publication on a 0.0.0.0 port range counts the one port Docker picks": [
+        ("ranged", "publishes", "1 TCP port beyond loopback")
+    ],
+    "publish-all publishes every exposed port not bound explicitly": [
+        ("lab", "publishes", "1 UDP port without a host IP")
+    ],
+    "publication without host IP or host port": [
+        ("hello", "publishes", "1 TCP port without a host IP")
+    ],
+    "a user unit named like an allow-listed system unit is not permitted": [
+        ("avahi-daemon.service", "listens", "1 UDP port beyond loopback")
+    ],
+    "tcp listener on 0.0.0.0 names its process": [
+        ("sshd", "listens", "1 TCP port beyond loopback")
+    ],
+    "one process on all three protocols comes once": [
+        ("diameterd", "listens", "1 TCP port, 1 UDP port, 1 SCTP port beyond loopback")
+    ],
+    "udp listener on * names its systemd unit": [
+        ("cloudflared.service", "listens", "1 UDP port beyond loopback")
+    ],
+    "link-local listener with unknown owner": [
+        ("unknown process", "listens", "1 UDP port beyond loopback")
+    ],
+    "allow-list entry for another protocol does not permit": [
+        ("avahi-daemon.service", "listens", "1 UDP port beyond loopback")
+    ],
+    "allow-list entry for another owner does not permit": [
+        ("sshd", "listens", "1 TCP port beyond loopback")
+    ],
+    "a 0.0.0.0 publication and its docker-proxy listener are one finding": [
+        ("grafana", "publishes", "1 TCP port beyond loopback")
+    ],
+    "a publication without host IP and docker-proxy on both families are one finding": [
+        ("hello", "publishes", "1 TCP port without a host IP")
+    ],
+    "another process on a published port is its own finding": [
+        ("sshd", "listens", "1 TCP port beyond loopback"),
+        ("grafana", "publishes", "1 TCP port beyond loopback"),
+    ],
+    "a stopped container's publication does not hide a listener on its port": [
+        ("docker.service", "listens", "1 TCP port beyond loopback"),
+        ("grafana", "publishes", "1 TCP port beyond loopback"),
+    ],
+    "routed container without edge.name": [
+        ("blog", "routing name", "none, though Traefik routes it")
+    ],
+    "edge.name outside [a-z0-9-]{1,63}": [("blog", "routing name", "Blog.App is not a valid name")],
+    "edge.name longer than 63 characters": [
+        ("blog", "routing name", f"{'b' * 64} is not a valid name")
+    ],
+    "two running containers with the same edge.name": [
+        ("blog-new, blog-old", "routing name", "blog is claimed more than once")
+    ],
+    "#445 R5: edge.alias outside [a-z0-9-]{1,63}": [
+        ("web", "routing name", "Talk.App is not a valid name")
+    ],
+    "#445 R5: an alias claiming the host another container is named for": [
+        ("talk, web", "routing name", "talk is claimed more than once")
+    ],
+    "#445 R5: two aliases claiming one host": [
+        ("a, b", "routing name", "talk is claimed more than once")
+    ],
+    "repeated sockets and mixed findings come once, in a stable order": [
+        ("chrome", "listens", "1 UDP port beyond loopback"),
+        ("sshd", "listens", "1 TCP port beyond loopback"),
+        ("web", "publishes", "2 TCP ports beyond loopback"),
+        ("api", "publishes", "1 TCP port without a host IP"),
+    ],
+}
 
-    assert exit_code == 1
-    assert out.splitlines()[1].split() == [
-        "publication-without-host-ip",
-        "hello",
-        "tcp",
-        "(none)",
-        "(random)",
-    ]
+
+def printed_rows(out: str) -> tuple[list[tuple[str, ...]], str]:
+    """The `!` rows as (subject, event, fact), and the verdict line."""
+    *rows, verdict = out.splitlines()
+    return [tuple(re.split(" {2,}", row.removeprefix("  ! ").strip())) for row in rows], verdict
 
 
-def test_human_table_names_the_edge_name_a_finding_is_about(run_edge_check):
-    exit_code, out, _ = run_edge_check(HOSTS["edge.name outside [a-z0-9-]{1,63}"])
+@pytest.mark.parametrize("name", HOSTS.keys())
+def test_one_row_per_process_or_container_and_none_for_a_clean_host(run_edge_check, name):
+    exit_code, out, _ = run_edge_check(HOSTS[name])
 
-    assert exit_code == 1
-    assert out.splitlines()[1].split() == ["invalid-edge-name", "blog", "-", "-", "-", "Blog.App"]
+    if not HOSTS[name].findings:
+        assert (exit_code, out) == (0, "✓ nothing reaches beyond loopback\n")
+        return
+    rows, verdict = printed_rows(out)
+    assert (exit_code, rows) == (1, ROWS[name])
+    assert verdict.startswith(f"! {len(rows)} finding")
 
 
-def test_human_output_says_so_when_nothing_is_exposed(run_edge_check):
-    exit_code, out, _ = run_edge_check(HOSTS["allow-listed mDNS port"])
+def test_every_host_with_findings_has_its_expected_rows():
+    assert {name for name, state in HOSTS.items() if state.findings} == set(ROWS)
 
-    assert (exit_code, out) == (0, "exposure: nothing reaches beyond loopback\n")
+
+MIXED = "repeated sockets and mixed findings come once, in a stable order"
+
+
+@pytest.mark.parametrize("name", [MIXED, "one process on all three protocols comes once"])
+def test_the_rows_hold_every_socket_finding_json_lists(run_edge_check, name):
+    """Conservation: the ports on the rows add up to the sockets `--json` lists."""
+    _, out, _ = run_edge_check(HOSTS[name])
+    _, json_out, _ = run_edge_check(HOSTS[name], "--json")
+
+    ports = sum(
+        int(count)
+        for _, _, fact in printed_rows(out)[0]
+        for count in re.findall(r"(\d+) \w+ port", fact)
+    )
+    assert ports == len([item for item in json.loads(json_out)["exposure"] if item["protocol"]])
+
+
+def test_the_verdict_counts_findings_and_ports(run_edge_check):
+    _, out, _ = run_edge_check(HOSTS[MIXED])
+
+    assert printed_rows(out)[1] == "! 4 findings · 5 ports · --json lists each"
+
+
+@pytest.mark.parametrize("name", ["publication on 0.0.0.0", "edge.name outside [a-z0-9-]{1,63}"])
+def test_a_verdict_without_a_grouped_row_has_no_hint(run_edge_check, name):
+    _, out, _ = run_edge_check(HOSTS[name])
+
+    assert printed_rows(out)[1] == "! 1 finding"
+
+
+def test_the_rows_never_show_address_port_or_problem_code(run_edge_check):
+    state = Host(ss=SS_SSHD.replace("0.0.0.0:22", "192.0.2.7:61234"))
+    _, out, _ = run_edge_check(state)
+    _, json_out, _ = run_edge_check(state, "--json")
+
+    assert not any(text in out for text in ("192.0.2.7", "61234", "listener-beyond-loopback"))
+    assert "192.0.2.7" in json_out
+    assert "listener-beyond-loopback" in json_out
 
 
 VALID_ENTRY = 'protocol = "udp"\nport = 5353\nreason = "mDNS"\n'
