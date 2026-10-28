@@ -240,8 +240,7 @@ def test_the_check_cannot_tell_when_docker_does_not_answer(make_setup, docker, t
     docker.answers = False
 
     assert make_setup().check() == 2
-    assert "cannot tell" not in terminal.said[-1]
-    assert "Cannot connect to the Docker daemon" in terminal.said[-1]
+    assert terminal.said[-1] == "`docker compose config` exited 1: Cannot connect to the Docker daemon"
 
 
 def test_a_missing_login_directory_is_not_set_up_and_the_check_changes_nothing(
