@@ -8,7 +8,7 @@
 
 [edge-script]
 ".github/workflows/ci.yml" = 6
-"docs/architecture.md" = 2
+"docs/architecture.md" = 1
 "docs/backup.md" = 5
 "docs/naming.md" = 2
 "pyproject.toml" = 1
@@ -23,7 +23,6 @@
 "uv.lock" = 1
 
 [home-verb]
-"docs/architecture.md" = 11
 "docs/design/hal-output.html" = 1
 
 [home-tools]
