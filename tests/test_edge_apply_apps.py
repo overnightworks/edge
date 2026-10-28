@@ -31,6 +31,7 @@ from test_edge_apply import (
     at_terminal,  # noqa: F401 the fixture, requested by name below
     home,  # noqa: F401 the fixture, requested by name below
     ingress,  # noqa: F401 the fixture, requested by name below
+    missing_setup,  # noqa: F401 the fixture, requested by name below
     realm_backup,  # noqa: F401 the fixture, requested by name below
     repository,  # noqa: F401 the fixture, requested by name below
     scripted,  # noqa: F401 the fixture, requested by name below
@@ -39,8 +40,10 @@ from test_edge_apply import (
     setup_run,  # noqa: F401 the fixture, requested by name below
     state,  # noqa: F401 the fixture, requested by name below
     switch,  # noqa: F401 the fixture, requested by name below
+    switch_off,
     write_fleet,
 )
+from test_edge_plan_rows import plain
 
 from edge import apps, barrier, checkout, compose, emergency, switches
 
@@ -576,6 +579,34 @@ def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_
     assert app_world.docker.verbs == ["ps"]
     assert app_world.scripted.changing_verbs() == changes_before
     assert {row["State"] for row in app_world.docker.rows} == {"running"}
+
+
+def test_a_unit_and_an_app_kept_off_that_still_run_are_one_row_each_then_one_error(
+    app_world,
+    missing_setup,  # noqa: F811 the fixture, imported by name above
+    setup_run,  # noqa: F811 the fixture, imported by name above
+):
+    """E6: one failed row per switched-off unit or app that still runs, then the error pair."""
+    deployed(app_world)
+    with_a_setup = FLEET.replace("services:\n", ENABLED)
+    write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{with_a_setup}")
+    app_world.scripted.containers["step-ca"] = "running"
+    switch_off(app_world.state)
+    switches.Switches(app_world.state).record(KEY, NOW)
+    changes_before = app_world.scripted.changing_verbs()
+
+    exit_code, out, err = app_world.apply()
+
+    assert exit_code == 1
+    rows = [line for line in plain(out).splitlines() if "still runs" in line]
+    assert [row.split()[1] for row in rows] == ["step-ca", KEY]
+    assert missing_setup.line in rows[0]
+    assert err.splitlines() == [
+        "error: switched off but still running, nothing switched",
+        "next: hal stop step-ca",
+    ]
+    assert setup_run.commands == []
+    assert app_world.scripted.changing_verbs() == changes_before
 
 
 def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_replanned_apply(
