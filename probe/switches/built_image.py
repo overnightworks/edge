@@ -81,6 +81,7 @@ class Drive:
             "COMPOSE_PROJECT_NAME": PROJECT,
             "EDGE_DOMAIN": ZONE,
             "DOCKER_GID": str(grp.getgrnam("docker").gr_gid),
+            "NO_COLOR": "1",
         }
         self.environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
         self.copy = self.home
@@ -191,7 +192,8 @@ class Drive:
         bumped = self.tag(IMAGE_OTHER, "d1a-new")
         self.use_service(bumped)
         out = self.hal()
-        line = f"{UNIT}: recreate {UNIT} (image {first} \N{RIGHTWARDS ARROW} {bumped}); {ENDS_RUNS}"
+        moved = f"image {first} \N{RIGHTWARDS ARROW} {bumped}"
+        line = f"{UNIT} recreate {moved} \N{MIDDLE DOT} {ENDS_RUNS}"
         expect(line in out, f"D1a the plan lacks {line!r}: {out[-400:]}")
         after = self.container()
         print(f"D1a apply line: {line!r}")
@@ -215,7 +217,7 @@ class Drive:
         new = self.tag(IMAGE_OTHER, "d1b-new")
         self.use_service(new)
         out = self.hal()
-        expect(f"recreate {UNIT} (image {old} \N{RIGHTWARDS ARROW} {new})" in out, out[-400:])
+        expect(f"{UNIT} recreate image {old} \N{RIGHTWARDS ARROW} {new}" in out, out[-400:])
         after = self.container()
         print(f"D1b after one apply: {after}")
         expect(after["state"] == "running" and after["ps_image"] == new, "D1b not running new")
@@ -249,7 +251,7 @@ class Drive:
         )
         expect(found is None and sibling_found == self.image_id_of(sibling), "D1c U8 inexact")
         out = self.hal(typed=b"no\n")
-        expect(f"recreate {UNIT}" not in out and "cannot plan" not in out, out[-400:])
+        expect(f"{UNIT} recreate" not in out and "cannot plan" not in out, out[-400:])
         expect(NOTHING_TO_CHANGE in out, f"D1c the apply said: {out[-300:]}")
         expect(self.container()["id"] == before["id"], "D1c a container was replaced")
         print("D1c held: no recreate line and no planning failure for a tag removed by hand")
@@ -266,7 +268,7 @@ class Drive:
         )
         expect(shown["ps_image"] in (reference, shown["label_id"]), STOP_THE_LANE)
         out = self.hal()
-        line = f"{UNIT}: recreate {UNIT} (the image {moved} was rebuilt); {ENDS_RUNS}"
+        line = f"{UNIT} recreate image {moved} rebuilt \N{MIDDLE DOT} {ENDS_RUNS}"
         expect(line in out, f"D1d the plan lacks {line!r}: {out[-400:]}")
         after = self.container()
         print(f"D1d apply line: {line!r}\nD1d before {before}\nD1d after  {after}")

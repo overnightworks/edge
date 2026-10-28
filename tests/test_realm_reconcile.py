@@ -19,7 +19,7 @@ import yaml
 
 from edge import compose, core, switches
 from edge.realm import observe, reconcile
-from edge.realm.reconcile import RealmAction, RealmPlan
+from edge.realm.reconcile import RealmAction, RealmPlan, RealmRestart
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
@@ -127,7 +127,9 @@ class World:
 
     # the step ----------------------------------------------------------------------------------
 
-    def plan(self, gate: core.Gate | None = core.Gate.ON, restart: str | None = None) -> RealmPlan:
+    def plan(
+        self, gate: core.Gate | None = core.Gate.ON, restart: RealmRestart | None = None
+    ) -> RealmPlan:
         return reconcile.plan_realm(self, self, self.record, self.config, self.root, gate, restart)
 
     def run(self, plan: RealmPlan, mark: switches.Mark | None = None) -> reconcile.StepResult:
@@ -173,14 +175,14 @@ def test_nothing_changed_since_the_last_apply_plans_no_step_and_no_line(world: W
 
     plan = world.plan()
 
-    assert (plan.action, plan.lines, plan.settled) == (RealmAction.NOTHING, [], True)
+    assert (plan.action, plan.settled) == (RealmAction.NOTHING, True)
 
 
 def test_no_recorded_apply_plans_the_step(world: World) -> None:
     plan = world.plan()
 
     assert (plan.action, plan.settled) == (RealmAction.RUN, False)
-    assert plan.lines == ["realm: apply keycloak/*.yaml (no realm apply is recorded)"]
+    assert plan.why == "no realm apply is recorded"
 
 
 @pytest.mark.parametrize(
@@ -217,20 +219,20 @@ def test_each_input_that_changed_plans_the_step_and_names_it(
 
     change(world)
 
-    assert world.plan().lines == [f"realm: apply keycloak/*.yaml ({why})"]
+    assert world.plan().why == why
 
 
 def test_an_apply_that_did_not_finish_is_planned_again(world: World) -> None:
     world.record.mark_unfinished([reconcile.CONFIG_CLI], {reconcile.CONFIG_CLI})
 
-    assert "the last realm apply did not finish" in world.plan().line
+    assert "the last realm apply did not finish" in world.plan().why
 
 
 def test_an_unreadable_record_plans_the_step(world: World) -> None:
     world.record.path.parent.mkdir(parents=True)
     world.record.path.write_text("not json")
 
-    assert "is malformed" in world.plan().line
+    assert "is malformed" in world.plan().why
 
 
 @pytest.mark.parametrize("gate", [core.Gate.OFF, core.Gate.SWITCHED_OFF])
@@ -242,23 +244,21 @@ def test_a_changed_file_while_keycloak_is_off_is_one_line_and_reads_nothing(
 
     assert plan.action is RealmAction.HELD
     assert plan.settled
-    assert plan.lines == [
-        f"realm: no realm apply is recorded; Keycloak is {gate}, so it is not applied"
-    ]
+    assert (plan.why, plan.gate) == ("no realm apply is recorded", gate)
     assert world.events == []
 
 
 def test_unchanged_files_while_keycloak_is_off_say_nothing(world: World) -> None:
     world.applied_once()
 
-    assert world.plan(core.Gate.OFF).lines == []
+    assert world.plan(core.Gate.OFF).action is RealmAction.NOTHING
 
 
 def test_keycloak_starting_in_this_run_is_not_checked_and_one_line_says_so(world: World) -> None:
-    plan = world.plan(restart="Keycloak starts now")
+    plan = world.plan(restart=RealmRestart.KEYCLOAK)
 
     assert (plan.action, plan.settled) == (RealmAction.NOT_CHECKED, True)
-    assert plan.lines == ["realm: not checked, Keycloak starts now; the next `hal apply` checks it"]
+    assert plan.restart is RealmRestart.KEYCLOAK
 
 
 def test_a_catalog_without_keycloak_plans_nothing(world: World) -> None:
@@ -267,12 +267,12 @@ def test_a_catalog_without_keycloak_plans_nothing(world: World) -> None:
 
 def test_a_keycloak_that_cannot_be_read_is_planned_as_a_partial_step(world: World) -> None:
     world.failing.add("checksums")
-
     plan = world.plan()
+    failure = world.run(plan).failure
 
     assert (plan.action, plan.settled) == (RealmAction.UNREADABLE, False)
-    assert plan.line == "realm: Keycloak could not be read; not checked (checksums broke)"
-    assert world.run(plan).failure == plan.line
+    assert plan.error == "checksums broke"
+    assert failure == "realm: Keycloak could not be read; not checked (checksums broke)"
     assert "backup" not in world.events
 
 

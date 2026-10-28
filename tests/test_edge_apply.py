@@ -33,6 +33,7 @@ from git_support import (
     with_origin,
 )
 from test_edge_core import bind, bind_core_files, sha256
+from test_edge_plan_rows import find_row
 
 from edge import (
     apply,
@@ -49,8 +50,9 @@ from edge import (
     switches,
     tunnel,
 )
+from edge.plan_rows import PlanEvent
 from edge.realm import reconcile
-from edge.unit_plans import KeptImage, plan_kept_images
+from edge.unit_plans import ImageReference, KeptImage, plan_kept_images
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
@@ -711,7 +713,8 @@ def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
 
     assert exit_code == 0
     assert scripted.containers == {}
-    assert all(part in out for part in ("volumes step-ca, traefik-mcp-acme stay", "step-ca is off"))
+    assert "step-ca is off" in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_OFF, "volumes step-ca, traefik-mcp-acme kept")
 
 
 def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
@@ -1759,7 +1762,7 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
         f"--ff-only {tip}",
         f"the plan below applies HEAD {short(real_main)}, without the waiting commits",
     ]
-    assert "  step-ca: on (services step-ca, traefik-mcp-acme-owner, traefik-mcp)" in lines
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_ON, "traefik-mcp-acme-owner, traefik-mcp")
     assert exit_code == 1
     assert checkout_state(real_main) == before
 
@@ -2338,7 +2341,7 @@ def test_apply_to_a_disabled_switched_off_unit_removes_the_containers_and_keeps_
 
     assert exit_code == 0
     assert scripted.containers == {}
-    assert "its switch since 17.10. 22:10 stays" in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_OFF, "its switch since 17.10. 22:10 stays")
     assert marker(state) == SWITCHED_OFF_AT
 
 
@@ -2353,7 +2356,7 @@ def test_a_re_enabled_unit_with_a_switch_stays_stopped_and_nothing_is_created(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca stays stopped (switch since 17.10. 22:10)" in out
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED, "switched off since 17.10. 22:10")
     assert "nothing to change" in out
     assert scripted.calls[-1][2] == "ps"
     assert scripted.changing_verbs() == []
@@ -2444,7 +2447,7 @@ def test_an_empty_marker_still_means_switched_off_for_apply(switch, scripted, st
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca stays stopped" in out
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED)
     assert scripted.changing_verbs() == []
     assert marker(state) is not None
 
@@ -3237,7 +3240,7 @@ def test_a_core_change_and_a_unit_switch_share_one_plan_and_one_yes_core_first(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.index("traefik: recreate") < out.index("step-ca: on")
+    assert out.index("traefik: recreate") < find_row(out, "step-ca", PlanEvent.SWITCH_ON).start()
     assert out.count("apply exactly this plan") == 1
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
@@ -3274,10 +3277,9 @@ def test_an_enabled_unit_whose_barrier_stands_without_a_marker_stays_stopped(
 
     exit_code, out, _ = switch(answer="no")
 
-    assert exit_code == 0
-    assert "probe stays stopped (its barrier stands; no switch recorded)" in out
-    assert "nothing to change" in out
-    assert scripted.changing_verbs() == []
+    row = find_row(out, "probe", PlanEvent.STAYS_STOPPED, "barrier stands")
+    assert row.start() < out.index("nothing to change")
+    assert (exit_code, scripted.changing_verbs()) == (0, [])
 
 
 @pytest.mark.parametrize(
@@ -3731,7 +3733,7 @@ def test_a_socket_proxy_change_and_a_unit_switch_share_one_yes_and_the_core_goes
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert out.index("traefik: recreate") < out.index("step-ca: on")
+    assert out.index("traefik: recreate") < find_row(out, "step-ca", PlanEvent.SWITCH_ON).start()
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
     assert up_calls(scripted)[:2] == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
@@ -3966,11 +3968,10 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_switched_off_is_named_and_ne
 
     exit_code, out, _ = switch(answer="no")
 
-    assert exit_code == 0
-    assert "step-ca stays stopped (switch since" in out
-    assert HELD_SWITCHED_OFF in out
+    row = find_row(out, "step-ca", PlanEvent.STAYS_STOPPED, "switched off since")
+    assert out.index(HELD_SWITCHED_OFF) < row.start()
     assert "nothing to change" in out
-    assert scripted.changing_verbs() == []
+    assert (exit_code, scripted.changing_verbs()) == (0, [])
     assert follower_entry(state) == entry
 
 
@@ -3985,7 +3986,7 @@ def test_a_switch_that_appears_while_the_prompt_waits_holds_the_follower_and_eve
     exit_code, out, err = switch(while_prompt_waits=lambda: switch_off(state, LATER_SWITCH_AT))
 
     assert exit_code == 1
-    assert "probe: on" in out
+    assert find_row(out, "probe", PlanEvent.SWITCH_ON)
     assert (
         "partial, step-ca was switched off meanwhile (since "
         f"{switches.describe_since(LATER_SWITCH_AT)}); traefik-mcp is not recreated; "
@@ -4061,7 +4062,7 @@ def test_a_fixed_file_reaches_traefik_mcp_before_a_crashed_step_ca_is_started(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca: on" in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_ON)
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_FOLLOWER) < scripted.calls.index(starting_step_ca)
     assert out.index(FOLLOWER_RECREATED) < out.index("step-ca is on")
@@ -4191,17 +4192,7 @@ def test_a_missing_traefik_mcp_yml_cannot_be_planned_whatever_step_cas_state(
     assert scripted.changing_verbs() == []
 
 
-def kept_line(service: str, running: str, configured: str, unit: str = "step-ca") -> str:
-    """#91 rule 4: the wording of a kept image."""
-    return (
-        f"{unit}: {service} runs {running}, compose.yaml names {configured}; edge apply never "
-        "swaps the image of a running unit it does not build, so it keeps running; the upgrade "
-        "is yours (block 6; Keycloak with a dump first, K11b)"
-    )
-
-
-NEVER_SWAPS = "edge apply never swaps the image of a running unit"
-STEP_CA_KEPT = kept_line("step-ca", STEP_CA_IMAGE, STEP_CA_BUMP)
+OLD_IMAGE = str(PlanEvent.OLD_IMAGE)
 
 
 def test_a_running_unit_whose_image_changed_is_named_and_nothing_changes(
@@ -4218,7 +4209,8 @@ def test_a_running_unit_whose_image_changed_is_named_and_nothing_changes(
     assert runs[0] == runs[1]
     exit_code, out, _ = runs[0]
     assert exit_code == 0
-    assert f"  {STEP_CA_KEPT}\n{apply.COMMAND}: nothing to change" in out
+    assert out.index(OLD_IMAGE) < out.index(f"{apply.COMMAND}: nothing to change")
+    assert out.count(OLD_IMAGE) == 1
     assert "Type" not in out
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids
@@ -4238,7 +4230,7 @@ def test_a_unit_switched_on_names_its_running_service_whose_image_changed_after_
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert out.index("  step-ca: on (") < out.index(f"  {STEP_CA_KEPT}\n")
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_ON).start() < out.index(OLD_IMAGE)
     assert "traefik-mcp runs" not in out
     assert up_calls(scripted) == [
         ["--profile", "step-ca", "up", "-d", "--no-recreate", *STEP_CA_SERVICES]
@@ -4278,7 +4270,8 @@ def test_only_a_live_container_is_named_for_its_image(state, exit_code, named):
         (),
     )
 
-    assert kept == ([KeptImage("step-ca", "step-ca", IMAGE, STEP_CA_BUMP)] if named else [])
+    running, configured = ImageReference.parse(IMAGE), ImageReference.parse(STEP_CA_BUMP)
+    assert kept == ([KeptImage("step-ca", running, configured)] if named else [])
 
 
 def test_a_unit_planned_off_is_not_named_for_its_image(switch, scripted, repository):
@@ -4290,7 +4283,7 @@ def test_a_unit_planned_off_is_not_named_for_its_image(switch, scripted, reposit
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert NEVER_SWAPS not in out
+    assert OLD_IMAGE not in out
     assert "step-ca is off" in out
 
 
@@ -4305,7 +4298,7 @@ def test_a_switched_off_unit_with_a_running_container_is_named_and_stays_stopped
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert out.index("step-ca stays stopped") < out.index(STEP_CA_KEPT)
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED).start() < out.index(OLD_IMAGE)
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
 
@@ -4322,7 +4315,7 @@ def test_a_traefik_bump_recreates_traefik_and_its_follower_and_names_no_image(
 
     assert exit_code == 0
     assert up_calls(scripted) == [RECREATE_TRAEFIK, RECREATE_FOLLOWER]
-    assert NEVER_SWAPS not in out
+    assert OLD_IMAGE not in out
 
 
 def test_a_socket_proxy_bump_is_the_core_recreate_only(applied_core, switch, scripted):
@@ -4333,7 +4326,7 @@ def test_a_socket_proxy_bump_is_the_core_recreate_only(applied_core, switch, scr
 
     assert exit_code == 0
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
-    assert NEVER_SWAPS not in out
+    assert OLD_IMAGE not in out
 
 
 def test_a_service_of_a_profile_the_catalog_does_not_name_is_not_named(
@@ -4347,7 +4340,7 @@ def test_a_service_of_a_profile_the_catalog_does_not_name_is_not_named(
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert NEVER_SWAPS not in out
+    assert OLD_IMAGE not in out
     assert "nothing to change" in out
 
 
@@ -4361,7 +4354,7 @@ def test_a_unit_service_whose_definition_names_no_image_is_not_compared(
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert NEVER_SWAPS not in out
+    assert OLD_IMAGE not in out
     assert "nothing to change" in out
 
 
@@ -4400,7 +4393,7 @@ def test_a_kept_image_and_a_core_recreate_share_one_yes_core_first(
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert out.index("  traefik: recreate") < out.index(f"  {STEP_CA_KEPT}\n")
+    assert out.index("  traefik: recreate") < out.index(OLD_IMAGE)
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert {service: scripted.container_ids[service] for service in STEP_CA_SERVICES} == unit_ids
 
@@ -4449,7 +4442,7 @@ def test_a_realm_not_applied_before_is_planned_and_a_no_backs_up_and_applies_not
     exit_code, out, err = switch("no")
 
     assert exit_code == 1
-    assert "realm: apply keycloak/*.yaml (no realm apply is recorded)" in out
+    assert PlanEvent.REALM_APPLY in out
     assert "aborted, nothing changed" in err
     assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
 
@@ -4522,7 +4515,7 @@ def test_a_config_cli_that_fails_ends_partial_names_the_snapshot_and_is_planned_
     scripted.config_cli_fails = False
     _, out, _ = switch("no")
 
-    assert "realm: apply keycloak/*.yaml" in out
+    assert PlanEvent.REALM_APPLY in out
 
 
 @pytest.mark.usefixtures("realm_unit")
@@ -4575,7 +4568,7 @@ def test_keycloak_switched_off_by_the_config_is_one_line_and_no_step(
 
     _, out, _ = switch("no")
 
-    assert "realm: no realm apply is recorded; Keycloak is off, so it is not applied" in out
+    assert PlanEvent.REALM_HELD in out
     assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
 
 
@@ -4588,7 +4581,7 @@ def test_keycloak_switched_off_by_its_marker_is_never_started_or_applied(
 
     _, out, _ = switch()
 
-    assert "Keycloak is switched off, so it is not applied" in out
+    assert PlanEvent.REALM_HELD in out
     assert scripted.containers == {"keycloak": "running"}
     assert (realm_backup.asked, scripted.realm_applies, scripted.changing_verbs()) == ([], 0, [])
 
@@ -4602,5 +4595,5 @@ def test_keycloak_that_starts_in_this_run_is_not_checked_and_one_line_says_so(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
+    assert PlanEvent.REALM_LATER in out
     assert (realm_backup.asked, scripted.realm_applies) == ([], 0)
