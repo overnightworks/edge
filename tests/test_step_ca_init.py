@@ -17,7 +17,7 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -178,7 +178,7 @@ def make_init(init_module, docker: DockerHost, session: Session, secrets_dir: Pa
     tools = init_module.Tools(
         run=docker.run, say=session.printed.append, host_uid=lambda: session.uid
     )
-    return lambda read_only: init_module.StepCaInit(tools, secrets_dir, read_only=read_only)
+    return lambda read_only, at=secrets_dir: init_module.StepCaInit(tools, at, read_only=read_only)
 
 
 @pytest.fixture
@@ -524,18 +524,10 @@ def test_a_docker_failure_while_reading_compose_is_one_line(init, docker, sessio
     ],
 )
 def test_an_unexpected_exception_is_one_line_in_both_modes(
-    init_module, docker, session, read_only, exit_code, last_line
+    make_init, session, read_only, exit_code, last_line
 ):
     """#628 cell 5: --check says the fact bare with its step, a plain run prints as before."""
-
-    class UnreadableSecretsDirectory:
-        def is_dir(self) -> bool:
-            raise KeyError("no answer")
-
-    tools = init_module.Tools(
-        run=docker.run, say=session.printed.append, host_uid=lambda: session.uid
-    )
-    init = init_module.StepCaInit(tools, UnreadableSecretsDirectory(), read_only=read_only)
+    init = make_init(read_only, SimpleNamespace(is_dir=lambda: {}[0]))
 
     assert (init.check() if read_only else init.run()) == exit_code
     assert session.printed[-1] == last_line
