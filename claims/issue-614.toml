@@ -1,8 +1,0 @@
-claim_id = "1f4ea82416f44870a02603881975e803"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "38a1814e67ddcf1083cb9418d9fae14ac2bce36b"
-branch = "claude/issue-614-program-name-owner"
-scope = ["docs/naming.md", "src/edge/cli.py", "src/edge/emergency.py", "src/edge/external/apply.py", "src/edge/external/cli.py", "src/edge/realm/reconcile.py", "src/edge/switch_events.py", "src/edge/waiting.py", "src/edge_backup/cli.py", "src/edge_backup/runner.py", "src/hal/backup_commands.py", "src/hal/check_commands.py", "src/hal/cli.py", "src/hal/grammar.py", "src/hal/legal_commands.py", "src/hal/rename_commands.py", "src/hal/rename_rows.py", "src/hal/setup_commands.py", "src/hal/stack_commands.py", "src/hal/version.py", "src/hal_output/__init__.py", "src/hal_output/command.py", "src/home_tools/check.py", "src/home_tools/hook_check.py", "src/home_tools/next.py", "src/home_tools/platform_check.py", "src/home_tools/secrets_setup.py", "src/home_tools/setup.py", "src/home_tools/system_step.py", "tests/test_command_texts.py", "tests/test_hal_cli.py"]
-opened_commit = "191e498273a13a16f459d999ee1fb416bb95502c"
-whole_reason = "One owner and its zero-tolerance check land with every caller converted; split, the check is red or the owner has no callers."
