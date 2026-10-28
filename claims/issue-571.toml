@@ -1,0 +1,8 @@
+claim_id = "ff6f930031ea45eeb357b31497857750"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "5b61670b34cc43ea5dc41614ae70b0583a4ede64"
+branch = "claude/issue-571-s2g3d-1-secrets-report-english"
+scope = [".github/workflows/ci.yml", "docs/home.md", "src/home_tools/next.py", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_view.py", "tests/home/test_app_secrets.py", "tests/home/test_next.py", "tests/home/test_secrets_setup.py", "tests/home/test_secrets_view.py"]
+opened_commit = "5b38c1b5b96029e70bbe5f27f7f9d1b64c381eae"
+whole_reason = "The secrets report's wording has one owner and every reader and pin of it (next.py, the wizard's row, the tests, ci.yml's grep, the doc's quotes) moves in the same commit, or the pins go red."
