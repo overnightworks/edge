@@ -42,15 +42,7 @@ class Plan:
         )
 
     def describe(self) -> list[str]:
-        plans = (
-            *self.core,
-            *self.followers,
-            *self.built,
-            *self.recreates,
-            *self.plans,
-        )
         return [
             *self.appkit.describe(),
             *self.legal.describe(),
-            *(plan.describe() for plan in plans),
         ]

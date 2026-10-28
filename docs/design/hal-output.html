@@ -739,8 +739,8 @@ edge apply: nothing published</pre>
 <span class="b">  ~</span> agent-egress    recreate       <span class="d">definition changed</span>
 <span class="b">  ~</span> traefik-mcp     recreate       <span class="d">definition changed</span>
 <span class="hd">units</span>
+<span class="b">  ~</span> agent-service   recreate       <span class="d">image edge-agent-service:0.7.0-2.1.302 → edge-agent-service:0.8.0-2.1.302 · in-flight requests end</span>
 <span class="b">  ~</span> legal           recreate       <span class="d">definition changed</span>
-<span class="b">  ~</span> agent-service   recreate       <span class="d">image 0.7.0-2.1.302 → 0.8.0-2.1.302 · in-flight requests end</span>
 <span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
 <span class="y">  !</span> keycloak        old image      <span class="d">quay.io/keycloak/keycloak:26.8.1@79c6… · compose.yaml @a78d…</span>
 <span class="y">  !</span> keycloak        realm skipped  <span class="d">the realm observer failed (…)</span>
@@ -781,7 +781,7 @@ Type <span class="w">yes</span> to apply 8 changes: yes
     <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
     <li><b>Rechtsseiten:</b> Zahl und Namen; die zwölf neuen Abschnitte zeigt <code>-v</code>.</li>
     <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>.</li>
-    <li><b>Welche Gruppen schon Zeilen sind:</b> die alten Images und der Realm (<code>! ~ ·</code> unter <code>units</code>) und die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>); der Rest des Plans steht noch als Text davor, bis seine Gruppe umgestellt ist.</li>
+    <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>) und die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>); der Rest des Plans steht noch als Text davor, bis seine Gruppe umgestellt ist.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
   </ul>
 </section>

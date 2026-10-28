@@ -33,6 +33,7 @@ from git_support import (
     with_origin,
 )
 from test_edge_core import bind, bind_core_files, sha256
+from test_edge_plan_rows import find_row, row_at
 
 from edge import (
     apply,
@@ -712,7 +713,8 @@ def test_switching_off_removes_the_containers_and_names_the_volumes_that_stay(
 
     assert exit_code == 0
     assert scripted.containers == {}
-    assert all(part in out for part in ("volumes step-ca, traefik-mcp-acme stay", "step-ca is off"))
+    assert "step-ca is off" in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_OFF, "volumes step-ca, traefik-mcp-acme kept")
 
 
 def test_a_unit_already_as_the_catalog_says_changes_nothing_and_asks_nothing(
@@ -1760,7 +1762,7 @@ def test_waiting_commits_and_their_files_are_shown_then_head_is_planned(
         f"--ff-only {tip}",
         f"the plan below applies HEAD {short(real_main)}, without the waiting commits",
     ]
-    assert "  step-ca: on (services step-ca, traefik-mcp-acme-owner, traefik-mcp)" in lines
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_ON, "traefik-mcp-acme-owner, traefik-mcp")
     assert exit_code == 1
     assert checkout_state(real_main) == before
 
@@ -2339,7 +2341,7 @@ def test_apply_to_a_disabled_switched_off_unit_removes_the_containers_and_keeps_
 
     assert exit_code == 0
     assert scripted.containers == {}
-    assert "its switch since 17.10. 22:10 stays" in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_OFF, "its switch since 17.10. 22:10 stays")
     assert marker(state) == SWITCHED_OFF_AT
 
 
@@ -2354,7 +2356,7 @@ def test_a_re_enabled_unit_with_a_switch_stays_stopped_and_nothing_is_created(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca stays stopped (switch since 17.10. 22:10)" in out
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED, "switched off since 17.10. 22:10")
     assert "nothing to change" in out
     assert scripted.calls[-1][2] == "ps"
     assert scripted.changing_verbs() == []
@@ -2445,7 +2447,7 @@ def test_an_empty_marker_still_means_switched_off_for_apply(switch, scripted, st
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca stays stopped" in out
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED)
     assert scripted.changing_verbs() == []
     assert marker(state) is not None
 
@@ -2950,7 +2952,7 @@ def test_a_first_apply_recreates_traefik_proves_the_barriers_and_records_its_fil
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (traefik.yml has no applied record)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "traefik.yml has no applied record")
     assert [call for call in scripted.calls if call[2] == "up"] == [RECREATE_TRAEFIK]
     assert scripted.container_ids["traefik"] != ids["traefik"]
     assert scripted.container_ids["socket-proxy"] == ids["socket-proxy"]
@@ -2986,7 +2988,7 @@ def test_a_changed_traefik_yml_is_recorded_only_after_the_barriers_are_proven(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (traefik.yml changed)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "traefik.yml changed")
     assert RECREATE_TRAEFIK in scripted.calls
     assert records_seen[0] == UNFINISHED
     assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
@@ -3018,7 +3020,8 @@ def test_a_record_that_cannot_be_trusted_counts_as_changed(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert f"traefik: recreate ({why.replace('RECORD', str(state / 'applied.json'))})" in out
+    fact = why.replace("RECORD", str(state / "applied.json"))
+    assert find_row(out, "traefik", PlanEvent.RECREATE, fact)
     assert RECREATE_TRAEFIK in scripted.calls
     assert applied(state)["traefik"] == {"traefik.yml": digest}
 
@@ -3037,7 +3040,7 @@ def test_a_changed_traefik_yml_with_no_live_traefik_is_named_and_traefik_is_not_
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert "traefik: traefik.yml changed; it is not running and is not started" in out
+    assert find_row(out, "traefik", PlanEvent.NOT_STARTED, "traefik.yml changed · not running")
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
     assert scripted.containers.get("traefik") == traefik
@@ -3134,7 +3137,7 @@ def test_a_traefik_that_dies_right_after_the_recreate_is_partial_and_the_next_ru
     assert RECREATED not in out
     assert scripted.containers["traefik"] == "restarting"
     _, again, _ = switch("no")
-    assert "traefik: recreate (the last recreate did not finish)" in again
+    assert find_row(again, "traefik", PlanEvent.RECREATE, "the last recreate did not finish")
 
 
 def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recreates_again(
@@ -3158,7 +3161,7 @@ def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recr
     ingress.rejecting = False
     exit_code, out, _ = switch()
     assert exit_code == 0
-    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "the last recreate did not finish")
 
 
 def test_every_unproven_barrier_after_the_recreate_is_named_in_the_partial_line(
@@ -3209,7 +3212,7 @@ def test_a_recreate_that_did_not_finish_is_planned_again_after_traefik_yml_is_re
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "the last recreate did not finish")
     assert RECREATED in out
     assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
 
@@ -3226,7 +3229,7 @@ def test_a_traefik_yml_changed_during_the_recreate_is_recreated_again_by_the_nex
     scripted.after_up = None
     exit_code, out, _ = switch()
     assert exit_code == 0
-    assert "traefik: recreate (traefik.yml changed)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "traefik.yml changed")
 
 
 def test_a_core_change_and_a_unit_switch_share_one_plan_and_one_yes_core_first(
@@ -3238,7 +3241,7 @@ def test_a_core_change_and_a_unit_switch_share_one_plan_and_one_yes_core_first(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.index("traefik: recreate") < out.index("step-ca: on")
+    assert row_at(out, "traefik", PlanEvent.RECREATE) < row_at(out, "step-ca", PlanEvent.SWITCH_ON)
     assert out.count("apply exactly this plan") == 1
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
@@ -3275,10 +3278,9 @@ def test_an_enabled_unit_whose_barrier_stands_without_a_marker_stays_stopped(
 
     exit_code, out, _ = switch(answer="no")
 
-    assert exit_code == 0
-    assert "probe stays stopped (its barrier stands; no switch recorded)" in out
-    assert "nothing to change" in out
-    assert scripted.changing_verbs() == []
+    row = find_row(out, "probe", PlanEvent.STAYS_STOPPED, "barrier stands")
+    assert row.start() < out.index("nothing to change")
+    assert (exit_code, scripted.changing_verbs()) == (0, [])
 
 
 @pytest.mark.parametrize(
@@ -3318,8 +3320,8 @@ def test_a_changed_socket_proxy_definition_recreates_socket_proxy_then_traefik(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.index("socket-proxy: recreate (its compose definition changed)") < out.index(
-        "traefik: recreate (socket-proxy is recreated)"
+    assert row_at(out, "socket-proxy", PlanEvent.RECREATE) < row_at(
+        out, "traefik", PlanEvent.RECREATE, "socket-proxy is recreated"
     )
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
     assert all(scripted.container_ids[service] != ids[service] for service in ids)
@@ -3335,7 +3337,7 @@ def test_a_changed_traefik_definition_recreates_only_traefik(applied_core, switc
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (its compose definition changed)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "definition changed")
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert scripted.container_ids["socket-proxy"] == ids["socket-proxy"]
     assert CORE_CURRENT in out
@@ -3372,7 +3374,7 @@ def test_a_changed_traefik_definition_and_traefik_yml_are_one_recreate_recording
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (its compose definition changed; traefik.yml changed)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "definition changed · traefik.yml changed")
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert applied(state) == {"traefik": {"traefik.yml": planned}}
 
@@ -3393,9 +3395,9 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_traefik_is_left
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    named = "socket-proxy: its compose definition changed; it is not running and is not started"
-    assert (named in out) is bool(state_of_proxy)
-    assert "traefik: recreate" not in out
+    named = find_row(out, "socket-proxy", PlanEvent.NOT_STARTED, "definition changed · not running")
+    assert bool(named) is bool(state_of_proxy)
+    assert find_row(out, "traefik", PlanEvent.RECREATE) is None
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
 
@@ -3420,10 +3422,8 @@ def test_a_failed_socket_proxy_recreate_is_partial_leaves_traefik_unfinished_and
     assert SOCKET_PROXY_RECREATED not in out
     scripted.failing_verb = None
     _, again, _ = switch("no")
-    assert "socket-proxy: recreate (its compose definition changed)" in again
-    assert (
-        "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)" in again
-    )
+    assert find_row(again, "socket-proxy", PlanEvent.RECREATE, "definition changed")
+    assert find_row(again, "traefik", PlanEvent.RECREATE, "finish · socket-proxy is recreated")
 
 
 def test_a_socket_proxy_its_recreate_left_created_is_recreated_by_the_next_run(
@@ -3444,7 +3444,7 @@ def test_a_socket_proxy_its_recreate_left_created_is_recreated_by_the_next_run(
     scripted.calls.clear()
     exit_code, out, _ = switch()
     assert exit_code == 0
-    assert "socket-proxy: recreate (the last recreate did not finish)" in out
+    assert find_row(out, "socket-proxy", PlanEvent.RECREATE, "the last recreate did not finish")
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
     assert out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT)
     assert scripted.containers["socket-proxy"] == "running"
@@ -3466,7 +3466,7 @@ def test_a_traefik_its_recreate_left_created_is_recreated_by_the_next_run(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (the last recreate did not finish)\n" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "the last recreate did not finish")
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert out.index(RECREATED) < out.index(CORE_CURRENT)
 
@@ -3487,7 +3487,7 @@ def test_a_crash_looping_socket_proxy_is_partial_and_the_next_run_is_partial_aga
     assert applied(state) == UNFINISHED
     exit_code, out, err = switch()
     assert exit_code == 1
-    assert "traefik: recreate (the last recreate did not finish)" in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "the last recreate did not finish")
     assert "partial, socket-proxy is not running after the traefik recreate" in err
     assert CORE_CURRENT not in out
 
@@ -3697,7 +3697,7 @@ def test_the_config_hashes_are_read_from_a_real_config_hash_answer():
 @pytest.mark.parametrize(
     ("traefik_yml_changed", "why"),
     [
-        (True, "traefik.yml changed; socket-proxy is recreated"),
+        (True, "traefik.yml changed · socket-proxy is recreated"),
         (False, "socket-proxy is recreated"),
     ],
 )
@@ -3714,7 +3714,7 @@ def test_the_core_is_not_current_while_a_changed_core_service_is_not_started(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert f"traefik: {why}; it is not running and is not started" in out
+    assert find_row(out, "traefik", PlanEvent.NOT_STARTED, f"{why} · not running")
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
     assert SOCKET_PROXY_RECREATED in out
     assert CORE_CURRENT not in out
@@ -3732,7 +3732,7 @@ def test_a_socket_proxy_change_and_a_unit_switch_share_one_yes_and_the_core_goes
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert out.index("traefik: recreate") < out.index("step-ca: on")
+    assert row_at(out, "traefik", PlanEvent.RECREATE) < row_at(out, "step-ca", PlanEvent.SWITCH_ON)
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
     assert up_calls(scripted)[:2] == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK]
@@ -3781,7 +3781,7 @@ def test_a_core_service_stopped_while_the_prompt_waits_is_not_recreated_and_no_u
     exit_code, out, err = switch(while_prompt_waits=stop_it)
 
     assert exit_code == 1
-    assert f"{stopped}: recreate" in out
+    assert find_row(out, stopped, PlanEvent.RECREATE)
     assert stopped_meanwhile(stopped) in err
     assert up_calls(scripted) == ups
     assert scripted.containers[stopped] == left_as
@@ -3830,8 +3830,8 @@ def test_a_traefik_stopped_before_its_own_recreate_keeps_an_emptied_entry_for_th
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik: recreate (the last recreate did not finish)" in out
-    assert "socket-proxy: recreate" not in out
+    assert find_row(out, "traefik", PlanEvent.RECREATE, "the last recreate did not finish")
+    assert find_row(out, "socket-proxy", PlanEvent.RECREATE) is None
     assert up_calls(scripted)[0] == RECREATE_TRAEFIK
     assert applied(state) == {"traefik": {"traefik.yml": sha256(repository / "traefik.yml")}}
 
@@ -3843,10 +3843,8 @@ RECREATE_FOLLOWER = [*RECREATE_TRAEFIK[:-1], "traefik-mcp"]
 FOLLOWER_RECREATED = (
     f"{apply.COMMAND}: traefik-mcp is recreated and runs the checked-out {FOLLOWER_FILE}"
 )
-HELD_OFF = "traefik-mcp: traefik-mcp.yml changed; step-ca is off, so it is not started"
-HELD_SWITCHED_OFF = (
-    "traefik-mcp: traefik-mcp.yml changed; step-ca is switched off, so it is not started"
-)
+HELD_OFF = "traefik-mcp.yml changed · step-ca is off"
+HELD_SWITCHED_OFF = "traefik-mcp.yml changed · step-ca is switched off"
 
 
 def bind_traefik_mcp_files(config: dict, repository: Path) -> None:
@@ -3899,7 +3897,7 @@ def test_a_changed_traefik_mcp_yml_recreates_exactly_traefik_mcp_and_records_the
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik-mcp: recreate (traefik-mcp.yml changed)" in out
+    assert find_row(out, "traefik-mcp", PlanEvent.RECREATE, "traefik-mcp.yml changed")
     assert out.count("apply exactly this plan") == 1
     assert up_calls(scripted) == [RECREATE_FOLLOWER]
     assert scripted.container_ids["traefik-mcp"] != ids["traefik-mcp"]
@@ -3917,7 +3915,7 @@ def test_a_follower_without_an_entry_is_recreated_once_and_a_second_run_changes_
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "traefik-mcp: recreate (traefik-mcp.yml has no applied record)" in out
+    assert find_row(out, "traefik-mcp", PlanEvent.RECREATE, "traefik-mcp.yml has no applied record")
     assert up_calls(scripted) == [RECREATE_FOLLOWER]
     ids = dict(scripted.container_ids)
     scripted.calls.clear()
@@ -3948,7 +3946,8 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_disabled_and_gone_is_named_o
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert all(part in out for part in (held, "nothing to change"))
+    assert find_row(out, "traefik-mcp", PlanEvent.NOT_STARTED, held)
+    assert "nothing to change" in out
     assert scripted.changing_verbs() == []
     assert follower_entry(state) == entry
 
@@ -3967,11 +3966,10 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_switched_off_is_named_and_ne
 
     exit_code, out, _ = switch(answer="no")
 
-    assert exit_code == 0
-    assert "step-ca stays stopped (switch since" in out
-    assert HELD_SWITCHED_OFF in out
+    row = find_row(out, "step-ca", PlanEvent.STAYS_STOPPED, "switched off since")
+    assert row_at(out, "traefik-mcp", PlanEvent.NOT_STARTED, HELD_SWITCHED_OFF) < row.start()
     assert "nothing to change" in out
-    assert scripted.changing_verbs() == []
+    assert (exit_code, scripted.changing_verbs()) == (0, [])
     assert follower_entry(state) == entry
 
 
@@ -3986,7 +3984,7 @@ def test_a_switch_that_appears_while_the_prompt_waits_holds_the_follower_and_eve
     exit_code, out, err = switch(while_prompt_waits=lambda: switch_off(state, LATER_SWITCH_AT))
 
     assert exit_code == 1
-    assert "probe: on" in out
+    assert find_row(out, "probe", PlanEvent.SWITCH_ON)
     assert (
         "partial, step-ca was switched off meanwhile (since "
         f"{switches.describe_since(LATER_SWITCH_AT)}); traefik-mcp is not recreated; "
@@ -4014,7 +4012,7 @@ def test_a_failed_follower_recreate_empties_its_entry_and_the_next_runs_recreate
     (repository / FOLLOWER_FILE).write_text(recorded)
     exit_code, out, _ = switch()
     assert exit_code == 0
-    assert "traefik-mcp: recreate (the last recreate did not finish)" in out
+    assert find_row(out, "traefik-mcp", PlanEvent.RECREATE, "the last recreate did not finish")
     assert follower_entry(state) == follower_digest(repository)
 
 
@@ -4062,7 +4060,7 @@ def test_a_fixed_file_reaches_traefik_mcp_before_a_crashed_step_ca_is_started(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca: on" in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_ON)
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_FOLLOWER) < scripted.calls.index(starting_step_ca)
     assert out.index(FOLLOWER_RECREATED) < out.index("step-ca is on")
@@ -4081,7 +4079,7 @@ def test_a_switch_on_records_the_follower_only_once_the_unit_is_observed_on(
 
     exit_code, out, _ = switch()
 
-    assert "traefik-mcp: traefik-mcp.yml has no applied record; it starts with step-ca" in out
+    assert find_row(out, "traefik-mcp", PlanEvent.STARTS_LATER, "no applied record · with step-ca")
     assert RECREATE_FOLLOWER not in scripted.calls
     if not observed_on:
         assert exit_code == 1
@@ -4230,7 +4228,7 @@ def test_a_unit_switched_on_names_its_running_service_whose_image_changed_after_
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert out.index("  step-ca: on (") < out.index(OLD_IMAGE)
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_ON).start() < out.index(OLD_IMAGE)
     assert "traefik-mcp runs" not in out
     assert up_calls(scripted) == [
         ["--profile", "step-ca", "up", "-d", "--no-recreate", *STEP_CA_SERVICES]
@@ -4298,7 +4296,7 @@ def test_a_switched_off_unit_with_a_running_container_is_named_and_stays_stopped
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert out.index("step-ca stays stopped") < out.index(OLD_IMAGE)
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED).start() < out.index(OLD_IMAGE)
     assert "nothing to change" in out
     assert scripted.changing_verbs() == []
 
@@ -4393,7 +4391,7 @@ def test_a_kept_image_and_a_core_recreate_share_one_yes_core_first(
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert out.index("  traefik: recreate") < out.index(OLD_IMAGE)
+    assert row_at(out, "traefik", PlanEvent.RECREATE) < out.index(OLD_IMAGE)
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert {service: scripted.container_ids[service] for service in STEP_CA_SERVICES} == unit_ids
 

@@ -534,7 +534,7 @@ a minute, `1h02m` from an hour) and stands after the counts and before the hint;
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit ends with the wizard's own error pair; setup prints no secrets row and no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup --apply` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
 `--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
@@ -679,16 +679,16 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
   the cells prove that a refused run and the dry run delete nothing, that the purge and the deletion are complete without
   touching the installer's logs, that mail lines stay in the journal, that a retry converges, that kerneloops restarts without
-  `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 24.04, so the proof does not run
-  the removal's maintainer scripts of the release on the PC nor its systemd; the PC's own facts cover that.
+  `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 26.04, the PC's release, so the proof
+  runs that release's removal scripts, but with systemd as PID 1 of a container, not the PC's boot; the PC's own facts cover that.
   The container runs a real Docker engine (its images and snapshots live in anonymous volumes that `run.sh` removes with the container);
   cell DK1 proves, before the first apply, that it answers with the default `json-file` log driver, runs an imported rootfs
   offline and starts without `/etc/docker/daemon.json`. DK2 proves the merge (no file, and the PC's 128-byte file with its
   backup), DK3 the refusals and a Docker that does not answer, DK4 the dry run and the restart on need only, DK5 that a
   running `unless-stopped` container comes back, one stopped by hand stays down and both keep `json-file`, DK6 that a
   container created afterwards is read by `docker logs`, `docker compose logs` and `journalctl CONTAINER_NAME=`, and DK7 the
-  rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the 24.04 package's
-  Docker without a GPU, not the PC's. The agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
+  rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the same 26.04 Docker
+  package as the PC, but inside a container and without a GPU. The agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
 ### Das Mail-Konto von `hal check`
 
