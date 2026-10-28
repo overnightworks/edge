@@ -267,11 +267,11 @@ def plan_recreates(
         for service in core.dependency_order(config, services):
             if service not in changed:
                 continue
-            if swapped := _swapped_image(service, config, live, image_id):
-                if swapped not in moved:
-                    moved.append(swapped)
-            else:
+            swapped = _swapped_image(service, config, live, image_id)
+            if swapped is None:
                 recreates.append(Recreate(unit.key, service))
+            elif swapped not in moved:
+                moved.append(swapped)
     return RecreatePlans(recreates, moved)
 
 
