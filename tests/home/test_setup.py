@@ -697,7 +697,7 @@ class StubSudo:
     `-k` only forgets a ticket, so it is recorded and not executed.
     """
 
-    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, forgetting_exit_code: int = 0) -> None:
         self.log = tmp_path / "sudo.log"
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
@@ -705,7 +705,7 @@ class StubSudo:
         sudo.write_text(
             "#!/bin/sh\n"
             f'echo "$* | $(pwd) | $(env | grep \'^ANSIBLE_\' | tr \'\\n\' \' \')" >> {self.log}\n'
-            '[ "$1" = "-k" ] && exit 0\n'
+            f'[ "$1" = "-k" ] && exit {forgetting_exit_code}\n'
             'exec "$@"\n'
         )
         sudo.chmod(0o755)
@@ -764,6 +764,17 @@ def test_sudo_forgets_the_ticket_after_a_failing_play(tmp_path: Path, stub_sudo:
 
     assert not run.succeeded
     assert stub_sudo.calls()[-1][0] == "-k"
+
+
+def test_a_failing_sudo_k_fails_the_step_after_a_successful_play(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ruled E1: a ticket that could not be forgotten is never swallowed."""
+    StubSudo(tmp_path, monkeypatch, forgetting_exit_code=1)
+    playbook = fake_ansible(tmp_path, "true")
+
+    with pytest.raises(system_step.StepFailed) as failure:
+        system_step.run_playbook_as_root([str(playbook)])
+
+    assert isinstance(failure.value.__cause__, subprocess.CalledProcessError)
 
 
 def test_sudo_forgets_the_ticket_after_a_ctrl_c(tmp_path: Path, stub_sudo: StubSudo) -> None:

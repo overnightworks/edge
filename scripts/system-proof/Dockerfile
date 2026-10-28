@@ -9,7 +9,7 @@
 # agents' refusal cells (A1-8, A1-9) need and the cells DK1-DK7 drive; docker-compose-v2 is the `docker compose` of DK6;
 # busybox-static makes the rootfs it imports, so no image is pulled at proof time.
 # 26.04 makes sudo-rs the default `sudo`. The image carries both, and the `sudo` alternative defaults to classic sudo
-# (/usr/bin/sudo.ws); each proof stage pins its own variant.
+# (/usr/bin/sudo.ws); the sudo stages pin their own variant.
 FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive

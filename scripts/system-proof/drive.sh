@@ -1628,11 +1628,14 @@ home_is_untouched() {  # the offenders are listed in the evidence
 }
 
 cell_p_applies() {  # cell_p_applies <cell> <log> <ticket> <prompts>: a successful apply
-    local cell=$1 log=$2 ticket=$3 prompts=$4 code
+    local cell=$1 log=$2 ticket=$3 prompts=$4 code announced=true
     at_sudo_terminal "$log" "$ticket" "setup --apply"
     code=$?
+    if [ "$prompts" -eq 1 ]; then
+        announced="[ \"\$(grep -c '^  › system  *needs sudo' \"\$EVIDENCE/$log.log\")\" -eq 1 ] && announced_before_prompt $log"
+    fi
     verdict "$cell" "apply succeeds, hal asks $prompts time(s), no BECOME, the ticket is gone" \
-        "[ \$code -eq 0 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log $prompts && no_become_prompt $log && ticket_is_gone $log && row_in_log $log system '(changed|unchanged)'"
+        "[ \$code -eq 0 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log $prompts && no_become_prompt $log && ticket_is_gone $log && row_in_log $log system '(changed|unchanged)' && $announced"
     return
 }
 
@@ -1679,7 +1682,7 @@ cell_p_wrong_password() {  # cell_p_wrong_password <cell> <log>: sudo refuses th
 cell_p_config_of_root() {  # cell_p_config_of_root <cell> <log>: root's own ansible.cfg does not override the packaged one
     local cell=$1 log=$2 code python package ansible_playbook=/home/tester/.local/bin/ansible-playbook outside inside
     python=$(head -n 1 "$HOME_BIN" | sed 's/^#!//')
-    package=$("$python" -c 'import home_tools, pathlib; print(pathlib.Path(home_tools.__file__).parent / "system")')
+    package=$(PYTHONDONTWRITEBYTECODE=1 "$python" -c 'import home_tools, pathlib; print(pathlib.Path(home_tools.__file__).parent / "system")')
     printf '[defaults]\nstdout_callback = json\n' >/root/.ansible.cfg
     outside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd / && $ansible_playbook --version" 2>&1)
     inside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd $package && $ansible_playbook --version" 2>&1)

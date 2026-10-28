@@ -84,6 +84,13 @@ def read_recap(returncode: int, output: str) -> PlaybookRun:
     return PlaybookRun(succeeded, int(recap["changed"]))
 
 
+def _forget_the_sudo_ticket() -> None:
+    try:
+        subprocess.run(["sudo", "-k"], check=True)
+    except subprocess.CalledProcessError as failure:
+        raise StepFailed(f"sudo could not forget its ticket (exit {failure.returncode}) · it may still be valid") from failure
+
+
 def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
     """Runs `argv` under one `sudo` in the packaged `system/` directory, then makes sudo forget its ticket.
 
@@ -102,7 +109,7 @@ def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
                 sys.stdout.flush()
                 shown.append(line)
         finally:
-            subprocess.run(["sudo", "-k"], check=True)
+            _forget_the_sudo_ticket()
     return read_recap(playbook.returncode, "".join(shown))
 
 
