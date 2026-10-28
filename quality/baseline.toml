@@ -14,7 +14,7 @@
 "tests/test_edge_apply.py" = 4497
 "tests/test_edge_backup.py" = 1232
 "tests/test_edge_cloudflare_read.py" = 906
-"tests/test_edge_external.py" = 2792
+"tests/test_edge_external.py" = 2709
 "tests/test_edge_host_check.py" = 817
 "tests/test_keycloak_go_live.py" = 1729
 "tests/test_keycloak_probe.py" = 1038
@@ -34,7 +34,7 @@
 "hallucinai" = 96
 
 [function_lines."tests/test_edge_external.py"]
-"terminal" = 72
+"terminal" = 71
 
 [clones."probe/agent-service/egress.py"]
 "Client.main" = [["probe/agent-service/unit.py", "Inside.main"]]

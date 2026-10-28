@@ -566,3 +566,12 @@ def test_help_names_both_parts(capsys):
     said = " ".join(capsys.readouterr().out.split())
     assert "--closed" in said
     assert "the publish" in said
+    assert "external" not in said
+
+
+def test_top_level_help_names_only_existing_subcommands(capsys):
+    with pytest.raises(SystemExit) as stopped:
+        cli.main(["--help"])
+
+    assert stopped.value.code == 0
+    assert "external" not in capsys.readouterr().out

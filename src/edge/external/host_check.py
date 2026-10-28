@@ -22,6 +22,7 @@ from edge.external.cloudflare_read import (
     Snapshot,
     destination_host,
 )
+from hal_output.command import Verb, command
 
 OPERATOR_GROUP_NAME = "operator"
 ADDRESS_RECORD_TYPES = ("A", "AAAA", "CNAME")
@@ -51,7 +52,7 @@ class Problem(StrEnum):
     UNREACHABLE = "unreachable"
 
 
-_APPLY = "edge external apply"
+_APPLY = command(Verb.APPLY)
 _NEXT = {
     Problem.ACCESS_NOT_ENABLED: (
         "enable Zero Trust on the account in the Cloudflare dashboard and create the Access "
@@ -59,7 +60,8 @@ _NEXT = {
     ),
     Problem.RECORD_MISSING: f"`{_APPLY}`",
     Problem.RECORD_WRONG: (
-        "`edge external plan`; nothing is converted (D12), so fix a foreign type by hand"
+        f"`{_APPLY}` shows the Cloudflare plan before its yes; nothing is converted (D12), "
+        "so fix a foreign type by hand"
     ),
     Problem.APP_MISSING: f"`{_APPLY}`",
     Problem.POLICY_WRONG: f"`{_APPLY}`",
@@ -69,7 +71,7 @@ _NEXT = {
         "(`apply` never deletes it, #30 rule 7)"
     ),
     Problem.UNDECLARED_APP: "declare it, or delete the app in the dashboard",
-    Problem.ANSWER_WRONG: "`edge external plan`",
+    Problem.ANSWER_WRONG: f"`{_APPLY}` shows the Cloudflare plan before its yes",
     Problem.UNREACHABLE: "check that the tunnel and cloudflared run",
 }
 _ORDER = {problem: position for position, problem in enumerate(Problem)}

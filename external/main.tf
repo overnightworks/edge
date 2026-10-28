@@ -38,7 +38,7 @@ variable "state_passphrase" {
   sensitive = true
 }
 
-# `edge external apply` and the tests set this; the other runs leave it at the real catalog.
+# `hal apply` and the tests set this; the other runs leave it at the real catalog.
 variable "catalog_file" {
   type    = string
   default = null
