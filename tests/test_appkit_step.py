@@ -1,4 +1,4 @@
-"""The appkit step of the closed apply (#514, #532): the installed appkit's static files, written to
+"""The appkit step of the closed apply (#514): the installed appkit's static files, written to
 `appkit-<version>/` in `legal/assets/` (served by the legal unit) and in each Keycloak theme's
 `resources/`, on the scripted boundaries of `test_edge_apply`."""
 
@@ -6,7 +6,6 @@ import os
 import shutil
 import stat
 import subprocess
-import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import metadata
@@ -308,11 +307,19 @@ def test_the_module_writes_every_target_without_the_question(world):
         shutil.rmtree(target)
 
     finished = subprocess.run(
-        [sys.executable, "-m", "edge.appkit_step", str(world.repository)],
+        [
+            "uv",
+            "run",
+            "--project",
+            str(Path(__file__).parents[1]),
+            "python",
+            "-m",
+            "edge.appkit_step",
+            str(world.repository),
+        ],
         capture_output=True,
         text=True,
         check=False,
-        env={**os.environ, "PYTHONPATH": str(Path(appkit_step.__file__).parents[1])},
     )
 
     assert finished.returncode == 0, finished.stderr
