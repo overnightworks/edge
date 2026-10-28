@@ -1,8 +1,0 @@
-claim_id = "40b5b25cd9cb4f7493a67c84fbec9f21"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "f01efcb88f3014a1b4b1132ee468e50d9c38e58b"
-branch = "claude/issue-590-s2g3e2-store-refusal"
-scope = ["docs/home.md", "src/home_tools/next.py", "src/home_tools/secrets_setup.py", "tests/home/test_app_secrets.py", "tests/home/test_secrets_setup.py"]
-opened_commit = "8a769a15317e6c75810f63d6318d6dae7d7ba2cb"
-whole_reason = "The refusal's typed stop, the shared bare-command helper and the pins and sentence that describe the wizard's end change together; split apart, setup would print a second pair or home next would lose its helper."
