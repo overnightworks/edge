@@ -1,8 +1,0 @@
-claim_id = "72c8ae509c6d4db6879d8a0edbb88ece"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "d699881304b43d3ade281df9f7e19dba5ef81838"
-branch = "claude/issue-579-s2g3e-1-one-pair"
-scope = ["docs/home.md", "src/home_tools/secrets_setup.py", "src/home_tools/setup.py", "tests/home/test_app_secrets.py"]
-opened_commit = "55341826f89b7bb71c5d941bbed59c13cc224562"
-whole_reason = "The wizard's typed end and setup's stop report change together; the one test and the doc sentence move with them."
