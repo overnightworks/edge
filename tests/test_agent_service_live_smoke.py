@@ -119,7 +119,7 @@ def test_l3_names_which_field_of_the_served_line_is_empty(served, empty):
     _, l3 = live_smoke.turn_cells(0, output, KNOWN)
 
     assert l3.verdict is Verdict.FAILED
-    assert empty in l3.figure
+    assert l3.figure == f"run_started names {empty}"
 
 
 def test_l3_fails_when_only_the_answer_text_looks_like_the_served_line():
