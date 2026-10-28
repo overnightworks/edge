@@ -10,25 +10,19 @@ from pathlib import Path
 
 import pytest
 from git_support import committed_main, plain_git
-from rename_support import HTTPS, SSH, make_clone, memory_of, squeezed
+from rename_support import HTTPS, SSH, make_clone, memory_of, origin_of, squeezed, tree_state
+from terminal_support import type_at_prompt
 
 from hal import cli, rename_commands
-from hal.grammar import ExitCode
+from hal.grammar import Asks, ExitCode
 from hal.rename_commands import RunningProcess, World
 
 
-def origin_of(path: Path) -> str:
-    return plain_git(path, "config", "--get", "remote.origin.url").stdout.strip()
-
-
-def tree_state(home: Path) -> list[str]:
-    return sorted(
-        str(path.relative_to(home)) for path in home.rglob("*") if ".git/" not in str(path)
-    )
-
-
-def rename(world: World, apply: bool = True, old: str = "old", new: str = "fresh") -> ExitCode:
-    return rename_commands.rename(world, old, new, apply)
+def rename(world: World, dry_run: bool = False, old: str = "old", new: str = "fresh") -> ExitCode:
+    """`rename` with a person at a terminal who types `yes`."""
+    with pytest.MonkeyPatch.context() as patch:
+        type_at_prompt(patch)
+        return rename_commands.rename(world, old, new, dry_run)
 
 
 def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
@@ -37,7 +31,7 @@ def test_a_dry_run_prints_the_moves_and_the_syncs_and_changes_nothing(
     repository = locked
     before = tree_state(home)
 
-    code = rename(world, apply=False)
+    code = rename(world, dry_run=True)
 
     assert code == ExitCode.OK
     assert tree_state(home) == before
@@ -257,10 +251,10 @@ def test_a_name_that_is_not_a_repository_name_is_a_usage_error(name, capsys):
     assert stop.value.code == ExitCode.USAGE
 
 
-def test_the_command_is_registered_without_json_and_without_asking():
+def test_the_command_is_registered_without_json_and_asking_yes():
     command = next(command for command in cli.COMMANDS if command.name == "rename")
 
-    assert (command.json, command.asks.value) == (False, "never")
+    assert (command.json, command.asks) == (False, Asks.YES)
 
 
 def test_the_process_scan_finds_a_process_running_inside_a_clone(tmp_path):
@@ -463,7 +457,7 @@ def test_a_symbolic_link_in_the_way_is_refused_and_nothing_is_followed(
     fakes.running = [RunningProcess(4242, "claude", home.parent / "scratch" / "probe")]
     before = tree_state(home.parent)
 
-    code = cli.main(["rename", "old", "fresh", "--apply"])
+    code = cli.main(["rename", "old", "fresh"])
 
     assert code == ExitCode.REFUSED
     error = capsys.readouterr().err
@@ -599,7 +593,7 @@ def test_a_failure_in_a_middle_step_names_it_and_what_is_done_and_not_done(
     assert f"done: move {repository} -> {home / 'git' / 'fresh'}" in lines
     assert any(line.startswith("not done: repair 2 worktrees") for line in lines)
     assert any(line.startswith("not done: move ") and "projects" in line for line in lines)
-    assert lines[-1] == "next: hal rename fresh old --apply"
+    assert lines[-1] == "next: hal rename fresh old"
     assert "! unit check ~/.config/systemd/user/old.service points into a moved clone" in squeezed(
         captured.out
     )
@@ -694,7 +688,7 @@ def test_a_repeat_run_syncs_again_and_says_so_instead_of_nothing_to_do(
     out = capsys.readouterr().out
     assert code == ExitCode.OK
     assert fakes.uv_calls == rewrites(home / "git" / "fresh") * 2
-    assert out.splitlines()[-1] == "✓ renamed old → fresh · 1 step"
+    assert out.splitlines()[-1] == "✓ rename done · 1 changed · <1s"
     assert "nothing to do" not in out
 
 

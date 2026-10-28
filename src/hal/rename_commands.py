@@ -1,8 +1,9 @@
 """`hal rename OLD NEW`: moves the clones of a renamed repository on this PC. The repository is
 renamed on GitHub first; this moves what the rename leaves behind here: every clone under
 `~/git` with its worktrees, its `origin` URL and its Claude project memory, and the `origin` of a
-deploy checkout elsewhere. Without `--apply` it only shows. Units, links and uv tools that point
-into a moved clone are reported, never rewritten: the repository's own head owns them.
+deploy checkout elsewhere. Without `--dry-run` it shows, asks one yes and moves. Units, links and
+uv tools that point into a moved clone are reported, never rewritten: the repository's own head
+owns them.
 
 The plan reads the state it finds, so a rerun after a halfway stop finishes the clones that
 were moved but not completed."""
@@ -11,16 +12,18 @@ import argparse
 import os
 import re
 import subprocess
-import sys
+import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
+from edge.terminal import at_terminal
 from hal import rename_rows
-from hal.grammar import Asks, Command, ExitCode
+from hal.grammar import Asks, Command, ExitCode, add_dry_run
 from hal.rename_rows import Finding, StepKind, StepRow
-from hal_output import printable, write_error
-from hal_output.command import Verb, command
+from hal_output import confirmed, printable
+from hal_output.command import Verb
 from home_tools.layout import Layout, registered_worktrees
 
 OWNER = "overnightworks"
@@ -44,13 +47,16 @@ class DeployCheckout:
 
 @dataclass
 class World:
-    """The boundaries to the outside: HOME, GitHub, the process table and uv."""
+    """The boundaries to the outside: HOME, GitHub, the process table, uv, the terminal and the
+    clock."""
 
     home: Path
     github_knows: Callable[[str], bool]
     running_in: Callable[[Sequence[Path]], list[RunningProcess]]
     uv: Callable[[Path, tuple[str, ...]], None]
     uv_tools: Callable[[], str]
+    is_interactive: Callable[[], bool]
+    clock: Callable[[], float]
 
 
 @dataclass(frozen=True)
@@ -65,10 +71,29 @@ class Move:
 
 
 @dataclass(frozen=True)
+class GitCall:
+    """git works in `directory` and in every path among `arguments`."""
+
+    directory: Path
+    arguments: tuple[str | Path, ...]
+
+
+@dataclass(frozen=True)
+class Sync:
+    """A project with a lock file, synced on each run where the moves take it."""
+
+    project: Path
+    python: str | None  # the `major.minor` its venv was made with
+
+
+@dataclass(frozen=True)
 class Step:
+    """`inputs` are what `run` was built from; plans compare by them, never by the callable."""
+
     description: str
-    run: Callable[[], None]
+    run: Callable[[], None] = field(compare=False)
     row: StepRow
+    inputs: Move | GitCall | Sync
 
 
 @dataclass(frozen=True)
@@ -79,14 +104,6 @@ class Site:
     clone: Move
     worktrees: Move
     memory: Move
-
-
-@dataclass(frozen=True)
-class Sync:
-    """A project with a lock file, synced on each run where the moves take it."""
-
-    project: Path
-    python: str | None  # the `major.minor` its venv was made with
 
 
 @dataclass(frozen=True)
@@ -119,8 +136,9 @@ class Plan:
     refusals: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class Halfway:
+class Halfway(NamedTuple):
+    """A run that stopped, in the order `write_halfway` takes it."""
+
     failed: Step
     reason: str
     done: tuple[Step, ...]
@@ -277,32 +295,37 @@ class Disk:
         self._check(move.target)
         return lambda: move.source.rename(move.target)
 
-    def git_action(self, directory: Path, *arguments: str | Path) -> Callable[[], None]:
-        """git works in `directory` and in every path among `arguments`, each with its `.git`."""
-        for repository in (directory, *(path for path in arguments if isinstance(path, Path))):
+    def git_action(self, call: GitCall) -> Callable[[], None]:
+        """Each repository the call works in is checked with its `.git`."""
+        for repository in (call.directory, *(a for a in call.arguments if isinstance(a, Path))):
             self._check(repository / ".git")
 
         def run() -> None:
-            _git(directory, *map(str, arguments))
+            _git(call.directory, *map(str, call.arguments))
 
         return run
 
     def uv_action(
-        self, uv: Callable[[Path, tuple[str, ...]], None], project: Path, *calls: tuple[str, ...]
+        self, uv: Callable[[Path, tuple[str, ...]], None], sync: Sync
     ) -> Callable[[], None]:
-        """uv works in `project`: it reads `uv.lock` and rewrites `.venv`."""
-        self._check(project / "uv.lock")
-        self._check(project / ".venv")
+        """uv reads `uv.lock` and rewrites `.venv` in place: `uv venv --allow-existing` and a
+        reinstall make a moved `.venv` name its new path in `bin/activate*` and in its scripts,
+        and nothing is deleted. `uv venv` is told the venv's own Python version, because it would
+        otherwise pick the newest interpreter it finds."""
+        self._check(sync.project / "uv.lock")
+        self._check(sync.project / ".venv")
+        python = ("--python", sync.python) if sync.python else ()
+        calls = (("venv", "--allow-existing", *python), ("sync", "--locked", "--reinstall"))
 
         def run() -> None:
             for arguments in calls:
-                uv(project, arguments)
+                uv(sync.project, arguments)
 
         return run
 
 
 def real_world(home: Path) -> World:
-    return World(home, _github_knows, processes_inside, _uv, _uv_tools)
+    return World(home, _github_knows, processes_inside, _uv, _uv_tools, at_terminal, time.monotonic)
 
 
 def _remote_pattern(name: str) -> re.Pattern[str]:
@@ -592,24 +615,28 @@ def _process_refusals(world: World, disk: Disk, relocations: Sequence[Relocation
 
 def _move_step(disk: Disk, move: Move, kind: StepKind) -> Step:
     row = StepRow.of_move(kind, move.source, move.target)
-    return Step(f"move {move.source} -> {move.target}", disk.move_action(move), row)
+    return Step(f"move {move.source} -> {move.target}", disk.move_action(move), row, move)
 
 
 def _origin_step(disk: Disk, path: Path, url: str, deploy: bool = False) -> Step:
+    call = GitCall(path, ("remote", "set-url", "origin", url))
     return Step(
         f"origin of {path} -> {url}",
-        disk.git_action(path, "remote", "set-url", "origin", url),
+        disk.git_action(call),
         StepRow.of_origin(url, path if deploy else None),
+        call,
     )
 
 
 def _repair_step(disk: Disk, relocation: Relocation) -> Step:
     clone = relocation.site.clone.target
     worktrees = [move.target for move in relocation.linked]
+    call = GitCall(clone, ("worktree", "repair", *worktrees))
     return Step(
         f"repair {len(worktrees)} worktrees of {clone}",
-        disk.git_action(clone, "worktree", "repair", *worktrees),
+        disk.git_action(call),
         StepRow.of_repair(relocation.site.worktrees.target, len(worktrees)),
+        call,
     )
 
 
@@ -630,20 +657,11 @@ def _venv_python_version(disk: Disk, venv: Path) -> str | None:
 
 
 def _sync_step(world: World, disk: Disk, sync: Sync) -> Step:
-    """Every run rewrites the venv in place: `uv venv --allow-existing` and a reinstall make a
-    moved `.venv` name its new path in `bin/activate*` and in its scripts, and nothing is
-    deleted. `uv venv` is told the venv's own Python version, because it would otherwise pick
-    the newest interpreter it finds."""
-    python = ("--python", sync.python) if sync.python else ()
     return Step(
         f"uv sync in {sync.project}",
-        disk.uv_action(
-            world.uv,
-            sync.project,
-            ("venv", "--allow-existing", *python),
-            ("sync", "--locked", "--reinstall"),
-        ),
+        disk.uv_action(world.uv, sync),
         StepRow(StepKind.SYNC, f"in {sync.project}"),
+        sync,
     )
 
 
@@ -703,28 +721,35 @@ def _reason(error: subprocess.CalledProcessError | OSError) -> str:
     return " / ".join((stderr or "").strip().splitlines()) or str(error)
 
 
-def _execute(steps: Sequence[Step], home: Path) -> Halfway | None:
+def _execute(steps: Sequence[Step], world: World) -> Halfway | None:
     for index, step in enumerate(steps):
+        started = world.clock()
         try:
             step.run()
         except (subprocess.CalledProcessError, OSError) as error:
             return Halfway(step, _reason(error), tuple(steps[:index]), tuple(steps[index + 1 :]))
-        rename_rows.write_done_row(step.row, home)
+        took = world.clock() - started if step.row.kind is StepKind.SYNC else None
+        rename_rows.write_done_row(step.row, world.home, took)
     return None
 
 
-def _report_halfway(halfway: Halfway, old: str, new: str) -> None:
-    write_error(
-        f"stopped halfway at `{halfway.failed.description}`: {halfway.reason}; "
-        f"fix the cause and run `{command(Verb.RENAME, old, new, '--apply')}` again to finish"
-    )
-    for label, steps in (("done", halfway.done), ("not done", halfway.pending)):
-        for step in steps:
-            print(printable(f"{label}: {step.description}"), file=sys.stderr)
-    print(f"next: {command(Verb.RENAME, new, old, '--apply')}", file=sys.stderr)
+def _apply(world: World, old: str, new: str, shown: Plan) -> ExitCode:
+    """The plan stood on screen while the person decided: it is made once more, and a refusal or
+    a difference from what was shown ends the run before the first change."""
+    started = world.clock()
+    plan = make_plan(world, old, new)
+    if plan.refusals or (plan.steps, plan.findings) != (shown.steps, shown.findings):
+        rename_rows.write_refusals(plan.refusals or ("the plan changed since it was shown",))
+        return ExitCode.REFUSED
+    halfway = _execute(plan.steps, world)
+    if halfway:
+        rename_rows.write_halfway(old, new, *halfway)
+        return ExitCode.FAILURE
+    rename_rows.write_done(len(plan.steps), len(plan.findings), world.clock() - started)
+    return ExitCode.FINDINGS if plan.findings else ExitCode.OK
 
 
-def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
+def rename(world: World, old: str, new: str, dry_run: bool) -> ExitCode:
     plan = make_plan(world, old, new)
     if plan.refusals:
         rename_rows.write_refusals(plan.refusals)
@@ -732,16 +757,17 @@ def rename(world: World, old: str, new: str, apply: bool) -> ExitCode:
     if not (plan.steps or plan.findings):
         rename_rows.write_nothing_to_do(old)
         return ExitCode.OK
-    if not apply:
-        rename_rows.write_plan(plan.steps, plan.findings, old, new, world.home)
+    rename_rows.write_plan(plan.steps, plan.findings, world.home)
+    if dry_run:
+        rename_rows.write_plan_only(old, new)
         return ExitCode.FINDINGS if plan.findings else ExitCode.OK
-    halfway = _execute(plan.steps, world.home)
-    rename_rows.write_findings(plan.findings, world.home)
-    if halfway:
-        _report_halfway(halfway, old, new)
-        return ExitCode.FAILURE
-    rename_rows.write_renamed(old, new, len(plan.steps), len(plan.findings))
-    return ExitCode.FINDINGS if plan.findings else ExitCode.OK
+    if not world.is_interactive():
+        rename_rows.write_without_terminal(old, new)
+        return ExitCode.REFUSED
+    if not confirmed(rename_rows.apply_purpose(len(plan.steps))):
+        rename_rows.write_declined()
+        return ExitCode.FINDINGS
+    return _apply(world, old, new, plan)
 
 
 def _repository_name(text: str) -> str:
@@ -753,22 +779,21 @@ def _repository_name(text: str) -> str:
 def _configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("old", type=_repository_name, help="the repository's former name")
     parser.add_argument("new", type=_repository_name, help="its name on GitHub now")
-    parser.add_argument(
-        "--apply", action="store_true", help="move and change instead of only showing"
-    )
+    add_dry_run(parser)
 
 
 def _run(arguments: argparse.Namespace) -> ExitCode:
-    return rename(real_world(Path.home()), arguments.old, arguments.new, arguments.apply)
+    return rename(real_world(Path.home()), arguments.old, arguments.new, arguments.dry_run)
 
 
 COMMANDS = (
     Command(
         Verb.RENAME,
-        "move the clones of a repository renamed on GitHub (shows first, --apply moves)",
+        "move the clones of a repository renamed on GitHub"
+        " (shows the plan, asks yes, moves; --dry-run only shows)",
         _run,
         _configure,
         json=False,
-        asks=Asks.NEVER,
+        asks=Asks.YES,
     ),
 )

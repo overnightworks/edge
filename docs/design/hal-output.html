@@ -1023,7 +1023,7 @@ hal c280a80 <span class="d">· main · clean · up to date with origin/main</spa
       <p class="was">heute: <code>hal version</code> vier Zeilen <code>commit: c280a80</code>, <code>branch: main</code>, …</p>
     </figure>
     <figure>
-      <figcaption><span class="tag new">neu H5q-2</span> <code>hal rename</code>: Plan, yes, fertig, und Ctrl-C mitten im Apply</figcaption>
+      <figcaption><span class="tag new">neu</span> <code>hal rename</code>: Plan, yes, fertig, und Ctrl-C mitten im Apply</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal rename songmaker-web songmaker</span>
 <span class="b">  ~</span> clone           move           <span class="d">~/git/songmaker-web → ~/git/songmaker</span>
 <span class="b">  ~</span> worktrees       move           <span class="d">~/git/songmaker-web-worktrees → ~/git/songmaker-worktrees</span>
@@ -1050,7 +1050,7 @@ Type <span class="w">yes</span> to apply 7 changes: yes
 ^C
 <span class="rw">error:</span> interrupted while recreating traefik · its state may be partial
 <span class="c">next:</span> hal apply</pre>
-      <p class="was">Das yes zählt die gedruckten <code>~</code>-Zeilen (7), ein <code>!</code> zählt nicht. Angepasst an den Lauf: die Zeilen stehen in der Reihenfolge, in der die Schritte laufen (Umzüge, origin, repair, Memory, origin des Deploy-Checkouts, uv sync), zusätzlich worktrees move, Deploy-Checkout und uv sync; die Anzahl von repair steht im Fakt; die URL steht so, wie git sie speichert, nicht gekürzt wie im ersten Bild.</p>
+      <p class="was">Das yes zählt die gedruckten <code>~</code>-Zeilen (7), ein <code>!</code> zählt nicht. Angepasst an den Lauf: die Zeilen stehen in der Reihenfolge, in der die Schritte laufen (Umzüge, origin, repair, Memory, origin des Deploy-Checkouts, uv sync), zusätzlich worktrees move, Deploy-Checkout und uv sync; die Anzahl von repair steht im Fakt; die URL steht so, wie git sie speichert, nicht gekürzt wie im ersten Bild. Die Fertig-Zeilen eines Umzugs nennen nur das Ziel.</p>
       <p class="was">heute: <code>edge apply --closed: interrupted while changing traefik (recreate traefik); its state may be partial, run `edge apply --closed` to see</code></p>
     </figure>
   </div>

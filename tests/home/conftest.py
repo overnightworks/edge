@@ -22,6 +22,7 @@ from hal import check_commands, secrets_commands, setup_commands
 from hal import cli as hal_cli
 from hal import config as hal_config
 from hal.grammar import ExitCode
+from terminal_support import Typist
 from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools import ports as home_ports
 from home_tools.secrets_setup import Boundaries as SecretsBoundaries
@@ -567,18 +568,6 @@ def run_hal_secrets(home: Path, probe: FakeProbe, *options: str, now: datetime |
         return hal_cli.main(["secrets", *options])
 
 
-class _Typist:
-    """The person at the yes prompt: one typed line, none (EOF), or Ctrl-C."""
-
-    def __init__(self, answer: str | type[BaseException] | None) -> None:
-        self.answer = answer
-
-    def readline(self) -> str:
-        if isinstance(self.answer, type):
-            raise self.answer
-        return "" if self.answer is None else f"{self.answer}\n"
-
-
 def run_hal_setup(*flags: str, answer: str | type[BaseException] | None = "yes", **port_overrides) -> int:
     """`hal setup` through `hal.cli.main`, over the given ports (`home`, `run`, `probe`, `now`, `clock`, `secrets_setup_boundaries`, `system_boundaries`) instead of this machine's.
 
@@ -590,7 +579,7 @@ def run_hal_setup(*flags: str, answer: str | type[BaseException] | None = "yes",
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(setup_commands, "build_layout_and_ports", build_ports)
-        patch.setattr(sys, "stdin", _Typist(answer))
+        patch.setattr(sys, "stdin", Typist(answer))
         return hal_cli.main(["setup", *flags])
 
 
