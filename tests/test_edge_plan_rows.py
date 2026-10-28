@@ -2,6 +2,7 @@
 from typed fields, and the `find_row` helper the apply tests share."""
 
 import re
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -28,11 +29,12 @@ from edge.core import (
     FollowerPlan,
     Gate,
 )
+from edge.legal_step import BlockChange, Change, LegalPlan, PageChange
 from edge.plan import Plan
 from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import Glyph, Group, Row
+from hal_output import DETAIL_INDENT, Glyph, Group, Row
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
@@ -54,11 +56,13 @@ def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
 
 
 NO_REALM = RealmPlan()
+NO_LEGAL = LegalPlan(Path(), Path(), {}, {})
 
 
 def groups_of(
     images: tuple[KeptImage, ...] = (),
     realm: RealmPlan = NO_REALM,
+    legal: LegalPlan = NO_LEGAL,
     **parts: Any,
 ) -> tuple[Group, ...]:
     units = {
@@ -71,6 +75,7 @@ def groups_of(
         app_plans=apps,
         images=list(images),
         realm=realm,
+        legal=legal,
         built=list(units.pop("built", ())),
         recreates=list(units.pop("recreates", ())),
         plans=list(units.pop("unit_plans", ())),
@@ -81,8 +86,9 @@ def groups_of(
 
 
 def rows_of(**parts: object) -> tuple[Row, ...]:
-    [core, units, apps] = groups_of(**parts)
-    assert (core.heading, units.heading, apps.heading) == (
+    [legal, core, units, apps] = groups_of(**parts)
+    assert (legal.heading, core.heading, units.heading, apps.heading) == (
+        None,
         PlanGroup.CORE,
         PlanGroup.UNITS,
         PlanGroup.APPS,
@@ -91,13 +97,23 @@ def rows_of(**parts: object) -> tuple[Row, ...]:
 
 
 def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
-    return groups_of(**plan)[1].rows
+    return groups_of(**plan)[2].rows
 
 
 def find_row(out: str, subject: str, event: PlanEvent, fact: str = "") -> re.Match[str] | None:
     plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
-    pattern = rf"^  \S {re.escape(subject)} +{re.escape(str(event))}\b.*{re.escape(fact)}"
+    pattern = (
+        rf"^  \S {re.escape(subject)} +(?:\d+ )?{re.escape(str(event))}s?\b.*{re.escape(fact)}"
+    )
     return re.search(pattern, plain, re.MULTILINE)
+
+
+def detail_lines(out: str) -> list[str]:
+    """The lines indented under a row, without colour."""
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+    return [
+        line[len(DETAIL_INDENT) :] for line in plain.splitlines() if line.startswith(DETAIL_INDENT)
+    ]
 
 
 def row_at(out: str, subject: str, event: PlanEvent, fact: str = "") -> int:
@@ -281,7 +297,7 @@ def test_the_kept_images_come_before_the_realm_row_and_the_units_before_the_apps
     image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
     realm = RealmPlan(RealmAction.RUN, why="x")
 
-    _, units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
+    _, _, units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
 
     assert [row.event for row in units.rows] == [PlanEvent.OLD_IMAGE, PlanEvent.REALM_APPLY]
     assert apps.rows
@@ -414,7 +430,7 @@ def test_a_unit_part_is_one_row_of_its_typed_fields(parts: dict[str, Any], row: 
 def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_the_realm() -> None:
     image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
 
-    _, units, apps = groups_of(
+    _, _, units, apps = groups_of(
         built=(built(rebuilt=True),),
         recreates=(Recreate("keycloak", "keycloak-db"),),
         unit_plans=(unit_plan(Action.ON), unit_plan(Action.STAYS_STOPPED)),
@@ -435,7 +451,7 @@ def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_th
 
 
 def core_rows_of(**parts: Any) -> tuple[Row, ...]:
-    return groups_of(**parts)[0].rows
+    return groups_of(**parts)[1].rows
 
 
 def core_plan(action: CoreAction, *why: Cause) -> CorePlan:
@@ -573,7 +589,7 @@ def test_a_follower_is_one_row_and_a_waiting_one_ends_with_the_state_of_its_unit
 
 
 def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_and_apps() -> None:
-    core, units, apps = groups_of(
+    _, core, units, apps = groups_of(
         core=(core_plan(CoreAction.RECREATE, DEFINITION),),
         followers=(follower_plan(FollowerAction.RECREATE, Gate.ON, DEFINITION),),
         unit_plans=(unit_plan(Action.ON),),
@@ -582,3 +598,90 @@ def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_
 
     assert [group.heading for group in (core, units, apps)] == list(PlanGroup)
     assert [row.subject for row in core.rows] == ["socket-proxy", "traefik-mcp"]
+
+
+def legal_plan(
+    changed: dict[str, PageChange], blocks: dict[str, tuple[BlockChange, ...]] | None = None
+):
+    return LegalPlan(Path(), Path(), {page: "" for page in changed}, changed, blocks or {})
+
+
+SECTION = "legal/sections/agent-service/datenschutz.html"
+FRAME = "legal/frame/datenschutz.html"
+
+
+@pytest.mark.parametrize(
+    ("plan", "expected"),
+    [
+        pytest.param(
+            legal_plan({"datenschutz": PageChange.NEW}),
+            [Row(Glyph.ADD, "legal", PlanEvent.NEW_PAGE, "datenschutz", 1)],
+            id="one new page",
+        ),
+        pytest.param(
+            legal_plan({"datenschutz": PageChange.NEW, "nutzungsbedingungen": PageChange.NEW}),
+            [Row(Glyph.ADD, "legal", PlanEvent.NEW_PAGE, "datenschutz, nutzungsbedingungen", 2)],
+            id="several new pages",
+        ),
+        pytest.param(
+            legal_plan(
+                {"datenschutz": PageChange.CHANGED},
+                {
+                    "datenschutz": (
+                        BlockChange(FRAME, Change.CHANGED),
+                        BlockChange(SECTION, Change.CHANGED, "agent-dienst"),
+                        BlockChange(SECTION, Change.LEFT, "alt"),
+                    )
+                },
+            ),
+            [
+                Row(
+                    Glyph.CHANGE,
+                    "legal",
+                    PlanEvent.CHANGED_PAGE,
+                    "datenschutz",
+                    1,
+                    (f"{FRAME} changed", f"{SECTION}#agent-dienst changed", f"{SECTION}#alt left"),
+                )
+            ],
+            id="a changed page with frame, changed and left lines",
+        ),
+        pytest.param(
+            legal_plan({"datenschutz": PageChange.UNRECORDED, "impressum": PageChange.UNRECORDED}),
+            [Row(Glyph.CHANGE, "legal", PlanEvent.NEW_RECORD, "datenschutz, impressum", 2)],
+            id="records only",
+        ),
+        pytest.param(
+            legal_plan(
+                {
+                    "a": PageChange.UNRECORDED,
+                    "b": PageChange.CHANGED,
+                    "c": PageChange.NEW,
+                },
+                {"b": (BlockChange(SECTION, Change.NEW, "x"),)},
+            ),
+            [
+                Row(Glyph.ADD, "legal", PlanEvent.NEW_PAGE, "c", 1),
+                Row(
+                    Glyph.CHANGE,
+                    "legal",
+                    PlanEvent.CHANGED_PAGE,
+                    "b",
+                    1,
+                    (f"{SECTION}#x new",),
+                ),
+                Row(Glyph.CHANGE, "legal", PlanEvent.NEW_RECORD, "a", 1),
+            ],
+            id="the kinds stand new, changed, record",
+        ),
+        pytest.param(legal_plan({}), [], id="nothing changes"),
+    ],
+)
+def test_the_legal_pages_are_one_row_per_kind_with_a_count(plan, expected) -> None:
+    assert list(groups_of(legal=plan)[0].rows) == expected
+
+
+def test_the_legal_rows_stand_first_in_a_group_without_a_heading() -> None:
+    groups = groups_of(legal=legal_plan({"datenschutz": PageChange.NEW}))
+
+    assert [group.heading for group in groups] == [None, *PlanGroup]
