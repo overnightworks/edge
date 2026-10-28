@@ -1,0 +1,7 @@
+claim_id = "ba160c53706b4229b7401c8b44baad53"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "38a1814e67ddcf1083cb9418d9fae14ac2bce36b"
+branch = "fix/local-hygiene"
+scope = [".aco/board.toml", "AGENTS.md"]
+opened_commit = "a96c2ca250313ac38bc9b05864d95839eacfeb39"
