@@ -406,6 +406,16 @@ def test_a_host_check_that_cannot_run_names_cloudflare_as_the_sender(world):
     assert "cloudflare: host check: cannot check, " in result.err
 
 
+def test_a_failing_tofu_apply_names_cloudflare_as_the_sender(world):
+    """C13: the line for a tofu apply that exits non-zero is printed under the publish's label."""
+    answers, plan = publish_fails(world)
+    world.fake_tofu.configure(**plan)
+
+    result = world.run(*answers)
+
+    assert "cloudflare: tofu apply failed (exit 1)" in result.err
+
+
 def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
     """C14: the publish's exit 2 becomes 1; only a local part can end `edge apply` with 2."""
     world.fake_tofu.configure(plan=1)
