@@ -12,6 +12,7 @@ from edge.external import cli as external
 from edge.external import host_check
 from edge_check import exposure, inspection
 from hal import config as hal_config
+from hal import exposure_rows
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
 from home_tools import check as daily_check
@@ -118,7 +119,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
     if arguments.json:
         print(json.dumps({EXPOSURE: inspection.as_json_objects(findings)}, indent=2))
     else:
-        print(inspection.render_table(findings))
+        exposure_rows.write(findings)
     return ExitCode.FINDINGS if findings else ExitCode.OK
 
 
