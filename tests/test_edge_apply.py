@@ -3277,9 +3277,10 @@ def test_an_enabled_unit_whose_barrier_stands_without_a_marker_stays_stopped(
 
     exit_code, out, _ = switch(answer="no")
 
-    assert exit_code == 0
-    assert find_row(out, "probe", PlanEvent.STAYS_STOPPED).start() < out.index("nothing to change")
-    assert scripted.changing_verbs() == []
+    assert find_row(out, "probe", PlanEvent.STAYS_STOPPED, "barrier stands").start() < out.index(
+        "nothing to change"
+    )
+    assert (exit_code, scripted.changing_verbs()) == (0, [])
 
 
 @pytest.mark.parametrize(
