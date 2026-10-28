@@ -178,21 +178,23 @@ def test_a_refusal_comes_before_the_terminal_check_and_the_prompt(repository, fa
     )
 
 
-def test_a_session_that_starts_in_a_clone_while_the_prompt_waits_is_refused(
+def test_a_session_that_starts_in_a_clone_while_the_prompt_waits_is_refused_even_as_the_plan_changes(
     home, repository, through_cli, fakes
 ):
-    before = tree_state(home)
-
-    def start_session():
+    def start_session_and_another_clone_appears():
         fakes.running = [RunningProcess(4242, "claude", repository / "src")]
+        make_clone(home / "git" / "old-land", SSH.format("old"))
 
-    code, out, err = through_cli("old", "fresh", while_waiting=start_session)
+    code, out, err = through_cli("old", "fresh", while_waiting=start_session_and_another_clone_appears)
 
     assert code == ExitCode.REFUSED
     assert "pid 4242 (claude) runs in " in err
     assert err.endswith("end that session first · nothing changed")
+    assert "the plan changed" not in err
     assert after_the_prompt(out) == []
-    assert tree_state(home) == before
+    assert (home / "git" / "old").is_dir()
+    assert not (home / "git" / "fresh").exists()
+    assert origin_of(repository) == SSH.format("old")
 
 
 def test_a_clone_that_appears_while_the_prompt_waits_changes_the_plan_and_moves_nothing(
@@ -210,16 +212,20 @@ def test_a_clone_that_appears_while_the_prompt_waits_changes_the_plan_and_moves_
     assert origin_of(repository) == SSH.format("old")
 
 
-def test_a_target_that_appears_while_the_prompt_waits_is_refused_as_existing(
+def test_a_target_that_appears_while_the_prompt_waits_is_refused_as_existing_even_as_the_plan_changes(
     home, repository, through_cli
 ):
-    def target_appears():
+    def target_and_another_clone_appear():
         (home / "git" / "fresh").mkdir()
+        make_clone(home / "git" / "old-land", SSH.format("old"))
 
-    code, _, err = through_cli("old", "fresh", while_waiting=target_appears)
+    code, out, err = through_cli("old", "fresh", while_waiting=target_and_another_clone_appear)
 
     assert code == ExitCode.REFUSED
     assert err.endswith(f"{home / 'git' / 'fresh'} already exists · nothing changed")
+    assert "the plan changed" not in err
+    assert after_the_prompt(out) == []
+    assert origin_of(repository) == SSH.format("old")
     assert (home / "git" / "old").is_dir()
 
 
