@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk
+from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk, unit_listing_matching
 
 from home_tools import platform_check
 
@@ -30,7 +30,7 @@ class FakeDocker:
 
     def __call__(self, argv: Sequence[str]) -> str | None:
         if argv[0] == "systemctl":
-            return self.failed_units
+            return unit_listing_matching(self.failed_units, argv[-1])
         if self.unreadable:
             return None
         if argv[:2] == ["docker", "ps"]:
@@ -322,6 +322,12 @@ def test_a_failed_hal_unit_is_a_job_failed_finding_named_by_the_unit(docker, reb
     assert rules_found(docker, reboot_file, fake_disk) == {("job-failed", name)}
 
 
+def test_a_failed_unit_that_is_not_a_hal_unit_is_ignored(docker, reboot_file, fake_disk) -> None:
+    docker.failed_units = failed_listing("other-fail.service", "hal-x.service")
+
+    assert rules_found(docker, reboot_file, fake_disk) == {("job-failed", "hal-x.service")}
+
+
 def test_several_failed_hal_units_are_one_finding_each(docker, reboot_file, fake_disk) -> None:
     docker.failed_units = failed_listing("hal-backup.service", "hal-check.service")
 
@@ -335,7 +341,7 @@ def test_systemd_that_cannot_be_read_is_a_finding_and_the_containers_are_still_j
     assert rules_found(docker, reboot_file, fake_disk) == {("systemd-unreadable", "systemd"), ("container-unhealthy", "edge")}
 
 
-@pytest.mark.parametrize("first_token", ["hal backup.service", "hal-Backup.service", "hal-backup.mount", "$(touch PWNED).service", "hal_x.service"])
+@pytest.mark.parametrize("first_token", ["hal backup.service", "hal-Backup.service", "hal-backup.mount", "hal$(touch PWNED).service", "hal_x.service"])
 def test_a_first_column_that_breaks_the_naming_form_is_unreadable(docker, reboot_file, fake_disk, first_token) -> None:
     docker.failed_units = f"{first_token} loaded failed failed x\n"
 

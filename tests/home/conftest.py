@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import email.message
 import email.policy
+import fnmatch
 import json
 import os
 import shlex
@@ -229,8 +230,15 @@ def set_up_mail(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, por
     return MailStub(directory)
 
 
+def unit_listing_matching(listing: str | None, pattern: str) -> str | None:
+    """What `systemctl list-units PATTERN` prints of a listing: only the lines whose unit name matches the pattern."""
+    if listing is None:
+        return None
+    return "".join(line for line in listing.splitlines(keepends=True) if fnmatch.fnmatchcase(line.split(maxsplit=1)[0], pattern))
+
+
 class RecordingRunner:
-    """Delivers notifications (systemd-run succeeds only if notify-send did), answers the graphical-session probe, fails every other tool as missing, records calls."""
+    """Delivers notifications (systemd-run succeeds only if notify-send did), answers the graphical-session probe and the failed-unit listing, fails every other tool as missing, records calls."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
@@ -241,7 +249,7 @@ class RecordingRunner:
     def __call__(self, argv: Sequence[str]) -> str | None:
         self.calls.append(list(argv))
         if argv[:3] == ["systemctl", "--user", "list-units"]:
-            return self.failed_units
+            return unit_listing_matching(self.failed_units, argv[-1])
         delivers = {"systemd-run": self.notify_delivers, "systemctl": self.session_active}
         return "" if delivers.get(argv[0], False) else None
 
