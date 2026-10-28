@@ -650,7 +650,7 @@ FRAME = "legal/frame/datenschutz.html"
                     (f"{FRAME} changed", f"{SECTION}#agent-dienst changed", f"{SECTION}#alt left"),
                 )
             ],
-            id="a edited page with frame, changed and left lines",
+            id="an edited page with frame, changed and left lines",
         ),
         pytest.param(
             legal_plan({"datenschutz": PageChange.UNRECORDED, "impressum": PageChange.UNRECORDED}),
