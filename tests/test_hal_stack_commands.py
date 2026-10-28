@@ -244,6 +244,7 @@ def test_the_help_lists_the_five_beside_version_and_stop_names_its_unit(
     assert listing.returncode == ExitCode.OK
     for name in ("apply", "stop", "start", "offline", "online", "version"):
         assert name in listing.stdout
+    assert "external" not in listing.stdout
     assert stop_help.returncode == ExitCode.OK
     assert "unit" in stop_help.stdout
 
@@ -278,6 +279,8 @@ def test_a_wrong_command_line_is_a_usage_error_and_no_stack_code_runs(
     assert result.returncode == ExitCode.USAGE
     lines = result.stderr.splitlines()
     assert lines[0].startswith("error: ")
+    if arguments == ["apply", "--closed"]:
+        assert "unrecognized arguments: --closed" in lines[0]
     assert lines[1:] == [f"next: hal {help_of} --help"]
 
 
@@ -368,6 +371,7 @@ def test_apply_whose_compose_up_fails_is_partial_and_publishes_nothing(hal, appl
 
     assert result.exit_code == ExitCode.FAILURE
     assert "partial, step-ca: could not" in result.err
+    assert "nothing published" in result.err
     assert applying.publish_never_began()
 
 
