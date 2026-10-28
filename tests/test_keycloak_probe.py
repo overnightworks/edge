@@ -446,6 +446,7 @@ def test_a_failure_while_building_the_stack_ends_with_one_failure_and_no_teardow
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    restored_signal_handlers: None,
     fault: str,
 ) -> None:
     if fault == "a docker failure":
