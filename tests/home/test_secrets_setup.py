@@ -17,7 +17,6 @@ from conftest import FAKE_SECRET_VALUE, FakeProbe, symlinked_folder_fix
 from home_tools import cli, secrets_setup
 from home_tools.secrets_setup import (
     CLOUDFLARE_TOKEN_PAGE,
-    EXPOSED_INPUT_REFUSAL,
     NO_BROWSER,
     OPEN_PROMPT,
     PASTE_PROMPT,
@@ -269,10 +268,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
 
     captured = capsys.readouterr()
     assert code == 2
-    assert captured.err.splitlines()[-1] == (
-        "abgebrochen bei cloudflare/read: unerwarteter Fehler (RuntimeError); für cloudflare/read nichts gespeichert."
-        " Weiter mit: hal setup --apply"
-    )
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cloudflare/read is not stored\nnext: hal setup --apply\n")
     for value in (PASTED_VALUE, *PASTED_VALUE_PARTS):
         assert value not in captured.out + captured.err
     assert files_under(home) == set()
@@ -296,10 +292,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
 
     captured = capsys.readouterr()
     assert code == 2
-    assert captured.err.splitlines()[-1] == (
-        "abgebrochen bei cloudflare/read: unerwarteter Fehler (PermissionError); cloudflare/read ist gespeichert."
-        " Weiter mit: hal setup --apply"
-    )
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected PermissionError · cloudflare/read is stored\nnext: hal setup --apply\n")
     assert PASTED_VALUE not in captured.out + captured.err
     assert (home / TOKEN_FILES[0]).read_text() == PASTED_VALUE
 
@@ -327,10 +320,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
 
     captured = capsys.readouterr()
     assert code == 2
-    assert captured.err.splitlines()[-1] == (
-        "abgebrochen bei cloudflare/read: unerwarteter Fehler (RuntimeError);"
-        " ob cloudflare/read gespeichert ist, ist nicht feststellbar. Weiter mit: hal setup --apply"
-    )
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cannot tell whether cloudflare/read is stored\nnext: hal setup --apply\n")
     assert PASTED_VALUE not in captured.out + captured.err
 
 
@@ -374,11 +364,17 @@ def interrupt_while_the_file_is_written(terminal: FakeTerminal, disk: FakeDisk) 
 
 
 @pytest.mark.parametrize(
-    "interrupt",
-    [interrupt_at_the_open_prompt, interrupt_at_the_paste, end_the_input_at_the_paste, interrupt_while_the_file_is_written],
+    "interrupt, expected_error",
+    [
+        (interrupt_at_the_open_prompt, "error: interrupted at cloudflare/read · no file half written"),
+        (interrupt_at_the_paste, "error: interrupted at cloudflare/read · no file half written"),
+        (end_the_input_at_the_paste, "error: input ended at cloudflare/read · no file half written"),
+        (interrupt_while_the_file_is_written, "error: interrupted at cloudflare/read · no file half written"),
+    ],
+    ids=["open prompt", "paste", "input ended", "file write"],
 )
 def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
-    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None]
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None], expected_error: str
 ) -> None:
     """#36 rule 2.3 / #10 line 7: Ctrl-C or the end of the input leaves no file, and the next run goes on."""
     interrupt(terminal, disk)
@@ -387,7 +383,7 @@ def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
 
     assert code == 130
     assert files_under(home) == set()
-    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply"
+    assert capsys.readouterr().err == f"\n{expected_error}\nnext: hal setup --apply\n"
 
 
 @pytest.fixture
@@ -411,7 +407,7 @@ def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
     code = home_secrets_setup(home, boundaries)
 
     assert code == 130
-    assert capsys.readouterr().err.strip() == "abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply"
+    assert capsys.readouterr().err.endswith("error: interrupted at cloudflare/read · no file half written\nnext: hal setup --apply\n")
     assert {path: (home / path).read_text() for path in files_under(home)} == {TOKEN_FILES[0]: PASTED_VALUE}
 
 
@@ -560,7 +556,7 @@ def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, 
     code = home_secrets_setup(home)
 
     assert code == 2
-    assert capsys.readouterr().err.startswith("home secrets --setup läuft nur am eigenen Terminal")
+    assert capsys.readouterr().err.endswith("error: secrets setup needs your own terminal window · nothing changed\nnext: hal setup --apply in your own terminal window\n")
     assert list(home.iterdir()) == []
 
 
@@ -573,7 +569,7 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
     code = home_secrets_setup(home, Boundaries(echoing, verifier, disk.sync))
 
     assert code == 2
-    assert capsys.readouterr().err.strip() == EXPOSED_INPUT_REFUSAL
+    assert capsys.readouterr().err.endswith("error: this terminal cannot hide what you type · nothing read\nnext: hal setup --apply in another terminal window\n")
     assert verifier.checked == []
     assert files_under(home) == set()
 

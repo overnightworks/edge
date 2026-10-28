@@ -179,10 +179,12 @@ def write_verdict(verdict: Verdict) -> None:
         print(f"{_styled('next:', _CYAN, stdout)} {printable(verdict.next_step)}")
 
 
-def write_error(message: str, next_step: str | None = None) -> None:
+def write_error(message: str, next_step: str | None = None, *, fresh_line: bool = False) -> None:
     """`error: <message>` and, when there is a way on, `next: <command>` on stderr; on a terminal
-    the labels are bold red and cyan."""
+    the labels are bold red and cyan. `fresh_line` first ends a line a hidden prompt left open."""
     stderr = sys.stderr
+    if fresh_line:
+        print(file=stderr)
     print(f"{_styled('error:', _BOLD_RED, stderr)} {printable(message)}", file=stderr)
     if next_step:
         print(f"{_styled('next:', _CYAN, stderr)} {printable(next_step)}", file=stderr)

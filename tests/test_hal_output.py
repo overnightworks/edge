@@ -275,6 +275,16 @@ def test_colour_is_decided_per_stream(
     assert err.getvalue() == "\x1b[1;31merror:\x1b[0m stopped\n"
 
 
+def test_a_fresh_line_error_starts_with_one_bare_newline_on_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A hidden prompt leaves the cursor mid-line, so the pair starts on a fresh one."""
+
+    write_error("interrupted", "run it", fresh_line=True)
+
+    assert capsys.readouterr().err == "\nerror: interrupted\nnext: run it\n"
+
+
 @pytest.mark.parametrize(
     ("variable", "value"), [("NO_COLOR", "1"), ("NO_COLOR", "anything"), ("TERM", "dumb")]
 )

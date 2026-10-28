@@ -92,7 +92,7 @@
 "src/home_tools/cli.py" = 6
 "src/home_tools/next.py" = 10
 "src/home_tools/secrets_manifest.toml" = 3
-"src/home_tools/secrets_setup.py" = 9
+"src/home_tools/secrets_setup.py" = 7
 "src/home_tools/secrets_view.py" = 11
 "src/home_tools/setup.py" = 7
 "src/home_tools/system/playbook.yml" = 1
@@ -102,7 +102,7 @@
 "tests/home/test_check.py" = 5
 "tests/home/test_hook_check.py" = 2
 "tests/home/test_next.py" = 16
-"tests/home/test_secrets_setup.py" = 3
+"tests/home/test_secrets_setup.py" = 2
 "tests/home/test_secrets_view.py" = 2
 "tests/home/test_setup.py" = 3
 
