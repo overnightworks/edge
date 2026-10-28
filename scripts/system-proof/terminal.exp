@@ -1,14 +1,31 @@
 #!/usr/bin/expect -f
-# Runs one command as `tester` at a pseudo-terminal, answers every become prompt with PROOF_PASSWORD,
+# Runs one command as `tester` at a pseudo-terminal, answers every sudo password prompt with PROOF_PASSWORD,
 # prints how many prompts there were, and exits with the command's exit code.
+# With PROOF_PREAUTH set the command prints @@HAL@@ when hal starts: prompts before it are PREPROMPTS, after it PROMPTS.
+# With PROOF_INTERRUPT set to a regex, the first output matching it is answered with Ctrl-C.
 set timeout 1200
 set prompts 0
-spawn -noecho su - tester -c [join $argv " "]
+set preprompts 0
+set hal_started [expr {![info exists env(PROOF_PREAUTH)]}]
+set interrupted [expr {![info exists env(PROOF_INTERRUPT)]}]
+set interrupt_pattern [expr {[info exists env(PROOF_INTERRUPT)] ? $env(PROOF_INTERRUPT) : "(?!)"}]
+# `su -c` alone starts a session without a controlling terminal, so sudo could not read the password; --pty gives the command one.
+spawn -noecho su --pty - tester -c [join $argv " "]
 expect {
-    -re {BECOME password: ?} { incr prompts; send -- "$env(PROOF_PASSWORD)\r"; exp_continue }
+    -re {\[sudo[^\]]*\] [Pp]ass[a-z]*[^:\r\n]*: ?} {
+        if {$hal_started} { incr prompts } else { incr preprompts }
+        send -- "$env(PROOF_PASSWORD)\r"
+        exp_continue
+    }
+    -re {@@HAL@@} { set hal_started 1; exp_continue }
+    -re $interrupt_pattern {
+        if {!$interrupted} { set interrupted 1; send -- "\003" }
+        exp_continue
+    }
     timeout { puts "TIMEOUT"; exit 124 }
     eof
 }
 lassign [wait] pid spawn_id os_error status
+if {[info exists env(PROOF_PREAUTH)]} { puts "PREPROMPTS=$preprompts" }
 puts "PROMPTS=$prompts"
 exit $status
