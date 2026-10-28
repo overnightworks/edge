@@ -867,16 +867,14 @@ class GoLive:
                 self.tools.say(f"{prefix}: set up")
                 return 0
         except DockerDidNotAnswer as failure:
-            self.tools.say(f"{prefix}: cannot tell: {self.scrubbed(str(failure))}")
+            self.tools.say(self.scrubbed(str(failure)))
             return 2
         except StepFailure as failure:
             reason = self.scrubbed(str(failure))
         except Exception as unexpected:  # the one boundary, as in run(): never a traceback
-            self.tools.say(
-                f"{prefix}: cannot tell: unexpected answer ({type(unexpected).__name__})"
-            )
+            self.tools.say(f"unexpected answer ({type(unexpected).__name__})")
             return 2
-        self.tools.say(f"{prefix}: not set up: {reason}")
+        self.tools.say(reason)
         return 1
 
     def run(self) -> int:

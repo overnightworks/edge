@@ -1306,9 +1306,7 @@ def test_check_on_a_fresh_home_says_not_set_up_and_creates_nothing(
     """#55 rule 2, counterexample 1."""
     assert go_live.check() == 1
 
-    assert session.printed == [
-        f"{CHECK_PREFIX}: not set up: no secrets in ~/.secrets/keycloak; run keycloak/go-live"
-    ]
+    assert session.printed == ["no secrets in ~/.secrets/keycloak; run keycloak/go-live"]
     assert not secrets_dir.exists()
     assert keycloak.commands == []
 
@@ -1323,7 +1321,7 @@ def test_check_with_the_bootstrap_file_present_names_steps_6_and_7(
     assert go_live.check() == 1
 
     assert "steps 6-7" in session.printed[-1]
-    assert session.printed[-1].startswith(f"{CHECK_PREFIX}: not set up: ")
+    assert not session.printed[-1].startswith(CHECK_PREFIX)
 
 
 def test_check_on_a_partial_set_repeats_go_lives_own_line(go_live, keycloak, session, secrets_dir):
@@ -1333,7 +1331,6 @@ def test_check_on_a_partial_set_repeats_go_lives_own_line(go_live, keycloak, ses
     assert go_live.check() == 1
 
     assert session.printed == [
-        f"{CHECK_PREFIX}: not set up: "
         "some secret files exist, missing: config-cli-secret, bootstrap-admin-password"
     ]
 
@@ -1347,7 +1344,7 @@ def test_check_names_the_missing_database_volume_when_only_the_bootstrap_file_is
     assert go_live.check() == 1
 
     assert session.printed == [
-        f"{CHECK_PREFIX}: not set up: the database volume keycloak-db is missing although "
+        "the database volume keycloak-db is missing although "
         "bootstrap-admin-password is gone: go-live cannot finish on an empty database; "
         "restore the volume"
     ]
@@ -1365,8 +1362,7 @@ def test_check_cannot_tell_when_docker_does_not_answer(go_live, keycloak, sessio
     assert go_live.check() == 2
 
     assert session.printed == [
-        f"{CHECK_PREFIX}: cannot tell: `docker volume inspect` exited 1: "
-        "Cannot connect to the Docker daemon"
+        "`docker volume inspect` exited 1: Cannot connect to the Docker daemon"
     ]
 
 
@@ -1379,7 +1375,7 @@ def test_check_cannot_tell_when_compose_answers_without_the_database_volume(
 
     assert go_live.check() == 2
 
-    assert session.printed == [f"{CHECK_PREFIX}: cannot tell: unexpected answer (KeyError)"]
+    assert session.printed == ["unexpected answer (KeyError)"]
 
 
 def test_check_through_the_command_line_exits_with_the_answer(tmp_path):
@@ -1393,7 +1389,7 @@ def test_check_through_the_command_line_exits_with_the_answer(tmp_path):
     )
 
     assert result.returncode == 1
-    assert result.stdout.startswith(f"{CHECK_PREFIX}: not set up: no secrets")
+    assert result.stdout.startswith("no secrets")
     assert list(tmp_path.iterdir()) == []
 
 
@@ -1550,8 +1546,7 @@ def test_a_run_without_a_marker_starts_as_before_and_leaves_no_marker(go_live, k
 # --- one secret file per confidential app client (K11-SA1, #106) --------------------------------
 
 CLIENT_MISSING_LINE = (
-    f"{CHECK_PREFIX}: not set up: the secret of client {{}} is missing "
-    "(~/.secrets/keycloak/clients/{}); run keycloak/go-live"
+    "the secret of client {} is missing (~/.secrets/keycloak/clients/{}); run keycloak/go-live"
 )
 
 
@@ -1633,10 +1628,7 @@ def test_a_compose_config_failure_is_exit_two_for_check_and_one_line_for_a_run(
     keycloak.compose_config_fails = True
 
     assert go_live.check() == 2
-    assert session.printed == [
-        f"{CHECK_PREFIX}: cannot tell: `docker compose config` exited 1: "
-        "validating compose.yaml: invalid"
-    ]
+    assert session.printed == ["`docker compose config` exited 1: validating compose.yaml: invalid"]
     session.printed.clear()
     assert go_live.run() == 1
     assert len(session.printed) == 1
