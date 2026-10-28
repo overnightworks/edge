@@ -128,19 +128,19 @@ LOOSE_GITLAB = (
             Arrangement(wizard_secret_missing=True, unknown_secret_files=4),
             [
                 f"1. {WIZARD_STEP}",
-                f"Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets. {AGENT_SORTS_IT_IN}",
+                f"Außerdem zum Einsortieren: 4 unknown files in ~/.secrets. {AGENT_SORTS_IT_IN}",
             ],
             id="N1-one-wizard-step-in-its-own-terminal-window-and-one-count-line",
         ),
         pytest.param(
             Arrangement(unknown_secret_files=2),
-            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 unbekannte Dateien in ~/.secrets. {AGENT_SORTS_IT_IN}"],
+            ["Nichts für dich zu tun.", f"Außerdem zum Einsortieren: 2 unknown files in ~/.secrets. {AGENT_SORTS_IT_IN}"],
             id="N2-only-bookkeeping-is-nothing-for-you",
         ),
         pytest.param(Arrangement(), ["Nichts zu tun."], id="N3-nothing-at-all"),
         pytest.param(
             Arrangement(loose_secret=True, unknown_secret_files=1),
-            [f"1. {LOOSE_GITLAB}", f"Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets. {AGENT_SORTS_IT_IN}"],
+            [f"1. {LOOSE_GITLAB}", f"Außerdem zum Einsortieren: 1 unknown file in ~/.secrets. {AGENT_SORTS_IT_IN}"],
             id="N4-a-loose-mode-is-still-a-step-with-its-chmod",
         ),
     ],
@@ -169,8 +169,8 @@ def test_every_open_step_names_its_command_where_to_run_it_and_what_to_expect_mo
     assert lines == [
         f"1. {WIZARD_STEP}",
         "2. https://gitlab.example/-/user_settings/personal_access_tokens (von Hand, für gitlab)"
-        " — erwartet: home secrets zeigt gitlab vorhanden",
-        "3. gh auth login --web (beliebiges Terminal) — erwartet: home secrets zeigt gh geprüft: gültig",
+        " — erwartet: home secrets zeigt gitlab present",
+        "3. gh auth login --web (beliebiges Terminal) — erwartet: home secrets zeigt gh checked: valid",
         "4. https://github.com/settings/tokens (Browser, github/old widerrufen) — erwartet: das Token steht dort nicht mehr",
     ]
 
@@ -192,7 +192,7 @@ def close_the_ssh_folder_to_its_owner(home: Path, use_manifest, _probe: FakeProb
     (home / ".ssh" / "id_ed25519").write_text(FAKE_SECRET_VALUE)
     (home / ".ssh").chmod(0o600)
     return (
-        "~/.ssh/id_ed25519: Rechte des Elternordners prüfen (von Hand)"
+        "~/.ssh/id_ed25519: check the parent folder's permissions (von Hand)"
         " — erwartet: home secrets meldet presence-unknown für ssh/id_ed25519 nicht mehr"
     )
 
@@ -202,7 +202,7 @@ def link_the_gitlab_token_to_itself(home: Path, _use_manifest, _probe: FakeProbe
     token.unlink()
     token.symlink_to(token)
     return (
-        "~/.secrets/gitlab: Rechte des Elternordners prüfen (von Hand)"
+        "~/.secrets/gitlab: check the parent folder's permissions (von Hand)"
         " — erwartet: home secrets meldet presence-unknown für gitlab nicht mehr"
     )
 
@@ -210,7 +210,7 @@ def link_the_gitlab_token_to_itself(home: Path, _use_manifest, _probe: FakeProbe
 def leave_the_gh_check_unanswered(_home: Path, _use_manifest, probe: FakeProbe) -> str:
     probe.code = None
     return (
-        "~/.config/gh: Prüfbefehl hing oder fehlt; später erneut (von Hand)"
+        "~/.config/gh: the check command hung or is missing; retry later (von Hand)"
         " — erwartet: home secrets meldet verification-unreachable für gh nicht mehr"
     )
 
@@ -325,7 +325,7 @@ def test_loose_rights_come_with_their_fix_ahead_of_the_wizard_and_the_unknown_fi
         "2. chmod 600 ~/.secrets/gitlab (beliebiges Terminal) — erwartet: home secrets meldet loose-mode für ~/.secrets/gitlab nicht mehr",
         f"3. {WIZARD_STEP}",
     ]
-    assert lines[-1] == f"Außerdem zum Einsortieren: 1 unbekannte Datei in ~/.secrets. {AGENT_SORTS_IT_IN}"
+    assert lines[-1] == f"Außerdem zum Einsortieren: 1 unknown file in ~/.secrets. {AGENT_SORTS_IT_IN}"
 
 
 def symlink_the_opentofu_folder(home: Path) -> tuple[str, str]:

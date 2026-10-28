@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from hal_output import Row
 from home_tools import hook_check, secrets_setup, secrets_view, setup
-from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
+from home_tools.secrets_view import FindingRule, Presence, SecretEntry, SecretFinding, Verification
 from home_tools.layout import Layout
 from home_tools.report import ClosedBy, Tally
 
@@ -94,7 +94,7 @@ def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
         where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
         yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
-        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} vorhanden")
+        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} {Presence.PRESENT.value}")
 
 
 def _cleared(finding: SecretFinding) -> str:
@@ -150,7 +150,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
     yield from _fix_steps(fixable)
     yield from _missing_secret_steps(entries_found_by(FindingRule.MISSING))
     for entry in entries_found_by(FindingRule.VERIFICATION_FAILED):
-        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} geprüft: gültig")
+        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} {Verification.PASSED.value}")
     for entry in entries_found_by(FindingRule.REVOCATION_UNCONFIRMED):
         yield OperatorStep(entry.revoke_url, f"Browser, {entry.name} widerrufen", "das Token steht dort nicht mehr")
     for findings in without_fix.values():
