@@ -1,5 +1,5 @@
-"""Plain `hal apply` (#171): the local part (`--local`) and then the publish (`edge external
-apply`), each with its own `yes`, driven through `hal.cli.main` with both real phases.
+"""Plain `hal apply` (#171): the local part (`--local`) and then the publish phase, each
+with its own `yes`, driven through `hal.cli.main` with both real phases.
 
 The local part runs on the scripted boundaries of `test_edge_apply`, the publish on the fake
 tofu, token files and live checkout of `test_edge_external`; one terminal holds the answers in
@@ -78,7 +78,7 @@ class Result:
 
 @dataclass
 class World:
-    """Plain `edge apply` over the scripted local part and the fake publish."""
+    """Plain `hal apply` over the scripted local part and the fake publish."""
 
     run: "functools.partial[Result]"
     settle_local: "functools.partial[None]"
@@ -269,7 +269,7 @@ def test_a_setup_that_ran_before_a_local_plan_that_failed_is_recorded(world):
 
 
 def test_nothing_to_change_on_either_side_asks_nothing(world):
-    """C8: with nothing to change, `edge apply` exits 0 and asks no question at all."""
+    """C8: with nothing to change, `hal apply` exits 0 and asks no question at all."""
     world.settle_local()
     world.fake_tofu.configure(**EMPTY_PLAN)
 
@@ -330,7 +330,7 @@ def test_an_interrupted_setup_whose_containers_run_is_asked_again_and_publishes_
 
 
 def test_an_interrupted_stop_after_an_interrupted_setup_is_refused_and_publishes_nothing(world):
-    """Go-live aborted, then `edge stop` aborted after its marker: the unit still runs."""
+    """Go-live aborted, then `hal stop` aborted after its marker: the unit still runs."""
     world.settle_local()
     world.make_setup_missing()
     switch_off(world.state)
@@ -374,7 +374,7 @@ def publish_fails(_world: World) -> tuple[list[str], dict]:
     ids=["C11 declined", "C12 findings", "C12 cannot check", "C13 apply fails"],
 )
 def test_a_publish_that_does_not_end_clean_ends_with_3(world, arrange):
-    """C11-C13: the publish's own non-zero exit is the exit of `edge apply`."""
+    """C11-C13: the publish's own non-zero exit is the exit of `hal apply`."""
     answers, plan = arrange(world)
     world.fake_tofu.configure(**plan)
 
@@ -415,7 +415,7 @@ def test_a_failing_tofu_apply_names_cloudflare_as_the_sender(world):
 
 
 def test_a_publish_that_cannot_plan_ends_with_3_and_the_summary_line(world):
-    """C14: the publish's exit 2 becomes 1; only a local part can end `edge apply` with 2."""
+    """C14: the publish's exit 2 becomes 1; only a local part can end `hal apply` with 2."""
     world.fake_tofu.configure(plan=1)
 
     result = world.run("yes")

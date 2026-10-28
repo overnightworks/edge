@@ -39,5 +39,6 @@ def add_dry_run(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="only show what would change; skip the yes and change nothing (at a terminal sudo still checks the system)",
+        help="only show what would change; skip the yes and change nothing "
+        "(at a terminal sudo still checks the system)",
     )

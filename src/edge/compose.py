@@ -1,4 +1,4 @@
-"""Docker Compose for `edge apply`: what the stack is made of and what is running of it.
+"""Docker Compose for `hal apply`: what the stack is made of and what is running of it.
 
 The pure part maps the profiles of a resolved or parsed compose file to their services. The
 `Compose` class is the one place that runs `docker compose`; it never runs `down` and never

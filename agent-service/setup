@@ -11,7 +11,7 @@ first: a second run changes nothing. The token is read without echo and exists o
     agent-service/setup --renew   the same, and always take a new token: written beside the old
                                   one as token.new and renamed over it
     agent-service/setup --check   change nothing: exit 0 set up, 1 not set up (one line says what),
-                                  2 cannot tell. It is the setup contract `edge apply` asks.
+                                  2 cannot tell. It is the setup contract `hal apply` asks.
     agent-service/setup --replace-signing-key
                                   a new signing key pair over the old one: terminal and typed yes
 

@@ -1,4 +1,4 @@
-"""The realm step of `edge apply --closed` (#242): when it runs (the plan) and what it does (the
+"""The realm step of `hal apply --local` (#242): when it runs (the plan) and what it does (the
 step), with Compose, the observer and hal backup faked. Each test names its cell of the item's
 scenario matrix."""
 

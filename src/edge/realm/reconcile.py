@@ -1,4 +1,4 @@
-"""The realm step of `edge apply --closed`: applies a changed `keycloak/realm.yaml` or
+"""The realm step of `hal apply --local`: applies a changed `keycloak/realm.yaml` or
 `keycloak/master.yaml` to the running Keycloak after a Keycloak-only backup (#242, #235 rulings
 R2-R4).
 

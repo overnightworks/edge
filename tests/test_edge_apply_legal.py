@@ -1,4 +1,4 @@
-"""`edge apply --closed` with the legal step (#435): the three pages built from the repository's own
+"""`hal apply --local` with the legal step (#435): the three pages built from the repository's own
 frame and sections on the scripted boundaries of `test_edge_apply`, in a real git repository (the
 Stand of a page is a commit date)."""
 
@@ -53,7 +53,7 @@ NEW_HEADING = b'<h2 id="neu">Neu</h2>\n<p>Text</p>\n'
 
 @dataclass
 class World:
-    """A tree with the legal unit enabled, and how to run `edge apply --closed` on it."""
+    """A tree with the legal unit enabled, and how to run `hal apply --local` on it."""
 
     repository: Path
     scripted: ScriptedCompose

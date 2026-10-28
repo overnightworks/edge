@@ -1,38 +1,9 @@
 [edge-verb]
-".github/workflows/ci.yml" = 1
-".gitignore" = 3
-"agent-service/setup" = 1
 "docs/architecture.md" = 116
 "docs/design/hal-output.html" = 18
-"docs/external.md" = 4
-"probe/keycloak/README.md" = 1
-"probe/keycloak/probe.py" = 2
-"src/edge/apply.py" = 4
-"src/edge/barrier.py" = 3
-"src/edge/catalog.py" = 1
-"src/edge/checkout.py" = 2
-"src/edge/compose.py" = 1
-"src/edge/environment.py" = 2
-"src/edge/legal_step.py" = 2
-"src/edge/realm/reconcile.py" = 1
-"src/edge/setup.py" = 2
-"src/edge/switches.py" = 2
-"src/hal/version.py" = 1
-"tests/home/test_secrets_setup.py" = 3
-"tests/home/test_secrets_view.py" = 1
-"tests/test_edge_apply.py" = 15
-"tests/test_edge_apply_apps.py" = 1
-"tests/test_edge_apply_checkout.py" = 1
-"tests/test_edge_apply_legal.py" = 2
-"tests/test_edge_apply_publish.py" = 6
-"tests/test_edge_barrier.py" = 3
-"tests/test_edge_environment.py" = 1
-"tests/test_edge_external.py" = 2
-"tests/test_edge_global_stop.py" = 5
-"tests/test_edge_online_apps.py" = 1
-"tests/test_hal_stack_commands.py" = 2
-"tests/test_realm_reconcile.py" = 1
-"tests/test_step_ca_init.py" = 1
+"src/edge/barrier.py" = 2
+"src/edge/environment.py" = 1
+"tests/test_edge_barrier.py" = 2
 "tunnel/cloudflared.service.d/30-edge-global-stop.conf" = 1
 
 [edge-script]

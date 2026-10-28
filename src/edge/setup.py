@@ -1,6 +1,6 @@
 """Whether a unit is set up: runs its `<setup> --check`, words the refusal and runs the setup.
 
-The one owner of that question for `edge apply --closed`, `edge start` and any later caller.
+The one owner of that question for `hal apply --local`, `hal start` and any later caller.
 """
 
 import signal
