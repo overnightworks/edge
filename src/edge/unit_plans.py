@@ -138,7 +138,11 @@ class ImageReference:
     @classmethod
     def parse(cls, reference: str) -> "ImageReference":
         name, separator, digest = reference.partition(DIGEST_SEPARATOR)
-        return cls(name, digest.rpartition(":")[2] if separator else None)
+        return cls(name, cls.digest_hex(digest) if separator else None)
+
+    @staticmethod
+    def digest_hex(digest: str) -> str:
+        return digest.rpartition(":")[2]
 
 
 @dataclass(frozen=True)
@@ -293,8 +297,8 @@ def _swapped_image(
         if container.image_id != current:
             return KeptImage(
                 service,
-                ImageReference(reference, container.image_id.rpartition(":")[2]),
-                ImageReference(reference, current.rpartition(":")[2]),
+                ImageReference(reference, ImageReference.digest_hex(container.image_id)),
+                ImageReference(reference, ImageReference.digest_hex(current)),
             )
     return None
 
