@@ -6,8 +6,8 @@ dieses README ist die lange Anleitung.
 
 Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
 es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
-`SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei oder das
-Geheimnis-Manifest ungültig ist, `3` wenn ein Lauf an einem unerwarteten Fehler
+`SuccessExitStatus=1` dafür), `2` wenn das
+Geheimnis-Manifest ungültig ist (`hal check` kennt zusätzlich die Konfigurationsdatei, siehe „Konfiguration“), `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
 
@@ -64,7 +64,7 @@ Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
 „Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
 Quelle nicht lesen (etwa ein ungültiges Manifest), steht ganz oben ein Schritt
 „1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die
-Schritte der anderen Quellen folgen. Die Konfigurationsdatei liest `home next` nicht.
+Schritte der anderen Quellen folgen.
 Es ändert nichts, fragt nach keinem Passwort und liest keinen
 Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
 Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
@@ -80,7 +80,7 @@ hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benac
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
-Ein nacktes `hal check` ist derselbe Lauf, im selben Prozess: dieselben Zeilen, derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde. Von Hand getippt liefert es also auch Neuigkeiten aus; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
+Von Hand getippt liefert ein nacktes `hal check` Neuigkeiten aus wie der Timer: derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
 
 Auf dem Terminal steht davon eine englische Zeile je Bereich in der Reihenfolge der Mail (`ok`, `N action(s)`,
 `N note(s)` mit dem Satz des ersten Funds und `+N more`, oder `not checked`) und ein Urteil, das sagt, ob eine Mail
@@ -726,10 +726,10 @@ Die Zusage ist enger als „jeder Commit“:
 
 ## Konfiguration
 
-Eine Datei für alle Befehle: `~/.config/home/config.toml`, eine Tabelle je
-Befehl mit Einstellungen. Ohne die Datei gelten die Defaults. Eine unbekannte
+Nur `hal check` liest `~/.config/home/config.toml`, eine Tabelle je
+Prüfung mit Einstellungen; kein `home`-Befehl liest sie. Ohne die Datei gelten die Defaults. Eine unbekannte
 Tabelle, ein unbekannter Schlüssel oder ein falscher Werttyp ist ein
-Konfigurationsfehler: `home` meldet ihn auf stderr und beendet sich mit
+Konfigurationsfehler: `hal check` meldet ihn auf stderr und beendet sich mit
 Exit-Code 2, statt mit falschen Einstellungen weiterzulaufen. Eine Tabelle
 `[tidy]` wird nicht mehr gelesen und beim Namen abgelehnt: sie ist aus der Datei
 zu löschen.

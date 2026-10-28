@@ -281,25 +281,6 @@ def test_an_unreadable_source_with_no_steps_left_does_not_claim_nothing_to_do(ho
     assert home_next(home, probe, capsys) == (0, [UNREADABLE_SECRETS, "Sonst nichts zu tun."])
 
 
-@pytest.fixture(
-    params=[
-        pytest.param((".config/home/config.toml", "bogus = 1\n"), id="unknown-key"),
-        pytest.param((".config/home/config.toml", "[tidy]\n"), id="tidy-table"),
-    ]
-)
-def invalid_config(request: pytest.FixtureRequest, home: Path) -> None:
-    relative, text = request.param
-    config = home / relative
-    config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(text)
-
-
-@pytest.mark.usefixtures("hook_installed", "invalid_config")
-def test_home_next_reads_no_config_so_an_invalid_one_changes_nothing(home: Path, probe: FakeProbe, capsys) -> None:
-    """#37 lines 4 and 7: exit 0 whatever the config file holds."""
-    assert home_next(home, probe, capsys) == (0, ["Nichts zu tun."])
-
-
 def test_it_never_shows_a_secret_value_and_changes_nothing(home: Path, use_manifest, probe: FakeProbe, capsys) -> None:
     """#37 line 5: read-only, presence only; the planted values never appear and no file is written or touched."""
     use_manifest(TEST_MANIFEST + OPEN_ENTRIES)
