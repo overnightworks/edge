@@ -29,10 +29,25 @@ from test_edge_apply import (
     write_fleet,
     writing_environment,
 )
-from test_edge_plan_rows import detail_lines, plain
+from test_edge_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
+from test_edge_plan_rows import (
+    DIGEST_A,
+    DIGEST_B,
+    KEYCLOAK,
+    NO_APPKIT,
+    detail_lines,
+    kept,
+    plain,
+    plan_of,
+    unit_plan,
+)
 
 from edge.external import cli as external_cli
+from edge.legal_step import PageChange
+from edge.plan_rows import changes_in
 from edge.realm import reconcile
+from edge.realm.reconcile import RealmAction, RealmPlan
+from edge.unit_plans import Action, ImageReference
 
 CHANGE_ROW = re.compile(r"^  [+~-] ", re.MULTILINE)
 
@@ -53,6 +68,46 @@ def test_the_yes_counts_the_rows_the_plan_printed(switch, fleet, prompt, reposit
 
     assert f"Type yes to {prompt}: " in plain(out)
     assert len(CHANGE_ROW.findall(plain(out))) == int(prompt.split()[1])
+
+
+@pytest.mark.parametrize(
+    ("parts", "count"),
+    [
+        pytest.param(
+            {"appkit": appkit_plan(ALL_LABELS, ("old",))}, 1, id="appkit update with stale"
+        ),
+        pytest.param({"appkit": appkit_plan(stale=("old", "older"))}, 1, id="stale only"),
+        pytest.param(
+            {"legal": legal_plan({"a": PageChange.NEW, "b": PageChange.NEW})},
+            1,
+            id="a legal row of two pages",
+        ),
+        pytest.param(
+            {
+                "unit_plans": [
+                    unit_plan(Action.ON),
+                    unit_plan(Action.OFF),
+                    unit_plan(Action.STAYS_STOPPED),
+                ]
+            },
+            2,
+            id="stays stopped is no change",
+        ),
+        pytest.param(
+            {
+                "images": (
+                    kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B)),
+                ),
+                "realm": RealmPlan(RealmAction.UNREADABLE, error="broke"),
+                "appkit": NO_APPKIT,
+            },
+            0,
+            id="needs-you rows are no change",
+        ),
+    ],
+)
+def test_the_count_is_the_number_of_printed_change_rows(parts, count):
+    assert changes_in(plan_of(**parts)) == count
 
 
 @pytest.mark.parametrize("answer", ["no", "", "Yes", "y", " yes", "yes please"])

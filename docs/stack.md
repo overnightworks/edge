@@ -170,7 +170,7 @@ Vertrag von `<setup> --check`: fragt nichts, druckt kein Geheimnis, legt nichts 
 laufenden Dienst; Exit 0 eingerichtet, 1 nicht eingerichtet (eine Zeile sagt, was fehlt), 2 es kann es
 nicht sagen. Eine laufende, im Katalog eingeschaltete Einheit mit `setup` wird bei jedem Apply geprueft:
 ist sie nicht eingerichtet, bekommt sie die Setup-Frage und sperrt das Publizieren. Die Frage kommt vor
-dem Plan ("Type 'yes' to run `<setup>` now"; nur das genaue `yes` zaehlt, `no` bricht den ganzen Lauf
+dem Plan ("Type yes to run `<setup>` now"; nur das genaue `yes` zaehlt, `no` bricht den ganzen Lauf
 ab, Exit 1, nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal, ohne Argumente, ohne
 Zeitlimit, Ausgabe ungefiltert; die Schluessel macht allein dieser Befehl, `edge apply` sieht sie nie.
 Dann prueft `--check` noch einmal und der Plan folgt mit seinem eigenen `yes`. Ein Setup, das scheitert

@@ -17,6 +17,7 @@ from hal_output import (
     Tone,
     TrailingNoun,
     Verdict,
+    confirmed,
     counted,
     format_bytes,
     format_duration,
@@ -574,3 +575,43 @@ def test_on_a_terminal_a_toned_detail_line_is_styled_as_a_whole_and_a_plain_one_
     write_detail("a line")
 
     assert out.getvalue() == f"\x1b[{style}m    a line\x1b[0m\n    a line\n"
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("yes\n", True),
+        ("Yes\n", False),
+        ("y\n", False),
+        (" yes\n", False),
+        ("\n", False),
+        ("", False),
+    ],
+    ids=["yes", "capitalised", "short", "padded", "empty line", "closed stdin"],
+)
+def test_only_the_exact_yes_confirms_and_a_closed_stdin_is_a_no(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], typed: str, expected: bool
+) -> None:
+    monkeypatch.setattr(sys, "stdin", io.StringIO(typed))
+
+    assert confirmed("start hopin") is expected
+    assert capsys.readouterr().out == "Type yes to start hopin: "
+
+
+def test_on_a_terminal_the_yes_of_the_prompt_is_bold(monkeypatch: pytest.MonkeyPatch) -> None:
+    out, _err = put_on_terminals(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
+
+    confirmed("apply 2 changes")
+
+    assert out.getvalue() == "Type \x1b[1myes\x1b[0m to apply 2 changes: "
+
+
+def test_a_ctrl_c_at_the_prompt_is_not_caught(monkeypatch: pytest.MonkeyPatch) -> None:
+    def interrupted(_prompt: str) -> str:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("builtins.input", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        confirmed("start hopin")

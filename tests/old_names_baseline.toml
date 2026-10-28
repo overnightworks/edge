@@ -4,7 +4,7 @@
 "README.md" = 2
 "agent-service/setup" = 1
 "compose.yaml" = 1
-"docs/architecture.md" = 125
+"docs/architecture.md" = 124
 "docs/design/hal-output.html" = 18
 "docs/external.md" = 10
 "docs/home.md" = 2
@@ -18,7 +18,7 @@
 "probe/keycloak/README.md" = 1
 "probe/keycloak/probe.py" = 2
 "probe/step-ca/probe.py" = 4
-"probe/switches/probe.py" = 10
+"probe/switches/probe.py" = 8
 "src/edge/apply.py" = 5
 "src/edge/barrier.py" = 3
 "src/edge/catalog.py" = 1

@@ -330,7 +330,7 @@ edge never rewrites a text to drop the link.
 **Stand** is the newest commit date of the page's section files (`git log -1 --format=%cs`); a commit that
 changes only the frame does not move it. The imprint has none.
 
-**Refusal line**, never quoting the text: `edge apply --closed: cannot plan, legal: legal/sections/songmaker/datenschutz.html: line 14: <img> is not allowed (allowed: h2 h3 section p ul ol li strong em code br a)`.
+**Refusal line**, never quoting the text: `error: cannot plan, legal: legal/sections/songmaker/datenschutz.html: line 14: <img> is not allowed (allowed: h2 h3 section p ul ol li strong em code br a)`.
 A change that would refuse a file valid under v1 is asked of every producing repository first; one that only
 accepts more is announced.
 
