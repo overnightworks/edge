@@ -352,7 +352,9 @@ class Probe:
         edge_copy.git(self.copy, *merge[1:])
         current = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         expect(f"✓ checkout current {waiting}" in current, f"after the merge: {current[-200:]}")
-        print(f"#98 P1 held: {waiting} waits and is shown by effect, HEAD {head} planned and kept")
+        print(
+            f"#98 P1 held: {waiting} waiting shown as one behind row, HEAD {head} planned and kept"
+        )
 
     def cell_p3_edited_traefik_yml(self) -> None:
         self.volumes_before_p3 = self.volumes()

@@ -611,8 +611,8 @@ def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_
     assert [row.subject for row in core.rows] == ["socket-proxy", "traefik-mcp"]
 
 
-def origin_main(behind: int) -> checkout.Origin:
-    return checkout.Origin("file:///origin.git", "f" * 40, "ffffff0", "c280a80", 0, behind)
+def origin_main(behind: int, ahead: int = 0) -> checkout.Origin:
+    return checkout.Origin("file:///origin.git", "f" * 40, "ffffff0", "c280a80", ahead, behind)
 
 
 def test_a_current_checkout_is_one_done_row_naming_the_pinned_main() -> None:
@@ -633,3 +633,8 @@ def test_a_checkout_behind_is_one_needs_you_row_with_the_merge_command_under_it(
         count=behind,
         details=(f"git -C ~/git/edge merge --ff-only {'f' * 40}",),
     )
+
+
+def test_a_diverged_checkout_is_not_a_behind_row() -> None:
+    """Behind is `Origin.standing`'s answer, not the behind count alone."""
+    assert checkout_row(origin_main(behind=2, ahead=1)).event != CheckoutEvent.BEHIND

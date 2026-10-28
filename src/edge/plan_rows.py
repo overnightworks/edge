@@ -58,7 +58,7 @@ class PlanGroup(StrEnum):
 def checkout_row(origin: checkout.Origin) -> Row:
     """The live checkout against origin's `main`: current, or behind with the way to bring the
     waiting commits in by hand."""
-    if origin.behind:
+    if origin.standing is checkout.Standing.BEHIND:
         return Row(
             Glyph.NEEDS_YOU,
             CHECKOUT,

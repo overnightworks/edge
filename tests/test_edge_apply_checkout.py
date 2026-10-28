@@ -5,6 +5,8 @@ import pytest
 from git_support import advance, checkout_state, subjects
 from test_edge_apply import (
     DISABLED,
+    ENABLED,
+    ZONE,
     applied_core,  # noqa: F401 the fixture, requested by name below
     at_terminal,  # noqa: F401 the fixture, requested by name below
     core_files,  # noqa: F401 the fixture, requested by name below
@@ -25,6 +27,7 @@ from test_edge_apply import (
 from test_edge_plan_rows import detail_lines, find_row, plain
 
 from edge import checkout
+from edge.apply import ApplyExit
 from edge.plan_rows import CHECKOUT, CheckoutEvent, PlanEvent
 
 OLD_TEXT = (
@@ -52,8 +55,8 @@ def test_waiting_commits_are_one_row_with_the_merge_command_and_head_is_planned(
     working tree stay byte-identical."""
     tip = advance(
         origin,
-        *subjects(*(f"waiting {n}" for n in range(waiting))),
-        (b"f", {b"fleet.yaml": DISABLED.encode()}),
+        *subjects(*(f"waiting {n}" for n in range(waiting - 1))),
+        (b"waiting last", {b"fleet.yaml": DISABLED.encode()}),
     )
     before = checkout_state(real_main)
 
@@ -62,9 +65,44 @@ def test_waiting_commits_are_one_row_with_the_merge_command_and_head_is_planned(
     assert find_row(
         out, CHECKOUT, CheckoutEvent.BEHIND, f"plan applies {short(real_main)} without them"
     )
-    assert f"{waiting + 1} behind" in plain(out)
+    assert f"{waiting} behind" in plain(out)
     assert detail_lines(out)[0] == f"git -C ~/git/edge merge --ff-only {tip}"
     assert find_row(out, "step-ca", PlanEvent.SWITCH_ON)
     assert not [text for text in OLD_TEXT if text in out]
     assert exit_code == 1
     assert checkout_state(real_main) == before
+
+
+def test_a_behind_checkout_with_nothing_to_change_prints_its_row_first_and_exits_0(
+    applied_core, switch, real_main, origin  # noqa: F811
+):  # fmt: skip
+    advance(origin, *subjects("waiting 0"))
+
+    exit_code, out, _ = switch(git=checkout.run_git)
+
+    assert exit_code == 0
+    assert find_row(
+        out, CHECKOUT, CheckoutEvent.BEHIND, f"plan applies {short(real_main)} without them"
+    )
+    assert plain(out).index("  ! checkout") < plain(out).index("nothing to change")
+
+
+@pytest.fixture
+def unplannable_fleet(repository):  # noqa: F811
+    """A fleet.yaml that cannot be planned, committed by `real_main` (request it first)."""
+    other = "  other: {repo: {default_branch: master}, run: {enabled: maybe}}\n"
+    (repository / "fleet.yaml").write_text(f"cloudflare:\n  zone: {ZONE}\n{ENABLED}{other}")
+
+
+def test_a_behind_checkout_still_prints_its_row_when_planning_then_refuses(
+    unplannable_fleet, switch, real_main, origin  # noqa: F811
+):  # fmt: skip
+    advance(origin, *subjects("waiting 0"))
+
+    exit_code, out, err = switch(git=checkout.run_git)
+
+    assert exit_code == ApplyExit.CANNOT_PLAN
+    assert "cannot plan, services.other.run.enabled: must be true or false" in err
+    assert find_row(
+        out, CHECKOUT, CheckoutEvent.BEHIND, f"plan applies {short(real_main)} without them"
+    )
