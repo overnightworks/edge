@@ -27,6 +27,13 @@ CHECK_READ_DATA_SUBSET = "10%"
 AUDIO_FOLDER = "audio"
 
 
+@dataclass(frozen=True)
+class BackupSummary:
+    snapshot_id: str
+    source_bytes: int
+    """restic's `total_bytes_processed`: the size of what the backup read, not what it added."""
+
+
 class MountKind(StrEnum):
     BIND = "bind"
     VOLUME = "volume"
@@ -111,7 +118,7 @@ def backup(
     kept: KeptVolume | None,
     *,
     pre_apply: bool = False,
-) -> str:
+) -> BackupSummary:
     """One snapshot holding dump, manifest and the kept volume (none for a DB-only app); any
     non-zero exit (3 too) is a failure. The skip is anchored under the volume's folder."""
     mounts = [Mount(MountKind.BIND, str(staging), f"{app_source(app)}/{DB_FOLDER}")]
@@ -127,7 +134,7 @@ def backup(
         ["backup", "--json", *excludes, *_tag(app, pre_apply=pre_apply), app_source(app)],
         *mounts,
     )
-    return _snapshot_id(output)
+    return _backup_summary(output)
 
 
 def forget(settings: Settings, app: str, *, pre_apply: bool = False) -> None:
@@ -224,9 +231,17 @@ def _tag(app: str, *, pre_apply: bool = False) -> list[str]:
     return ["--tag", f"{app},{PRE_APPLY_TAG}" if pre_apply else app]
 
 
-def _snapshot_id(backup_output: bytes) -> str:
+def _backup_summary(backup_output: bytes) -> BackupSummary:
     try:
         messages = [json.loads(line) for line in backup_output.splitlines() if line.strip()]
-        return next(m["snapshot_id"] for m in messages if m.get("message_type") == "summary")
+        summary = next(m for m in messages if m.get("message_type") == "summary")
+        snapshot_id, source_bytes = summary["snapshot_id"], summary["total_bytes_processed"]
     except (ValueError, KeyError, AttributeError, StopIteration) as error:
-        raise host.UnreadableOutputError("restic backup reported no snapshot") from error
+        raise host.UnreadableOutputError("restic backup summary is unreadable") from error
+    if not isinstance(snapshot_id, str) or not _is_size(source_bytes):
+        raise host.UnreadableOutputError("restic backup summary is unreadable")
+    return BackupSummary(snapshot_id, source_bytes)
+
+
+def _is_size(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0

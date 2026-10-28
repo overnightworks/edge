@@ -45,7 +45,7 @@ from edge_backup.verify import (
     check_row_count,
     check_rows,
 )
-from hal_output import Glyph, Row
+from hal_output import Glyph, Row, format_bytes, format_duration
 
 # A run stages in `staging-<random>` and first creates `staging-<random>.run` beside it: that
 # mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
@@ -233,14 +233,17 @@ def backup(
         run.attribute_legacy_evidence(settings, apps)
     for index, app in enumerate(targets):
         with run.isolated(app.name, partial(_report_not_backed_up, report, app)):
-            snapshot_id = _back_up(
+            started = host.monotonic()
+            summary = _back_up(
                 settings,
                 app,
                 run,
                 first_readiness if index == 0 else _Deadline.start(),
                 pre_apply=pre_apply,
             )
-            report(Row(Glyph.DONE, app.name, BackupEvent.BACKED_UP, snapshot_id[:8]))
+            report(
+                Row(Glyph.DONE, app.name, BackupEvent.BACKED_UP, _backed_up_facts(summary, started))
+            )
     if run.failed_apps:
         report(Row(Glyph.UNCHANGED, REPOSITORY, BackupEvent.NOT_PRUNED, "a backup failed"))
     run.raise_first_app_failure()
@@ -250,6 +253,15 @@ def backup(
     with run.phase(Phase.CHECK):
         restic.check(settings, read_data=False)
     report(Row(Glyph.DONE, REPOSITORY, BackupEvent.PRUNED, "checked"))
+
+
+def _backed_up_facts(summary: restic.BackupSummary, started: float) -> str:
+    facts = (
+        summary.snapshot_id[:8],
+        format_bytes(summary.source_bytes),
+        format_duration(host.monotonic() - started),
+    )
+    return " · ".join(facts)
 
 
 def _report_not_backed_up(report: Callable[[Row], None], app: App, failure: StepFailed) -> None:
@@ -409,7 +421,7 @@ def _kept_volume(app: App, folder: str, volume: str, skip: str | None) -> KeptVo
 
 def _back_up(
     settings: Settings, app: App, run: Run, readiness: _Deadline, *, pre_apply: bool
-) -> str:
+) -> restic.BackupSummary:
     with run.phase(Phase.READINESS):
         target = _ready_target(app, readiness)
     with _private_directory(settings.work_dir) as staging:
@@ -419,11 +431,9 @@ def _back_up(
             manifest = _manifest(settings, app, target, staging)
             _write_private(staging / MANIFEST_NAME, manifest.as_json())
         with run.phase(Phase.BACKUP):
-            snapshot_id = restic.backup(
-                settings, app.name, staging, target.kept, pre_apply=pre_apply
-            )
-            run.backed_up(app.name, snapshot_id)
-    return snapshot_id
+            summary = restic.backup(settings, app.name, staging, target.kept, pre_apply=pre_apply)
+            run.backed_up(app.name, summary.snapshot_id)
+    return summary
 
 
 def _dump(settings: Settings, target: _PostgresTarget | _SqliteTarget, staging: Path) -> None:
