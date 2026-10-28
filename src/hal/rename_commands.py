@@ -777,8 +777,8 @@ def _repository_name(text: str) -> str:
 
 
 def _configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("old", type=_repository_name, help="the repository's former name")
-    parser.add_argument("new", type=_repository_name, help="its name on GitHub now")
+    for name, meaning in (("old", "its former name"), ("new", "its name on GitHub now")):
+        parser.add_argument(name, type=_repository_name, help=meaning)
     add_dry_run(parser)
 
 
