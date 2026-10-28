@@ -13,7 +13,7 @@ from home_tools.check import CheckSettings
 CONFIG_PATH_IN_HOME = Path(".config") / "hal" / "config.toml"
 CHECK_TABLE = "check"
 KNOWN_CHECK_KEYS = frozenset({"notify"})
-BOOLEAN_CHECK_KEYS = frozenset({"notify"})
+BOOLEAN_CHECK_KEYS = KNOWN_CHECK_KEYS
 
 
 class ConfigInvalid(Exception):
@@ -44,12 +44,16 @@ def _read(path: Path) -> dict[str, object]:
         raise ConfigInvalid(path, error.strerror or type(error).__name__) from error
 
 
+def _refuse_unknown(path: Path, names: set[str], known: frozenset[str]) -> None:
+    unknown = sorted(names - known)
+    if unknown:
+        raise ConfigInvalid(path, f"unknown key(s) or table(s): {', '.join(unknown)}")
+
+
 def _check_settings(path: Path, table: object) -> CheckSettings:
     if not isinstance(table, dict):
         raise ConfigInvalid(path, f"[{CHECK_TABLE}] must be a table")
-    unknown = sorted(set(table) - KNOWN_CHECK_KEYS)
-    if unknown:
-        raise ConfigInvalid(path, f"unknown key(s) or table(s): {', '.join(unknown)}")
+    _refuse_unknown(path, set(table), KNOWN_CHECK_KEYS)
     for key in BOOLEAN_CHECK_KEYS & set(table):
         if not isinstance(table[key], bool):
             raise ConfigInvalid(path, f"{key} must be true or false, got {table[key]!r}")
@@ -59,9 +63,7 @@ def _check_settings(path: Path, table: object) -> CheckSettings:
 def load(home: Path) -> Settings:
     path = config_path(home)
     raw = _read(path)
-    unknown = sorted(set(raw) - {CHECK_TABLE})
-    if unknown:
-        raise ConfigInvalid(path, f"unknown key(s) or table(s): {', '.join(unknown)}")
+    _refuse_unknown(path, set(raw), frozenset({CHECK_TABLE}))
     if CHECK_TABLE not in raw:
         return Settings()
     return Settings(check=_check_settings(path, raw[CHECK_TABLE]))

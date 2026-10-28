@@ -574,7 +574,7 @@ def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_f
 
 
 def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, runner, mail_stub) -> None:
-    """#390 C7, F1: enabled = false sends no mail and no popup, and the set advances."""
+    """#390 C7, F1: notify = false sends no mail and no popup, and the set advances."""
     write_hal_config(clean_home, "[check]\nnotify = false\n")
     restarting_containers(runner)
 
