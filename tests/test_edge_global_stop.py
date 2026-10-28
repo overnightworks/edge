@@ -19,7 +19,7 @@ from test_edge_apply import (
     switch_off,
 )
 
-from edge import barrier, catalog, cli, compose, emergency, switches, tunnel
+from edge import barrier, catalog, compose, emergency, switches, tunnel
 
 PROBE_FLEET = "services:\n  probe:\n    run: {enabled: true}\n"
 FIRST_STOP = "2026-10-17T22:10:04+02:00"
@@ -700,18 +700,6 @@ def test_start_all_with_nothing_switched_off_changes_nothing(start_all, systemd)
 # --- the command line ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "arguments", [["stop", "probe", "--all"], ["start", "probe", "--all"], ["stop"], ["start"]]
-)
-def test_a_unit_and_all_exclude_each_other_and_one_is_required(arguments, capsys):
-    """#70 Files (cli.py): --all and <unit> are mutually exclusive."""
-    with pytest.raises(SystemExit) as refused:
-        cli.main(arguments)
-
-    assert refused.value.code == 2
-    assert "usage:" in capsys.readouterr().err
-
-
 def test_the_tunnel_is_cloudflared_of_the_system_manager_unless_the_environment_names_another():
     """#70 Files (tunnel.py): unit and manager are parameters for the probe."""
     default = tunnel.Tunnel.from_environment({})
@@ -733,16 +721,6 @@ def test_a_user_manager_tunnel_is_driven_with_systemctl_user_and_needs_no_author
         ["systemctl", "--user", "--no-ask-password", "stop", "edge-probe-tunnel-1.service"]
     ]
     assert user_tunnel.authorized_to_start(1)
-
-
-def test_an_invalid_tunnel_manager_is_a_plain_refusal_not_a_traceback(monkeypatch, capsys):
-    """#70 Files (tunnel.py): the environment names the manager; a wrong name is reported."""
-    monkeypatch.setenv(tunnel.MANAGER_VARIABLE, "bogus")
-
-    exit_code = cli.main(["stop", "--all"])
-
-    assert exit_code == 2
-    assert tunnel.MANAGER_VARIABLE in capsys.readouterr().err
 
 
 def test_a_stop_that_cannot_be_asked_names_edges_own_reason_beside_the_partial(stop_all, systemd):

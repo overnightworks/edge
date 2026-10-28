@@ -708,8 +708,8 @@ hal setup --apply
 Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
 `systemd/` und startet die Timer, darunter `hal-check.timer`.
 
-`uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist ein Link auf
-den Starter `bin/edge`, der `.venv/bin/hal` des Checkouts ausführt; der Link
+`uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist der Starter,
+der `.venv/bin/hal` des Checkouts ausführt; der Link
 unter `~/.local/bin` muss deshalb `hal` heißen. Die systemd-Unit ruft
 `~/git/edge/.venv/bin/hal` direkt auf und hängt so an keinem Link. `hal`
 läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das

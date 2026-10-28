@@ -250,8 +250,24 @@ def test_the_help_lists_the_five_beside_version_and_stop_names_its_unit(
 
 @pytest.mark.parametrize(
     ("arguments", "help_of"),
-    [(["stop"], "stop"), (["stop", "x", "--all"], "stop"), (["offline", "x"], "offline")],
-    ids=["stop alone", "stop x --all", "offline x"],
+    [
+        (["stop"], "stop"),
+        (["start"], "start"),
+        (["stop", "x", "--all"], "stop"),
+        (["start", "x", "--all"], "start"),
+        (["offline", "x"], "offline"),
+        (["online", "x"], "online"),
+        (["apply", "--closed"], "apply"),
+    ],
+    ids=[
+        "stop alone",
+        "start alone",
+        "stop x --all",
+        "start x --all",
+        "offline x",
+        "online x",
+        "apply --closed",
+    ],
 )
 def test_a_wrong_command_line_is_a_usage_error_and_no_stack_code_runs(
     tmp_path, system_commands, empty_home, arguments, help_of
@@ -331,6 +347,7 @@ def test_apply_while_another_apply_runs_changes_nothing(hal, applying):
     assert "another `hal apply` is running; nothing changed" in result.err
     assert "hal apply: nothing published" in result.err
     assert applying.scripted.changing_verbs() == []
+    assert applying.publish_never_began()
 
 
 def test_apply_interrupted_at_the_plan_publishes_nothing_and_ends_with_3(hal, applying):
@@ -365,9 +382,9 @@ def test_apply_without_a_terminal_is_refused_with_3_and_touches_nothing(
     assert "nothing published" in result.stderr
 
 
-def test_apply_closed_applies_the_local_part_alone(hal, applying):
+def test_apply_local_applies_the_local_part_alone(hal, applying):
     """A6"""
-    result = hal("apply", "--closed", answers=("yes",))
+    result = hal("apply", "--local", answers=("yes",))
 
     assert result.exit_code == ExitCode.OK
     assert "step-ca is on" in result.out
@@ -384,6 +401,7 @@ def test_apply_with_the_plan_declined_changes_nothing(hal, applying):
     assert "aborted, nothing changed" in result.err
     assert "nothing published" in result.err
     assert applying.scripted.changing_verbs() == []
+    assert applying.publish_never_began()
 
 
 def test_apply_from_a_checkout_that_is_not_a_clean_main_is_refused(hal, applying):
@@ -483,6 +501,7 @@ def test_offline_with_an_invalid_tunnel_manager_cannot_plan(
 
     assert result.exit_code == ExitCode.FAILURE
     assert "hal offline: cannot plan, " in result.err
+    assert tunnel.MANAGER_VARIABLE in result.err
     assert systemd.calls == []
     assert marks.global_mark() is None
 

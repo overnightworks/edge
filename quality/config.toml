@@ -24,7 +24,7 @@ reason = "backup app declarations that the backup units read"
 
 [[root.allow]]
 entry = "bin/"
-reason = "the edge, hal and home launchers"
+reason = "the hal launcher"
 
 [[root.allow]]
 entry = "dynamic/"

@@ -1,6 +1,6 @@
 """`hal apply`, `hal stop`, `hal start`, `hal offline` and `hal online`: the stack's switches behind
-hal's door. Each calls the typed function of `edge.cli` that `edge` calls too, so the guards, the
-prompts, the state files and the lines are the stack's own; only the exit number is hal's."""
+hal's door. Each calls a typed function of `edge.cli`, so the guards, the prompts, the state files
+and the lines are the stack's own; only the exit number is hal's."""
 
 import argparse
 
@@ -23,8 +23,13 @@ def _exit_of(stack_exit: int) -> ExitCode:
 
 
 def _configure_apply(parser: argparse.ArgumentParser) -> None:
+    parser.description = (
+        "The local part (`--local`: the units of this repository and the apps of the catalog, at a "
+        "terminal, after `yes`), then, only if it ended clean, the publish to Cloudflare (after "
+        "its own `yes`). Each part asks only when it has changes."
+    )
     parser.add_argument(
-        "--closed",
+        "--local",
         action="store_true",
         help="the local part alone: units of this repository and the apps of the catalog "
         "(checked out, built and run at their newest release), at a terminal, after `yes`",
@@ -40,7 +45,7 @@ def _configure_nothing(_parser: argparse.ArgumentParser) -> None:
 
 
 def _apply(arguments: argparse.Namespace) -> ExitCode:
-    return _exit_of(stack.apply_units(arguments.closed))
+    return _exit_of(stack.apply_units(arguments.local))
 
 
 def _stop(arguments: argparse.Namespace) -> ExitCode:
