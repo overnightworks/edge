@@ -1,0 +1,8 @@
+claim_id = "f4f2f60f785a4e66bb8a84d1217b537d"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "675d6e1b258b03738572480fe40756bf58d5d6e2"
+branch = "claude/issue-547-agent-runtime-0-10-0"
+scope = ["agent-service/image/requirements.txt", "agent-service/live_smoke.py", "agent-service/service.toml", "agent-service/smoke.py", "compose.yaml", "docs/agent-service.md", "docs/architecture.md", "docs/design/hal-output.html", "probe/agent-service/census_client.py", "probe/agent-service/egress.py", "probe/agent-service/image.py", "probe/agent-service/refusals.py", "probe/agent-service/unit.py", "tests/live_smoke_fakes.py", "tests/test_agent_egress.py", "tests/test_agent_service_image.py", "tests/test_agent_service_live_signer.py", "tests/test_agent_service_live_smoke.py", "tests/test_agent_service_smoke.py", "tests/test_agent_service_unit.py"]
+opened_commit = "fa09323baf02ca6a7b86a9276c85d4998eee7654"
+whole_reason = "service.toml, the smoke, the live smoke, the probes that read the configuration, the lock and the docs switch to protocol 3 together, because none works against the other protocol and the one live service switches on one day."
