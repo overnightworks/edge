@@ -509,12 +509,19 @@ def test_a_group_that_is_a_file_when_the_walk_starts_is_refused_before_any_page_
     assert "✗ cloudflare/read not stored ~/.secrets/cloudflare is not a folder" in squeezed(captured.out)
     assert "not checked" not in captured.out
     assert captured.err.splitlines()[-1] == "next: mv -n ~/.secrets/cloudflare ~/.secrets/cloudflare.alt"
+    assert (terminal.opened, terminal.prompts) == ([], [])
 
 
 def loosen_the_secrets_directory(home: Path) -> tuple[str, str]:
     (home / ".secrets").mkdir(mode=0o700)
     (home / ".secrets").chmod(0o755)
     return "~/.secrets has mode 755; at most 700 allowed", "chmod 700 ~/.secrets"
+
+
+def loosen_the_secrets_directory_above_a_group_that_is_a_file(home: Path) -> tuple[str, str]:
+    reason, fix = loosen_the_secrets_directory(home)
+    (home / ".secrets" / "cloudflare").write_text("not a directory")
+    return reason, fix
 
 
 def make_the_secrets_directory_a_symlink(home: Path) -> tuple[str, str]:
@@ -524,7 +531,10 @@ def make_the_secrets_directory_a_symlink(home: Path) -> tuple[str, str]:
     return "~/.secrets is a symlink", symlinked_folder_fix("~/.secrets")
 
 
-@pytest.mark.parametrize("damage", [loosen_the_secrets_directory, make_the_secrets_directory_a_symlink])
+@pytest.mark.parametrize(
+    "damage",
+    [loosen_the_secrets_directory, loosen_the_secrets_directory_above_a_group_that_is_a_file, make_the_secrets_directory_a_symlink],
+)
 def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_opens_and_nothing_is_written(
     home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys, damage: Callable[[Path], tuple[str, str]]
 ) -> None:
@@ -541,7 +551,7 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     assert captured.err.splitlines() == ["error: setup stopped at secrets · nothing stored for cloudflare/read", f"next: {fix}"]
     assert PASTED_VALUE not in captured.out + captured.err
     assert (terminal.opened, terminal.prompts) == ([], [])
-    assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets"}
+    assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets", "home/.secrets/cloudflare"}
 
 
 def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retired_ones_are_left_alone(

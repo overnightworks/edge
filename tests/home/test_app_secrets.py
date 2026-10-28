@@ -511,6 +511,7 @@ def test_hal_setup_dry_run_names_only_the_open_secrets(
 def closed_folder(sandbox: Sandbox) -> Iterator[None]:
     """A folder its owner cannot open, so `stat` cannot tell whether the file inside exists."""
     put_secret(sandbox, "closed/entry")
+    (sandbox.home / ".secrets").chmod(0o700)
     folder = sandbox.home / ".secrets" / "closed"
     folder.chmod(0)
     yield

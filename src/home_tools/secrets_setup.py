@@ -21,6 +21,7 @@ import json
 import os
 import secrets
 import signal
+import stat
 import sys
 import urllib.error
 import urllib.request
@@ -38,7 +39,6 @@ from urllib.parse import quote, urlencode, urlsplit
 from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
-    FindingRule,
     HOME_PREFIX,
     LOOSEST_DIRECTORY_MODE,
     LOOSEST_FILE_MODE,
@@ -261,14 +261,14 @@ def _private_directories(home: Path, directory: Path) -> None:
             raise _refused_below(unfit)
 
 
-_STRUCTURAL_REFUSALS = frozenset({FindingRule.NOT_A_FOLDER, FindingRule.SYMLINKED_FOLDER})
+_OWNER_SEARCH_BIT = 0o100
 
 
-def _store_refusal(layout: Layout, place: PurePosixPath, *, only_structural: bool = False) -> StoreRefused | None:
+def _store_refusal(layout: Layout, place: PurePosixPath, *, unless_unsearchable: bool = False) -> StoreRefused | None:
     """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for.
 
-    With `only_structural`, a directory that is merely closed or too open ends the look with None: a file or a symlink on
-    the way is the only refusal a walk judges before it can read the entry.
+    With `unless_unsearchable`, a directory its owner cannot search (no owner x bit) ends the look with None: the walk
+    cannot read below it, so it reports the entry as not checked instead of naming a refusal it cannot see through.
     """
     for relative in _levels(layout.home, (layout.home / place).parent):
         try:
@@ -276,7 +276,7 @@ def _store_refusal(layout: Layout, place: PurePosixPath, *, only_structural: boo
         except FileNotFoundError:
             return None  # the store creates this level and every one below it, private
         if unfit := unfit_folder(PurePosixPath(relative), mode):
-            if only_structural and unfit.rule not in _STRUCTURAL_REFUSALS:
+            if unless_unsearchable and stat.S_ISDIR(mode) and not mode & _OWNER_SEARCH_BIT:
                 return None
             return _refused_below(unfit)
     return None
@@ -628,7 +628,7 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
             _write_entry_row(Glyph.UNCHANGED, entry.name, WizardEvent.SKIPPED, "optional")
         return None
     if found is Presence.UNKNOWN:
-        if entry.written_by_setup and (refusal := _store_refusal(layout, entry.place, only_structural=True)):
+        if entry.written_by_setup and (refusal := _store_refusal(layout, entry.place, unless_unsearchable=True)):
             raise EntryRefused(entry.name, refusal)
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.NOT_CHECKED, "its folder cannot be read")
         return Step.STILL_MISSING
