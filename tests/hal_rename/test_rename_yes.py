@@ -11,6 +11,10 @@ from hal.rename_commands import RunningProcess
 PROMPT = "Type yes to apply "
 
 
+def origins(home, repository) -> tuple[str, str]:
+    return origin_of(repository), origin_of(home / "git" / "old-land")
+
+
 def after_the_prompt(out: str) -> list[str]:
     """The lines the run printed once the yes was typed; the prompt line has no newline."""
     _, prompt, rest = out.partition(PROMPT)
@@ -181,9 +185,12 @@ def test_a_refusal_comes_before_the_terminal_check_and_the_prompt(repository, fa
 def test_a_session_that_starts_in_a_clone_while_the_prompt_waits_is_refused_with_a_changed_plan(
     home, repository, through_cli, fakes
 ):
+    shown = {}
+
     def session_and_clone_appear():
         fakes.running = [RunningProcess(4242, "claude", repository / "src")]
         make_clone(home / "git" / "old-land", SSH.format("old"))
+        shown.update(state=tree_state(home), origins=origins(home, repository))
 
     code, out, err = through_cli("old", "fresh", while_waiting=session_and_clone_appear)
 
@@ -195,13 +202,17 @@ def test_a_session_that_starts_in_a_clone_while_the_prompt_waits_is_refused_with
     assert (home / "git" / "old").is_dir()
     assert not (home / "git" / "fresh").exists()
     assert origin_of(repository) == SSH.format("old")
+    assert (tree_state(home), origins(home, repository)) == (shown["state"], shown["origins"])
 
 
 def test_a_clone_that_appears_while_the_prompt_waits_changes_the_plan_and_moves_nothing(
     home, repository, through_cli
 ):
+    shown = {}
+
     def another_clone_appears():
         make_clone(home / "git" / "old-land", SSH.format("old"))
+        shown.update(state=tree_state(home), origins=origins(home, repository))
 
     code, out, err = through_cli("old", "fresh", while_waiting=another_clone_appears)
 
@@ -210,14 +221,18 @@ def test_a_clone_that_appears_while_the_prompt_waits_changes_the_plan_and_moves_
     assert after_the_prompt(out) == []
     assert (home / "git" / "old").is_dir()
     assert origin_of(repository) == SSH.format("old")
+    assert (tree_state(home), origins(home, repository)) == (shown["state"], shown["origins"])
 
 
 def test_a_target_that_appears_while_the_prompt_waits_is_refused_as_existing_with_a_changed_plan(
     home, repository, through_cli
 ):
+    shown = {}
+
     def target_and_clone_appear():
         (home / "git" / "fresh").mkdir()
         make_clone(home / "git" / "old-land", SSH.format("old"))
+        shown.update(state=tree_state(home), origins=origins(home, repository))
 
     code, out, err = through_cli("old", "fresh", while_waiting=target_and_clone_appear)
 
@@ -227,6 +242,7 @@ def test_a_target_that_appears_while_the_prompt_waits_is_refused_as_existing_wit
     assert after_the_prompt(out) == []
     assert origin_of(repository) == SSH.format("old")
     assert (home / "git" / "old").is_dir()
+    assert (tree_state(home), origins(home, repository)) == (shown["state"], shown["origins"])
 
 
 def test_findings_that_change_while_the_prompt_waits_change_the_plan(
