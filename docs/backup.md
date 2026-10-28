@@ -9,7 +9,7 @@ hold the mechanics. The data layer and the re-setup path they serve: [architectu
 
 A read-only alarm: it fails loudly when something on this PC reaches beyond loopback. Docker's loopback default is not set yet (edge#291), so a publication can bind every
 interface; the daily `hal check` reports it as its exposure area.
-Run `hal check exposure` (human table) or `hal check exposure --json` (the same findings for
+Run `hal check exposure` (one row for each process or container, then a verdict) or `hal check exposure --json` (the same findings for
 machines). It has two areas, `exposure` (local) and `hosts` (reads Cloudflare, see
 docs/external.md), one per run. A bare `hal check` is not an area: it is the daily check, which also
 mails and pops up what is new (docs/home.md), and takes no `--json`.
@@ -29,11 +29,12 @@ written) and reports, by `problem`:
 Stopped containers count too, since their publications and labels return when they start; only the
 duplicate check looks at running containers alone. docker-proxy's socket for a running container's
 publication is not reported again as a listener, and `docker.service` never belongs on the allow-list.
-`--json` is one object, `{"exposure": [...]}`, whose list is deduplicated and stably ordered, with objects holding `problem`, `subject`, `protocol`,
+The rows name the subject, the protocol and a count, never an address, a port or the `problem` code;
+`--json` lists each socket. It is one object, `{"exposure": [...]}`, whose list is deduplicated and stably ordered, with objects holding `problem`, `subject`, `protocol`,
 `address`, `port` and `edge_name` (`null` where they do not apply; `port` is a string such as
 `"8000-8010"` for a range).
 
-Exit 0: every publication binds loopback and every listener is loopback or allow-listed. Exit 1: at least
+Exit 0, printing `✓ nothing reaches beyond loopback`: every publication binds loopback and every listener is loopback or allow-listed. Exit 1: at least
 one finding. Exit 3: it cannot check, with the cause as `error:` on stderr and nothing on stdout (allow-list missing or invalid, or `docker`/`ss` failed, timed out
 after 30 s or printed something unreadable; `docker inspect` answering fewer containers than `docker ps`
 listed is unreadable too).
