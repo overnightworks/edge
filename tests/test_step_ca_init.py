@@ -493,14 +493,15 @@ def test_a_failing_tool_shows_one_line_without_the_password_or_a_key(
     assert "PRIVATE KEY" not in session.output
 
 
+@pytest.mark.parametrize(("read_only", "exit_code"), [(False, 1), (True, 2)])
 def test_another_user_than_the_images_is_refused_before_anything_is_made(
-    init, secrets_dir, session
+    make_init, secrets_dir, session, read_only, exit_code
 ):
-    """#38 rule 3: the image's user must run the tool."""
+    """#38 rule 3, #52 rule 8: the image's user must run the tool; --check cannot tell (2)."""
     session.uid = 1001
+    init = make_init(read_only=read_only)
 
-    assert init.run() == 1
-
+    assert (init.check() if read_only else init.run()) == exit_code
     assert not secrets_dir.exists()
     assert "uid 1000" in session.printed[-1]
 
@@ -518,23 +519,18 @@ def test_a_docker_failure_while_reading_compose_is_one_line(init, docker, sessio
 @pytest.mark.parametrize(
     ("read_only", "exit_code", "last_line"),
     [
-        (True, 2, "unexpected answer at secrets directory (RuntimeError)"),
-        (False, 1, "step-ca/init FAILED at secrets directory: unexpected answer (RuntimeError)"),
+        (True, 2, "unexpected answer at secrets directory (KeyError)"),
+        (False, 1, "step-ca/init FAILED at secrets directory: unexpected answer (KeyError)"),
     ],
 )
 def test_an_unexpected_exception_is_one_line_in_both_modes(
     make_init, monkeypatch, session, read_only, exit_code, last_line
 ):
     """#628 cell 5: --check says the fact bare with its step, a plain run prints as before."""
-
-    def crash(*_arguments, **_options):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr("pathlib.Path.is_dir", crash)
+    monkeypatch.setattr("pathlib.Path.is_dir", lambda *_: {}[0])
     init = make_init(read_only=read_only)
 
     assert (init.check() if read_only else init.run()) == exit_code
-
     assert session.printed[-1] == last_line
 
 
@@ -759,31 +755,23 @@ def test_check_on_a_fresh_home_is_not_set_up_and_creates_nothing(
     assert not [c for c in docker.commands if c[1:3] == ["volume", "create"]]
 
 
-def test_check_with_secrets_but_no_volume_never_creates_the_volume(
-    init, check, docker, secrets_dir, session
+@pytest.mark.parametrize(
+    ("deleted", "named"),
+    [(None, "intermediate is not done"), (ACME_VOLUME, "ACME volume is not done")],
+)
+def test_check_without_a_volume_is_not_set_up_and_never_creates_it(
+    init, check, docker, session, deleted, named
 ):
-    """#52 rule 8: a missing volume is "not set up" (exit 1) as today's daemon words it."""
+    """#52 rules 2 and 8: apply never creates a volume, so --check asks and names the gap."""
     init.run()
-    docker.volumes.clear()
-
-    assert check() == 1
-
-    assert "intermediate is not done" in session.output
-    assert docker.volumes == {}
-
-
-def test_check_without_the_acme_volume_is_not_set_up_and_never_creates_it(
-    init, check, docker, session
-):
-    """#52 rule 2: apply never creates a volume, so setup owns the ACME volume and --check asks."""
-    init.run()
-    del docker.volumes[ACME_VOLUME]
+    kept = {} if deleted is None else {k: v for k, v in docker.volumes.items() if k != deleted}
+    docker.volumes = dict(kept)
     session.printed.clear()
 
     assert check() == 1
 
-    assert "ACME volume is not done" in session.output
-    assert ACME_VOLUME not in docker.volumes
+    assert named in session.output
+    assert docker.volumes == kept
 
 
 def test_check_names_a_key_without_its_certificate_in_inits_own_words(
@@ -809,10 +797,3 @@ def test_check_cannot_tell_when_docker_does_not_answer(init, check, docker, sess
     assert check() == 2
 
     assert "Cannot connect to the Docker daemon" in session.output
-
-
-def test_check_refuses_another_user_than_the_images_with_exit_2(check, session):
-    """#52 rule 8: the uid-1000 refusal stays exit 2."""
-    session.uid = 1001
-
-    assert check() == 2
