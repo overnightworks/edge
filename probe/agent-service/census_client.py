@@ -58,7 +58,7 @@ class CensusClient:
     def __init__(self, probe: Probe, container: str, configuration: Path) -> None:
         settings = tomllib.loads(configuration.read_text(encoding="utf-8"))
         self.working_root = settings["cli"]["working_root"]
-        self.token_file = settings["profiles"]["claude"]["token_file"]
+        self.token_file = settings["cli"]["anthropic"]["token_file"]
         self.probe = probe
         self.container = container
         self.key = secrets.token_bytes(16)

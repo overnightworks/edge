@@ -708,7 +708,7 @@ class Probe:
             expect(addresses == [self.address], f"E11: {name} resolves to {addresses}")
         configuration = service_configuration()
         working_root = configuration["cli"]["working_root"]
-        token_file = configuration["profiles"]["claude"]["token_file"]
+        token_file = configuration["cli"]["anthropic"]["token_file"]
         script = (
             'cd "$(mktemp -d -p "$1")" && CLAUDE_CODE_OAUTH_TOKEN="$(cat "$2")" exec "$3" -p hello'
         )

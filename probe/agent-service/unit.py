@@ -228,7 +228,7 @@ def working_root() -> str:
 
 
 def token_path() -> str:
-    return service_configuration()["profiles"]["claude"]["token_file"]
+    return service_configuration()["cli"]["anthropic"]["token_file"]
 
 
 def login_directory() -> str:
