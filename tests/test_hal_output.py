@@ -7,7 +7,9 @@ from enum import StrEnum
 import pytest
 
 from hal_output import (
+    HEADING_THRESHOLD,
     Glyph,
+    Group,
     Noun,
     Row,
     Tone,
@@ -16,6 +18,7 @@ from hal_output import (
     format_duration,
     write_detail,
     write_error,
+    write_groups,
     write_row,
     write_verdict,
 )
@@ -27,6 +30,11 @@ class Event(StrEnum):
     SKIPPED = "skipped"
     RESTORE_PROVEN = "restore proven"
     NOT_PROVEN = "not proven"
+
+
+class Heading(StrEnum):
+    APPS = "apps"
+    UNITS = "units"
 
 
 def test_a_row_is_two_spaces_a_glyph_the_subject_and_the_event_in_fixed_columns(
@@ -373,6 +381,106 @@ def test_a_verdict_without_a_summary_is_its_counts_then_its_details_and_its_next
         "next: hal backup",
         "✓ all well · 5 areas checked",
         "✓ all well · 1 area checked",
+    ]
+
+
+def rows_of(count: int) -> tuple[Row, ...]:
+    return tuple(Row(Glyph.CHANGE, f"app{number}", Event.CHANGED) for number in range(count))
+
+
+def test_below_the_threshold_the_groups_print_their_rows_without_headings(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The blessed picture: headings appear only from about six rows."""
+
+    write_groups(
+        (Group(Heading.UNITS, rows_of(2)), Group(Heading.APPS, rows_of(HEADING_THRESHOLD - 3)))
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == HEADING_THRESHOLD - 1
+    assert not any(line.startswith(("units", "apps")) for line in lines)
+
+
+def test_from_the_threshold_every_named_group_prints_under_an_unindented_heading(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_groups(
+        (Group(Heading.UNITS, rows_of(2)), Group(Heading.APPS, rows_of(HEADING_THRESHOLD - 2)))
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "units"
+    assert lines[3] == "apps"
+    assert len(lines) == HEADING_THRESHOLD + 2
+
+
+def test_an_empty_group_prints_nothing_and_does_not_count_towards_the_threshold(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_groups((Group(Heading.UNITS, ()), Group(Heading.APPS, rows_of(HEADING_THRESHOLD - 1))))
+
+    assert "apps" not in capsys.readouterr().out.splitlines()
+
+
+def test_rows_without_a_heading_print_first_and_stay_without_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_groups(
+        (
+            Group(Heading.APPS, rows_of(HEADING_THRESHOLD)),
+            Group(None, (Row(Glyph.DONE, "checkout", Event.CHANGED),)),
+        )
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "  ✓ checkout        changed"
+    assert lines[1] == "apps"
+
+
+def test_on_a_terminal_a_heading_is_bold_and_add_and_remove_rows_are_green_and_red(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, _err = put_on_terminals(monkeypatch)
+    write_groups(
+        (
+            Group(
+                Heading.APPS,
+                (Row(Glyph.ADD, "hopin", Event.CHANGED), *rows_of(HEADING_THRESHOLD - 2)),
+            ),
+            Group(Heading.UNITS, (Row(Glyph.REMOVE, "legal", Event.CHANGED),)),
+        )
+    )
+
+    lines = out.getvalue().splitlines()
+    assert lines[0] == "\x1b[1mapps\x1b[0m"
+    assert lines[1] == "  \x1b[32m+\x1b[0m hopin           changed"
+    assert "  \x1b[31m-\x1b[0m legal           changed" in lines
+
+
+def test_with_no_colour_a_heading_and_the_add_and_remove_glyphs_are_plain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, _err = put_on_terminals(monkeypatch)
+    monkeypatch.setenv("NO_COLOR", "1")
+
+    write_groups(
+        (
+            Group(
+                Heading.APPS,
+                (
+                    Row(Glyph.ADD, "hopin", Event.CHANGED),
+                    Row(Glyph.REMOVE, "legal", Event.CHANGED),
+                    *rows_of(HEADING_THRESHOLD - 2),
+                ),
+            ),
+        )
+    )
+
+    assert out.getvalue().splitlines()[:3] == [
+        "apps",
+        "  + hopin           changed",
+        "  - legal           changed",
     ]
 
 

@@ -134,9 +134,8 @@ def test_a_ps_answer_that_lists_no_containers_is_one_line_without_its_content(an
         lambda engine: engine.stop(),
         lambda engine: engine.remove(),
         lambda engine: engine.remove_by_identifier(["a1"]),
-        lambda engine: engine.volumes(),
     ],
-    ids=["build", "pull", "create", "start", "ps", "config", "stop", "rm", "rm by id", "volume ls"],
+    ids=["build", "pull", "create", "start", "ps", "config", "stop", "rm", "rm by id"],
 )
 def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     docker = Docker(exit_code=17, stdout=SENTINEL)
@@ -150,16 +149,6 @@ def test_a_failing_call_names_step_app_and_exit_and_never_composes_output(step):
     assert f"of {KEY}" in line
     assert "exited 17" in line
     assert "output is withheld" in line
-
-
-def test_the_volumes_are_the_keys_docker_labels_for_the_project():
-    docker = Docker(stdout="data\n\ncache\n")
-
-    assert engine_over(docker).volumes() == ["data", "cache"]
-    assert docker.commands == [
-        ["docker", "volume", "ls", "--filter", f"label=com.docker.compose.project={KEY}",
-         "--format", '{{.Label "com.docker.compose.volume"}}']
-    ]  # fmt: skip
 
 
 class ImageDocker(Docker):
