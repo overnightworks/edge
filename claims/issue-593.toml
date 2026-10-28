@@ -1,0 +1,8 @@
+claim_id = "4f5f23cf6eac48d28911cfbbda3e0e71"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "1590e23f21a70770319b50bc8bd1cdc23fa58a18"
+branch = "claude/issue-593-s5-3-units-start-rows"
+scope = ["docs/architecture.md", "docs/design/hal-output.html", "probe/step-ca/probe.py", "probe/switches/built_image.py", "quality/baseline.toml", "src/edge/built_image.py", "src/edge/plan.py", "src/edge/plan_rows.py", "src/edge/unit_plans.py", "tests/old_names_baseline.toml", "tests/test_edge_apply.py", "tests/test_edge_apply_built_image.py", "tests/test_edge_apply_recreate.py", "tests/test_edge_plan_rows.py"]
+opened_commit = "734ed66c77c31838e819e162b58456c3c156f51c"
+whole_reason = "The start of the units group as rows: the recreate, built-image recreate, switch on/off and stays-stopped rows, the typed reasons that feed them and the strings that die with them land together, so no part prints twice and no wording lingers."
