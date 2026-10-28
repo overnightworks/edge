@@ -1587,9 +1587,11 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
 # (suffix c) and sudo-rs (suffix r). Each cell asserts the active sudo first.
 SUDO_CLASSIC=/usr/bin/sudo.ws
 SUDO_RS=/usr/lib/cargo/bin/sudo
+APPLY_ARGUMENTS="setup --apply"
 
 active_sudo_is() {  # active_sudo_is <alternative>
-    [[ $(readlink -f /usr/bin/sudo) == "$(readlink -f "$1")" ]]
+    local alternative=$1
+    [[ $(readlink -f /usr/bin/sudo) == "$(readlink -f "$alternative")" ]]
     return
 }
 
@@ -1604,8 +1606,8 @@ at_sudo_terminal() {  # at_sudo_terminal <log> <ticket: none|present> <hal args>
 }
 
 hal_prompts_are() {  # hal_prompts_are <log> <count> [<count before hal>]
-    local log=$1
-    grep -qx "PROMPTS=$2" "$EVIDENCE/$log.log" && { [[ -z ${3:-} ]] || grep -qx "PREPROMPTS=$3" "$EVIDENCE/$log.log"; }
+    local log=$1 count=$2 count_before=${3:-}
+    grep -qx "PROMPTS=$count" "$EVIDENCE/$log.log" && { [[ -z $count_before ]] || grep -qx "PREPROMPTS=$count_before" "$EVIDENCE/$log.log"; }
     return
 }
 
@@ -1629,9 +1631,9 @@ home_is_untouched() {  # the offenders are listed in the evidence
 
 cell_p_applies() {  # cell_p_applies <cell> <log> <ticket> <prompts>: a successful apply
     local cell=$1 log=$2 ticket=$3 prompts=$4 code announced=true
-    at_sudo_terminal "$log" "$ticket" "setup --apply"
+    at_sudo_terminal "$log" "$ticket" "$APPLY_ARGUMENTS"
     code=$?
-    if [ "$prompts" -eq 1 ]; then
+    if [[ $prompts -eq 1 ]]; then
         announced="[ \"\$(grep -c '^  › system  *needs sudo' \"\$EVIDENCE/$log.log\")\" -eq 1 ] && announced_before_prompt $log"
     fi
     verdict "$cell" "apply succeeds, hal asks $prompts time(s), no BECOME, the ticket is gone" \
@@ -1643,7 +1645,7 @@ cell_p_fails_in_the_play() {  # cell_p_fails_in_the_play <cell> <log> <ticket> <
     local cell=$1 log=$2 ticket=$3 prompts=$4 code
     cp /etc/cloudflared/config.yml /proof/config.yml.saved
     sed -i '/^tunnel:/d' /etc/cloudflared/config.yml
-    at_sudo_terminal "$log" "$ticket" "setup --apply"
+    at_sudo_terminal "$log" "$ticket" "$APPLY_ARGUMENTS"
     code=$?
     cp /proof/config.yml.saved /etc/cloudflared/config.yml
     verdict "$cell" "the step fails after $prompts prompt(s) and the ticket is gone" \
@@ -1653,7 +1655,7 @@ cell_p_fails_in_the_play() {  # cell_p_fails_in_the_play <cell> <log> <ticket> <
 
 cell_p_interrupted() {  # cell_p_interrupted <cell> <log> <ticket>: Ctrl-C at the first task
     local cell=$1 log=$2 ticket=$3 code
-    PROOF_INTERRUPT='TASK \[' at_sudo_terminal "$log" "$ticket" "setup --apply"
+    PROOF_INTERRUPT='TASK \[' at_sudo_terminal "$log" "$ticket" "$APPLY_ARGUMENTS"
     code=$?
     verdict "$cell" "Ctrl-C mid-play stops the step with 130 and the ticket is gone" \
         "[ \$code -eq 130 ] && active_sudo_is \"\$sudo_alternative\" && ticket_is_gone $log"
@@ -1672,7 +1674,7 @@ cell_p_dry_run() {  # cell_p_dry_run <cell> <log> <ticket> <prompts>
 cell_p_wrong_password() {  # cell_p_wrong_password <cell> <log>: sudo refuses three tries and the play never starts
     local cell=$1 log=$2 code before
     before=$(snapshot)
-    PROOF_PASSWORD="not-the-password" at_sudo_terminal "$log" none "setup --apply"
+    PROOF_PASSWORD="not-the-password" at_sudo_terminal "$log" none "$APPLY_ARGUMENTS"
     code=$?
     verdict "$cell" "a wrong password: three prompts, hal fails, the play never started, /etc unchanged, the ticket is gone" \
         "[ \$code -eq 1 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log 3 && row_in_log $log system failed && ! grep -q 'PLAY \[' \"\$EVIDENCE/$log.log\" && [ \"\$before\" = \"\$(snapshot)\" ] && ticket_is_gone $log"
@@ -1686,7 +1688,7 @@ cell_p_config_of_root() {  # cell_p_config_of_root <cell> <log>: root's own ansi
     printf '[defaults]\nstdout_callback = json\n' >/root/.ansible.cfg
     outside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd / && $ansible_playbook --version" 2>&1)
     inside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd $package && $ansible_playbook --version" 2>&1)
-    at_sudo_terminal "$log" none "setup --apply"
+    at_sudo_terminal "$log" none "$APPLY_ARGUMENTS"
     code=$?
     rm -f /root/.ansible.cfg
     verdict "$cell" "the recap is read although root's cfg selects json; the control shows which cfg wins where" \
@@ -1706,7 +1708,7 @@ cells_sudo() {  # cells_sudo <suffix> <alternative>: P1-P10 under one variant of
     cell_p_wrong_password "P5$suffix" "p5$suffix"
     cell_p_interrupted "P6$suffix" "p6$suffix" none
     cell_p_interrupted "P7$suffix" "p7$suffix" present
-    at_sudo_terminal "p-converge$suffix" none "setup --apply"
+    at_sudo_terminal "p-converge$suffix" none "$APPLY_ARGUMENTS"
     cell_p_dry_run "P8$suffix" "p8$suffix" none 1
     cell_p_dry_run "P9$suffix" "p9$suffix" present 0
     cell_p_config_of_root "P10$suffix" "p10$suffix"
