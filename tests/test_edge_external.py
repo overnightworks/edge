@@ -413,11 +413,10 @@ def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
 
 def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tofu, capsys, publish):
     """#40 rule 4: an unreadable token file is exit 2, not a traceback with exit 1."""
-    (home / ".secrets/cloudflare/fleet-read").write_bytes(b"\xff\xfe")
+    token_file = home / ".secrets/cloudflare/fleet-read"
+    token_file.write_bytes(b"\xff\xfe")
     assert publish() == 2
-    error = capsys.readouterr().err
-    assert error.startswith(REFUSAL)
-    assert "not valid UTF-8" in error
+    assert capsys.readouterr().err == f"{REFUSAL}{token_file} is not valid UTF-8\n"
     assert fake_tofu.calls() == []
 
 
