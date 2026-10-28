@@ -3277,9 +3277,8 @@ def test_an_enabled_unit_whose_barrier_stands_without_a_marker_stays_stopped(
 
     exit_code, out, _ = switch(answer="no")
 
-    assert find_row(out, "probe", PlanEvent.STAYS_STOPPED, "barrier stands").start() < out.index(
-        "nothing to change"
-    )
+    row = find_row(out, "probe", PlanEvent.STAYS_STOPPED, "barrier stands")
+    assert row.start() < out.index("nothing to change")
     assert (exit_code, scripted.changing_verbs()) == (0, [])
 
 
@@ -3969,10 +3968,10 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_switched_off_is_named_and_ne
 
     exit_code, out, _ = switch(answer="no")
 
-    assert exit_code == 0
-    assert out.index(HELD_SWITCHED_OFF) < find_row(out, "step-ca", PlanEvent.STAYS_STOPPED).start()
+    row = find_row(out, "step-ca", PlanEvent.STAYS_STOPPED, "switched off since")
+    assert out.index(HELD_SWITCHED_OFF) < row.start()
     assert "nothing to change" in out
-    assert scripted.changing_verbs() == []
+    assert (exit_code, scripted.changing_verbs()) == (0, [])
     assert follower_entry(state) == entry
 
 
