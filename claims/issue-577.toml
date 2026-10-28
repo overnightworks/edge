@@ -1,0 +1,8 @@
+claim_id = "45b843cce37749ddaf9b12ab24d9ab60"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "d699881304b43d3ade281df9f7e19dba5ef81838"
+branch = "claude/issue-577-s8a2-stop-interrupt"
+scope = ["src/edge/emergency.py", "src/edge/switch_events.py", "tests/test_hal_stack_commands.py", "tests/test_hal_stop_commands.py"]
+opened_commit = "2b3c55c1fc702b4840218e1ac50546c40b2a6d2c"
+whole_reason = "One interrupt span of hal stop gets one honest line and the stack's caught-interrupt exit, and the door's uncaught-Ctrl-C proof moves off stop in the same change."
