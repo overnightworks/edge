@@ -235,7 +235,9 @@ def test_a_bare_check_runs_the_daily_check_in_a_real_process_without_reading_std
     assert result.returncode in (1, 3)
     assert "services" in result.stdout
     assert any(call.startswith("systemd-run") for call in calls)
-    assert (home / ".local/state/hal/check-report.md").is_file()
+    report = (home / ".local/state/hal/check-report.md").read_text()
+    assert "job-failed" not in report
+    assert "systemd-unreadable" not in report
 
 
 def test_every_problem_the_scan_reports_has_an_exposure_rule_with_a_level():

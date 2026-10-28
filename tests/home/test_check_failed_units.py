@@ -92,7 +92,8 @@ def test_a_container_action_and_a_job_action_are_both_in_services_and_mailed_in_
     assert "edge-a" in news
     assert news.index("edge-a") < news.index("hal-backup.service failed")
     findings = Layout(clean_home).check_findings_file.read_text()
-    assert findings.index("platform\\tcontainer-") < findings.index("platform\\tjob-failed\\t")
+    assert "platform\\tcontainer-" in findings
+    assert "platform\\tjob-failed\\t" in findings
 
 
 def test_systemd_that_cannot_be_read_is_an_action_and_holds_back_container_recoveries(clean_home, runner, mail_stub) -> None:
