@@ -376,6 +376,18 @@ def interrupt_in(monkeypatch: pytest.MonkeyPatch, owner: object, name: str) -> N
     monkeypatch.setattr(owner, name, ctrl_c)
 
 
+def spy_on_marker_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    reads: list[str] = []
+    mark = switches.Switches.mark
+
+    def spy(self, unit):
+        reads.append(unit)
+        return mark(self, unit)
+
+    monkeypatch.setattr(switches.Switches, "mark", spy)
+    return reads
+
+
 def interrupt_after_the_publish(monkeypatch: pytest.MonkeyPatch) -> None:
     publish = switches._link_unless_present
 
@@ -494,15 +506,8 @@ def test_stop_of_a_unit_interrupted_in_compose_config_changes_nothing_and_reads_
     """Cells 5 and 6: a marker that predates this run is not this run's."""
     fakes.unit_in(situation)
     fakes.scripted.verb_config = ctrl_c
-    reads: list[str] = []
-    mark = switches.Switches.mark
-
-    def spy(self, unit):
-        reads.append(unit)
-        return mark(self, unit)
-
     before = fakes.marker()
-    monkeypatch.setattr(switches.Switches, "mark", spy)
+    reads = spy_on_marker_reads(monkeypatch)
 
     assert_nothing_changed(hal("stop", UNIT), UNIT)
     assert reads == []
@@ -562,14 +567,7 @@ def test_stop_of_a_key_that_is_a_path_builds_no_path_and_reads_no_marker(
     """Cell 8b"""
     key = f"../{switches.GLOBAL_STOP_FILE}"
     fakes.scripted.verb_config = ctrl_c
-    reads: list[str] = []
-    mark = switches.Switches.mark
-
-    def spy(self, unit):
-        reads.append(unit)
-        return mark(self, unit)
-
-    monkeypatch.setattr(switches.Switches, "mark", spy)
+    reads = spy_on_marker_reads(monkeypatch)
 
     assert_nothing_changed(hal("stop", key), key)
     assert reads == []
@@ -593,7 +591,7 @@ def test_stop_of_an_enabled_app_interrupted_looking_for_containers_says_the_swit
     app_world,  # noqa: F811
     monkeypatch,
 ):
-    """Cell 10: the app's own `ps` is the look for containers."""
+    """Cell 11: the app's own `ps` is the look for containers."""
     stops_the_app(monkeypatch, app_world)
     app_world.docker.interrupted_verb = "ps"
 
@@ -607,7 +605,7 @@ def test_stop_of_a_unit_interrupted_while_planning_its_target_changes_nothing(
     monkeypatch,
     situation,
 ):
-    """Cells 11-12"""
+    """Cell 10 (and P5·d)"""
     fakes.unit_in(situation)
     interrupt_the_barrier_of(monkeypatch, "of_unit")
 
@@ -620,7 +618,7 @@ def test_stop_of_a_unit_interrupted_looking_for_containers_changes_nothing(
     fakes,  # noqa: F811
     situation,
 ):
-    """Cell 13: the first `ps` of a stop is the look for containers."""
+    """Cells 12-13: the first `ps` of a stop is the look for containers."""
     fakes.unit_in(situation)
     fakes.scripted.verb_ps = ctrl_c
 
