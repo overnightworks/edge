@@ -17,7 +17,7 @@ name could be anyone's on a public one (`pull_policy: never`), so it is built on
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.8.0-2.1.302 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.10.0-2.1.302 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
@@ -41,9 +41,11 @@ beside the per-app agent networks and `egress` (never `mcp-songmaker`). The key 
 `agent_service_signing_key`, the one file `~/.secrets/agent-service/signing/private.pem` and never its folder, read through
 `[signing] key_file`; the step-ca root reaches it as `step_ca_root_certificate` through `[mcp] ca_file`, because the service
 trusts that file alone and ignores `SSL_CERT_FILE`. A file secret binds the inode, so a new key reaches the service only
-through a recreate. There is no model override: the model is the app's.
+through a recreate. The service alone decides an agent's model: `[defaults] model` (`anthropic/opus`), which
+an app or an agent entry of `service.toml` may override, and the request names none (a body with `model`
+answers 422). `run_started` names the model and the route the service chose.
 
-`GET /offer` answers, for the person and app of its two tokens, the models of `[cli.claude] models` that the person's subscription group can run, each `ready` on route `cli`; it is computed from the configuration, opens no login and starts no run. Every profile carries `background = false`: no profile admits a background run (the service refuses to start without the key), and which identity runs an app's background agents is agent-runtime#479's question.
+The service admits no background run, and which identity runs an app's background agents is agent-runtime#479's question.
 
 A change to `compose.yaml` or the image reaches the running service through `hal apply`: its plan
 names the recreate, which ends every run in flight, and the one `yes` covers it. A change to
@@ -72,7 +74,7 @@ as it was; the folders are opened without following a link and locked for the sw
 `agent-service/setup --check` changes nothing and says the first gap. The token is pasted only
 there, never on a command line or in an issue. The file is a regular file of at most 16 KiB with one line, the token: no JSON,
 no API key (`sk-ant-api…`), nothing group or others can touch. The service refuses to start
-otherwise, naming `profiles.claude.token_file` and the path, never the content. `hal secrets` lists
+otherwise, naming `cli.anthropic.token_file` and the path, never the content. `hal secrets` lists
 the entry `agent-service-claude`.
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
@@ -156,7 +158,7 @@ a turn leaves this PC for Anthropic, which generates the answer.
 **Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his
 Claude subscription serves only his own use. Every other person reaches the service only through the
 API route (`/services/agent-service/api`), under Anthropic's commercial API terms. That route is not
-enabled yet (`api_groups` and `[route]` are unset in `service.toml`), so a member of the api group
+enabled yet (`api_groups` and `[api]` are unset in `service.toml`), so a member of the api group
 gets 403 `not_enabled`. An app's privacy text therefore describes only the API route. Which groups
 may use an AI feature is decided by the service's subscription and api groups only, the same in
 every app; an app adds no AI group of its own. Membership in the app (`/apps/<name>`) stays separate
@@ -180,8 +182,6 @@ and calls `http://agent-service:8080` (the service's own default port; the smoke
 use it). No CA mount is needed: the service is plain http on an isolated internal network, and no
 host process can reach it, because the network has no host address and publishes no port.
 
-An app reads the models the service offers with `GET /offer`, with the same two tokens as a run; agent-runtime's `docs/wire.md`, "The offer", owns the answer's shape.
-
 ## Proofs
 
 Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-runtime upgrade.
@@ -193,11 +193,10 @@ where a browser is there; you sign in and confirm on any device, and the run goe
 nothing is pasted (it waits as long as the code lives). Keycloak starts a
 device sign-in only for a request with songmaker's client secret, which lives in `~/.secrets` on
 this machine, so no stranger can send you a link to confirm; no other client allows the grant.
-It recreates the service and runs the live cells L2-L9
+It recreates the service and runs the live cells L2-L7, L9
 and E6-E10, E12 against it, which its docstring lists; E3-E5 and E10's packet windows stay with the
-probe's `egress.py`. L8 asks `GET /offer` once, right after the recreate and before the paid turn, and holds when the
-answer is exactly the models of `service.toml`, ready on the subscription, background false. L9 holds when no
-JWT-shaped string is in the smoke and offer output, `docker inspect` or the service log. It needs the image, the client's secret file and the login token under
+probe's `egress.py`. L3 holds when `run_started` names `anthropic/` and a model of `[cli.anthropic] models` on route `cli`, and shows both. L9 holds when no
+JWT-shaped string is in the smoke output, `docker inspect` or the service log. It needs the image, the client's secret file and the login token under
 `~/.secrets`, and the person in the groups `/apps/songmaker` and `/services/agent-service/subscription`.
 The realm declares these groups but grants no membership: add yourself once in the admin
 console on port 8090. The smoke names the possible causes of a refusal for rights. Run it at once, as
@@ -249,8 +248,8 @@ source. Every probe that starts the real service writes a throwaway CA and signi
 (`scratch_secrets.py`).
 U12 is `egress.py --target service`; U13 is the static facts in `tests/test_agent_service_unit.py`.
 `--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, U17, the
-refusals before any run (wire v1: 400 `unsupported_version`, outside the app: 403 `forbidden`,
-the api group only: 403 `not_enabled`, and the offer of a caller of the app only: 200 with an empty `data`), and U16 runs
+refusals before any run (wire v2: 400 `unsupported_version`, outside the app: 403 `forbidden`,
+and the api group only: 403 `not_enabled`; there is no offer), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.
 `--cell containment` adds a fake app that lists tools on

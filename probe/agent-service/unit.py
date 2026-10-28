@@ -59,6 +59,7 @@ from egress import (
     run_probe,
     scratch_directory,
     service_configuration,
+    token_path,
     write_dummy_token,
 )
 from issuer import ISSUER_SERVICE, LISTENING, IssuerProbe, wait_for_listening
@@ -225,10 +226,6 @@ INSIDE_PROGRAM = (
 
 def working_root() -> str:
     return service_configuration()["cli"]["working_root"]
-
-
-def token_path() -> str:
-    return service_configuration()["profiles"]["claude"]["token_file"]
 
 
 def login_directory() -> str:
@@ -557,14 +554,14 @@ class UnitProbe(ServiceConditions, Probe):
         content = self.token.read_text(encoding="utf-8").strip()
         self.token.chmod(LOOSE_TOKEN_MODE)
         try:
-            logs = self.refused_start("U11", ["profiles.claude.token_file", token_path()])
+            logs = self.refused_start("U11", ["cli.anthropic.token_file", token_path()])
         finally:
             self.token.chmod(TOKEN_MODE)
             self.compose("down", "--timeout", "10")
         expect(content not in logs, "U11: the log holds the token")
         self.hold(
             "U11",
-            "a token at mode 0644 stops the start; the log names profiles.claude.token_file "
+            "a token at mode 0644 stops the start; the log names cli.anthropic.token_file "
             f"and {token_path()}, never the content",
         )
 

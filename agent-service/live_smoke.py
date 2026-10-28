@@ -8,9 +8,9 @@ printed link, sign in and confirm the code; the run then carries on by itself, n
 The person's and the workload's token live in this process only and reach `agent-smoke`
 on its stdin; no token or secret is on a command line, in a file or in the report.
 The run recreates the service, takes the idle
-memory, asks the offer (L8: the models of `service.toml`, ready on the subscription, no turn), runs
-the paid turn (L2, L3), the memory peak (L7), the cancelled turn (L4, counts only), the searches for
-a leaked secret (L6) and for a JWT-shaped string (L9), in the same places and the offer's output,
+memory, runs the paid turn (L2; L3: `run_started` names a model of `service.toml` on the
+subscription route), the memory peak (L7), the cancelled turn (L4, counts only), the searches for
+a leaked secret (L6) and for a JWT-shaped string (L9), in the same places,
 and the egress cells of the running container (L5: E6-E10, E12).
 Exit 1 when a cell prints FAILED; L4 is an observation and never fails the run.
 L7's figures are the idle `memory.current` of the recreated service and its `memory.peak`
@@ -50,7 +50,7 @@ from typing import Final
 import egress_observe
 from device_sign_in import CLIENT, SignInFailed, sign_in
 from egress_observe import PUBLIC_RESOLVER, UNREACHABLE, lan_address
-from smoke import HOLDING_MESSAGE, Tokens, offer_line
+from smoke import EVENT_PREFIX, HOLDING_MESSAGE, SERVED_AFTER_RUN_STARTED, SERVED_BY, Tokens
 
 SECRETS_DIRECTORY = Path.home() / ".secrets"
 CLIENT_SECRET_FILE = SECRETS_DIRECTORY / "keycloak/clients" / CLIENT
@@ -68,7 +68,6 @@ EGRESS_SERVICE = "agent-egress"
 LISTENING = "Uvicorn running"
 LISTEN_ATTEMPTS = 120
 SETTLE_SECONDS = 5
-OFFER_SECONDS = 60
 PAID_TURN_SECONDS = 420  # above the 300 s of each socket of smoke.py
 CANCELLED_TURN_SECONDS = 420
 CHILD_END_SECONDS = 10
@@ -214,13 +213,19 @@ def lines_holding(text: str, values: Sequence[str]) -> int:
 
 def event_names(output: str) -> list[str]:
     return [
-        line.removeprefix("event: ") for line in output.splitlines() if line.startswith("event: ")
+        line.removeprefix(EVENT_PREFIX)
+        for line in output.splitlines()
+        if line.startswith(EVENT_PREFIX)
     ]
 
 
 def other_lines(output: str) -> str:
     """The answer and any refusal (`unauthorized`, `forbidden`); the smoke prints no token."""
-    kept = [line for line in output.splitlines() if line.strip() and not line.startswith("event: ")]
+    kept = [
+        line
+        for line in output.splitlines()
+        if line.strip() and not line.startswith((EVENT_PREFIX, SERVED_BY))
+    ]
     return " | ".join(kept)[:300]
 
 
@@ -237,7 +242,7 @@ REFUSAL_LINE: Final = re.compile(r"^refused with \d+ (?P<code>[a-z_]+):", re.MUL
 
 def configured_models() -> list[str]:
     service = tomllib.loads(SERVICE_TOML.read_text(encoding="utf-8"))
-    return sorted(f"claude/{name}" for name in service["cli"]["claude"]["models"])
+    return sorted(f"anthropic/{name}" for name in service["cli"]["anthropic"]["models"])
 
 
 def subscription_groups() -> list[str]:
@@ -256,6 +261,33 @@ def missing_group_hint(output: str, events: list[str]) -> str:
     return ""
 
 
+def empty_fields(output: str) -> str:
+    """Which part of the line under `run_started` is missing."""
+    following = output[output.index(f"{EVENT_PREFIX}run_started") :].splitlines()[1:2]
+    loose = re.match(rf"{SERVED_BY} (?P<model>.*) on route (?P<route>.*)$", "".join(following))
+    if loose is None:
+        return "no served-by line"
+    return (
+        " and ".join(f"no {field}" for field in ("model", "route") if not loose[field].strip())
+        or "an unreadable served-by line"
+    )
+
+
+def admission_cell(events: list[str], output: str) -> Cell:
+    """`run_started` names a model of `service.toml` on the subscription route. The service's own
+    choice of that model is not re-derived."""
+    name = "L3 admission through the gateway"
+    if "run_started" not in events:
+        return Cell(name, Verdict.FAILED, "no run_started: the issuer's keys did not arrive")
+    served = SERVED_AFTER_RUN_STARTED.match(output, output.index(f"{EVENT_PREFIX}run_started"))
+    if served is None:
+        return Cell(name, Verdict.FAILED, f"run_started names {empty_fields(output)}")
+    shown = f"run_started names {served['model']} on route {served['route']}"
+    listed = served["model"] in configured_models()
+    held = listed and served["route"] == SUBSCRIPTION_ROUTE
+    return Cell(name, Verdict.HELD if held else Verdict.FAILED, shown)
+
+
 def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
     """The secrets go out of the output before it is cut, so that none leaves its beginning."""
     output = known.redact(output)
@@ -264,32 +296,10 @@ def turn_cells(returncode: int, output: str, known: Secrets) -> list[Cell]:
     said = f"exit {returncode}; events {events}; {text}{missing_group_hint(output, events)}"
     answered = bool(text)  # an answer needs text of its own, not only the event that carries it
     paid = returncode == 0 and events[-1:] == ["succeeded"] and answered
-    admitted = "run_started" in events
     return [
         Cell("L2 the paid turn", Verdict.HELD if paid else Verdict.FAILED, said),
-        Cell(
-            "L3 admission through the gateway",
-            Verdict.HELD if admitted else Verdict.FAILED,
-            "run_started seen" if admitted else "no run_started: the issuer's keys did not arrive",
-        ),
+        admission_cell(events, output),
     ]
-
-
-def offer_cell(returncode: int, output: str, known: Secrets) -> Cell:
-    """The offer lists exactly the configured models, each ready on the subscription route and
-    admitting no background run. Its figure shows neither a known secret nor a JWT-shaped string."""
-    output = JWT_SHAPE.sub("[jwt]", known.redact(output))
-    wanted = [
-        offer_line({
-            "id": model, "route": SUBSCRIPTION_ROUTE, "ready": True, "background": False
-        })
-        for model in configured_models()
-    ]  # fmt: skip
-    held = returncode == 0 and output.splitlines() == wanted
-    return Cell(
-        "L8 the offer", Verdict.HELD if held else Verdict.FAILED,
-        f"exit {returncode}; {other_lines(output)}",
-    )  # fmt: skip
 
 
 # --- the service ------------------------------------------------------------------------------
@@ -728,15 +738,12 @@ def listeners_cell(stack: Stack, service: str) -> Cell:
 def smoke_cells(
     stack: Stack, known: Secrets, report: Report, pause: Callable[[float], None] = time.sleep
 ) -> None:
-    """Recreate, idle memory, the offer, the paid turn, the peak, the cancelled turn, searches."""
+    """Recreate, idle memory, the paid turn, the peak, the cancelled turn, searches."""
     recreated = recreate_service(stack, known, pause)
     report.add(recreated)
     if recreated.verdict is Verdict.FAILED:
         return
     idle = cgroup_figure(stack, "memory.current")
-    offer = paid_turn(stack, known.tokens, OFFER_SECONDS, ("--offer",))
-    report.add(offer_cell(offer.process.returncode, offer.process.stdout, known))
-    report.add(*cleanup_cell(offer.cleanup, known))
     paid = paid_turn(stack, known.tokens)
     report.add(*turn_cells(paid.process.returncode, paid.process.stdout, known))
     report.add(*cleanup_cell(paid.cleanup, known))
@@ -745,9 +752,7 @@ def smoke_cells(
     cancelled = cancelled_turn(stack, known.tokens)
     report.add(*cancel_cells(stack, before, cancelled, known, pause))
     report.add(*cleanup_cell(cancelled.cleanup, known))
-    smoke_outputs = "".join(
-        (offer.process.stdout, offer.process.stderr, paid.process.stdout, paid.process.stderr)
-    )
+    smoke_outputs = paid.process.stdout + paid.process.stderr
     report.add(*leak_cells(stack, known, smoke_outputs + cancelled.output))
 
 

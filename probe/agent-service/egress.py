@@ -120,6 +120,10 @@ def service_configuration() -> dict:
     return tomllib.loads(SERVICE_CONFIGURATION.read_text(encoding="utf-8"))
 
 
+def token_path() -> str:
+    return service_configuration()["cli"]["anthropic"]["token_file"]
+
+
 def issuer_host() -> str:
     """The host of the JWKS fetch, as the service's own configuration names it."""
     host = urlsplit(service_configuration()["identity"]["jwks_url"]).hostname
@@ -708,7 +712,7 @@ class Probe:
             expect(addresses == [self.address], f"E11: {name} resolves to {addresses}")
         configuration = service_configuration()
         working_root = configuration["cli"]["working_root"]
-        token_file = configuration["profiles"]["claude"]["token_file"]
+        token_file = token_path()
         script = (
             'cd "$(mktemp -d -p "$1")" && CLAUDE_CODE_OAUTH_TOKEN="$(cat "$2")" exec "$3" -p hello'
         )

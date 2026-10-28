@@ -19,14 +19,15 @@ from live_smoke import Cell, LiveSmokeFailed, Report, Verdict  # noqa: E402
 from live_smoke_fakes import (  # noqa: E402
     GATEWAY,
     KNOWN,
+    PAID_OUTPUT,
+    SERVED_LINE,
     TOKENS,
     FakeProcess,
     FakeStack,
     completed,
     healthy_service,
-    offer_line,
-    offered_model,
 )
+from smoke import served_line  # noqa: E402
 
 JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhIn0.c2lnbmF0dXJl"
 
@@ -51,14 +52,18 @@ def test_one_failed_cell_fails_the_run_and_an_observation_does_not():
     assert report.failed()
 
 
+def started(*lines: str) -> str:
+    return "".join(f"{line}\n" for line in ("event: run_started", SERVED_LINE, *lines))
+
+
 @pytest.mark.parametrize(
     ("returncode", "output", "paid", "admitted"),
     [
-        (0, "event: run_started\nevent: assistant_text\nok\nevent: succeeded\nok\n", True, True),
-        (0, "event: run_started\nevent: succeeded\n\n", False, True),
-        (0, "event: run_started\nevent: assistant_text\n\nevent: succeeded\n", False, True),
-        (0, "event: run_started\nevent: assistant_text\n   \nevent: succeeded\n \n", False, True),
-        (1, "event: run_started\nevent: failed\nprovider_error: x\n", False, True),
+        (0, started("event: assistant_text", "ok", "event: succeeded", "ok"), True, True),
+        (0, started("event: succeeded", ""), False, True),
+        (0, started("event: assistant_text", "", "event: succeeded"), False, True),
+        (0, started("event: assistant_text", "   ", "event: succeeded", " "), False, True),
+        (1, started("event: failed", "provider_error: x"), False, True),
         (1, "refused with 401 unauthorized: expired\n", False, False),
     ],
 )
@@ -69,6 +74,81 @@ def test_the_paid_turn_holds_only_on_succeeded_and_admission_on_run_started(
 
     assert (l2.verdict is Verdict.HELD, l3.verdict is Verdict.HELD) == (paid, admitted)
     assert ("unauthorized" in l2.figure) == ("401" in output)
+
+
+def test_l3_holds_when_the_run_started_names_a_listed_model_on_route_cli_and_shows_both():
+    _, l3 = live_smoke.turn_cells(0, started(), KNOWN)
+
+    assert l3.verdict is Verdict.HELD
+    assert "anthropic/opus" in l3.figure
+    assert "cli" in l3.figure
+
+
+@pytest.mark.parametrize(
+    "route_line",
+    [
+        "served by  on route cli",
+        "served by claude/opus on route cli",
+        "served by anthropic/fable on route cli",
+        "served by anthropic/opus on route api",
+        "served by anthropic/opus on route ",
+        None,
+    ],
+    ids=["no model", "old name", "unlisted model", "route api", "no route", "no line"],
+)
+def test_l3_fails_on_a_missing_or_unlisted_model_or_a_route_other_than_cli(route_line):
+    lines = ["event: run_started", *([route_line] if route_line else []), "event: succeeded"]
+
+    _, l3 = live_smoke.turn_cells(0, "\n".join(lines) + "\n", KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+
+
+@pytest.mark.parametrize(
+    ("served", "empty"),
+    [
+        ("served by  on route cli", "no model"),
+        ("served by anthropic/opus on route ", "no route"),
+        ("served by  on route ", "no model and no route"),
+        ("", "no served-by line"),
+    ],
+)
+def test_l3_names_which_field_of_the_served_line_is_empty(served, empty):
+    output = f"event: run_started\n{served}\nevent: succeeded\n"
+
+    _, l3 = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+    assert l3.figure == f"run_started names {empty}"
+
+
+def test_l3_fails_when_only_the_answer_text_looks_like_the_served_line():
+    output = f"event: run_started\n{served_line('', 'cli')}\nevent: assistant_text\n{SERVED_LINE}\n"
+
+    _, l3 = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+
+
+def test_l3_fails_when_the_answer_text_repeats_the_run_started_record_with_a_model():
+    output = (
+        f"event: run_started\n{served_line('', 'cli')}\nevent: assistant_text\n"
+        f"event: run_started\n{SERVED_LINE}\nevent: succeeded\n"
+    )
+
+    _, l3 = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+
+
+def test_l3_holds_and_l2_fails_when_model_and_route_are_seen_but_no_text_comes():
+    l2, l3 = live_smoke.turn_cells(0, started("event: succeeded"), KNOWN)
+
+    assert (l2.verdict, l3.verdict) == (Verdict.FAILED, Verdict.HELD)
+
+
+def test_the_route_line_is_no_part_of_the_answer_text_l2_judges():
+    assert live_smoke.other_lines(f"event: run_started\n{SERVED_LINE}\nok\n") == "ok"
 
 
 def test_a_forbidden_refusal_names_the_membership_and_the_token_binding():
@@ -111,31 +191,29 @@ def run_smoke_cells(stack: FakeStack) -> list[Cell]:
     return report.cells
 
 
-def test_a_clean_run_holds_l2_l3_l6_l7_l8_and_l9_and_only_observes_l4():
+def test_a_clean_run_holds_l2_l3_l6_l7_and_l9_and_only_observes_l4():
     stack = FakeStack(answer=healthy_service, cancelling=held_cancel())
 
     cells = {cell.name.split()[0]: cell for cell in run_smoke_cells(stack)}
 
-    held = [cells[name].verdict for name in ("L2", "L3", "L6", "L7", "L8", "L9")]
-    assert held == [Verdict.HELD] * 6
+    held = [cells[name].verdict for name in ("L2", "L3", "L6", "L7", "L9")]
+    assert held == [Verdict.HELD] * 5
     assert cells["L4"].verdict is Verdict.OBSERVED
     assert "idle memory.current 1234" in cells["L7"].figure
 
 
-def test_the_offer_is_asked_right_after_the_recreate_and_before_the_paid_turn():
-    """L8, cell 8: the offer comes after the recreate and before the paid turn."""
+def test_the_live_smoke_has_no_offer_cell_and_asks_no_offer():
     stack = FakeStack(answer=healthy_service, cancelling=held_cancel())
 
-    run_smoke_cells(stack)
+    cells = run_smoke_cells(stack)
 
-    smoke_runs = [command for command in asked_commands(stack) if "agent-smoke" in command]
-    assert "--offer" in smoke_runs[0]
-    assert "--offer" not in smoke_runs[1]
+    assert not any(cell.name.startswith("L8") for cell in cells)
+    assert not any("--offer" in command for command in asked_commands(stack))
 
 
-def offer_answering(output: str, returncode: int = 0, stderr: str = ""):
+def paid_answering(output: str, returncode: int = 0, stderr: str = ""):
     def answer(command):
-        if "agent-smoke" in command and "--offer" in command:
+        if "agent-smoke" in command:
             return completed(output, returncode=returncode, stderr=stderr)
         return healthy_service(command)
 
@@ -143,66 +221,18 @@ def offer_answering(output: str, returncode: int = 0, stderr: str = ""):
 
 
 def smoke_cell(prefix: str, output: str, returncode: int = 0, stderr: str = "") -> Cell:
-    answer = offer_answering(output, returncode, stderr)
-    stack = FakeStack(answer=answer, cancelling=held_cancel())
+    stack = FakeStack(answer=paid_answering(output, returncode, stderr), cancelling=held_cancel())
     return next(cell for cell in run_smoke_cells(stack) if cell.name.startswith(prefix))
 
 
-def offer_cell(output: str, returncode: int = 0) -> Cell:
-    return smoke_cell("L8", output, returncode)
-
-
-@pytest.mark.parametrize(
-    "lines",
-    [
-        [offered_model("haiku"), offered_model("opus")],
-        [offered_model(name) for name in ("haiku", "opus", "sonnet", "fable")],
-        [offered_model("haiku"), offered_model("opus", ready=False), offered_model("sonnet")],
-        [offered_model("haiku"), offered_model("opus", route="api"), offered_model("sonnet")],
-        [offered_model("haiku"), offered_model("opus", background=True), offered_model("sonnet")],
-        [offered_model("sonnet"), offered_model("opus"), offered_model("haiku")],
-    ],
-    ids=["one missing", "one more", "not ready", "api route", "background", "unsorted"],
-)
-def test_the_offer_cell_holds_only_for_exactly_the_three_configured_models_ready(lines):
-    """L8, cell 8: only the three configured models, each ready, hold."""
-    output = "".join(offer_line(model) + "\n" for model in lines)
-
-    assert offer_cell(output).verdict is Verdict.FAILED
-
-
-def test_a_refused_offer_fails_l8_and_the_figure_carries_the_refusal():
-    """L8, cell 8: a refused offer fails and shows the refusal."""
-    cell = offer_cell("refused with 403 forbidden: not a member\n", returncode=1)
-
-    assert cell.verdict is Verdict.FAILED
-    assert "refused with 403 forbidden: not a member" in cell.figure
-
-
-def test_the_offer_cell_removes_every_secret_from_its_figure():
-    """L8, cell 10: no known secret in the offer figure."""
-    cell = offer_cell(f"refused with 401 unauthorized: {TOKENS.person}\n", returncode=1)
-
-    assert all(secret not in cell.figure for secret in KNOWN.values())
-
-
-def test_a_jwt_in_the_offer_output_is_not_printed_in_the_offer_figure():
-    """L8, cell 10: an unfamiliar JWT in the offer output never reaches the figure."""
-    cell = offer_cell(f"refused with 401 unauthorized: {JWT}\n", returncode=1)
-
-    assert JWT not in cell.figure
-
-
-def test_a_jwt_only_in_the_offer_stderr_fails_l9():
-    """L9, cell 10: the offer's stderr is searched for a JWT shape."""
-    cell = smoke_cell("L9", "", stderr=JWT)
+def test_a_jwt_only_in_the_paid_stderr_fails_l9():
+    cell = smoke_cell("L9", PAID_OUTPUT, stderr=JWT)
 
     assert cell.verdict is Verdict.FAILED
 
 
-def test_a_secret_only_in_the_offer_stderr_fails_l6():
-    """L6, cell 10: the offer's stderr is searched for a known secret."""
-    cell = smoke_cell("L6", "", stderr=TOKENS.person)
+def test_a_secret_only_in_the_paid_stderr_fails_l6():
+    cell = smoke_cell("L6", PAID_OUTPUT, stderr=TOKENS.person)
 
     assert cell.verdict is Verdict.FAILED
 
@@ -356,7 +386,7 @@ def test_a_cleanup_that_failed_is_reported_without_the_secret(failing):
 
     cells = [c for c in run_smoke_cells(stack) if c.name.startswith("cleanup")]
 
-    assert len(cells) == 3  # the offer's, the paid turn's and the cancelled turn's, each its own
+    assert len(cells) == 2  # the paid turn's and the cancelled turn's, each its own
     assert all(cell.verdict is Verdict.FAILED for cell in cells)
     assert all(f"docker {failing} exited 1" in cell.figure for cell in cells)
     assert all(secret[:8] not in cell.figure for cell in cells)

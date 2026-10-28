@@ -12,7 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent-service"))
 
 from live_smoke import Secrets, Stack
-from smoke import Tokens, offer_line
+from smoke import Tokens, served_line
 
 TOKENS = Tokens(person="person-token-0123456789", workload="workload-token-9876543210")
 KNOWN = Secrets(TOKENS, login_token="login-token-abcdef", client_secret="client-secret-fedcba")
@@ -30,12 +30,9 @@ SECRET_FILES = {
 }
 
 
-def offered_model(name: str, **changes) -> dict:
-    return {"id": f"claude/{name}", "route": "cli", "ready": True, "background": False, **changes}
-
-
-OFFER_OUTPUT = "".join(
-    offer_line(offered_model(name)) + "\n" for name in ("haiku", "opus", "sonnet")
+SERVED_LINE = served_line("anthropic/opus", "cli")
+PAID_OUTPUT = (
+    f"event: run_started\n{SERVED_LINE}\nevent: assistant_text\nok\nevent: succeeded\nok\n"
 )
 
 
@@ -122,10 +119,8 @@ def healthy_service(command: list[str]) -> subprocess.CompletedProcess:
         return completed("container-id\n")
     if "logs" in command:
         return completed("Uvicorn running on http://0.0.0.0:8080\n")
-    if "agent-smoke" in command and "--offer" in command:
-        return completed(OFFER_OUTPUT)
     if "agent-smoke" in command:
-        return completed("event: run_started\nevent: assistant_text\nok\nevent: succeeded\nok\n")
+        return completed(PAID_OUTPUT)
     if "network" in command and "ls" in command:
         return completed("network-id\n")
     return completed("")

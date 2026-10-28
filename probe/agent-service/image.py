@@ -234,15 +234,14 @@ port = {SERVICE_PORT}
 [cli]
 working_root = "/run/work"
 
-[cli.claude]
+[cli.anthropic]
 binary = "/opt/claude/claude"
 version = "2.1.302"
 models = ["sonnet"]
-
-[profiles.subscription]
-provider = "claude"
 token_file = "/run/secrets/claude-token"
-background = false
+
+[defaults]
+model = "anthropic/sonnet"
 
 [apps.probe]
 workload_client = "probe-client"
@@ -261,7 +260,14 @@ LEFTOVER_CONFIGURATION = {
     ),
     "apps.probe.tools": (PROBE_APP_TABLE, f"[apps.probe.tools]\n\n{PROBE_APP_TABLE}"),
     "apps.probe.models": (PROBE_APP_TABLE, f"[apps.probe.models]\n\n{PROBE_APP_TABLE}"),
-    "profiles.subscription.background": ("background = false\n", ""),
+    "profiles": (
+        PROBE_APP_TABLE,
+        f'[profiles.subscription]\nprovider = "claude"\n\n{PROBE_APP_TABLE}',
+    ),
+    "cli.claude": (
+        "[cli.anthropic]",
+        '[cli.claude]\nbinary = "/opt/claude/claude"\n\n[cli.anthropic]',
+    ),
 }
 
 
@@ -476,7 +482,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             cell_i7()
             print("I7 held: pip freeze is exactly the lock's names and versions")
             cell_i8(scratch)
-            print("I8 held: a leftover subscription_group, purposes table or tools table stops it")
+            print("I8 held: a leftover of the old configuration shape stops the start")
         except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as failure:
             print(f"FAILED {type(failure).__name__}: {failure}", file=sys.stderr)
             return 1

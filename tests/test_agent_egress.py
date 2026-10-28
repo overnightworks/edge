@@ -511,7 +511,7 @@ def test_the_dns_filter_lets_ipv6_extension_header_chains_through_to_be_walked(
 
 # --- the unit probe's refused-start decision, on synthetic state and logs ----------------------
 
-DIAGNOSTIC = "profiles.claude.token_file"
+DIAGNOSTIC = "cli.anthropic.token_file"
 LISTENING_LINE = "INFO: Uvicorn running on http://0.0.0.0:8080"
 
 
