@@ -1681,8 +1681,8 @@ cell_p_config_of_root() {  # cell_p_config_of_root <cell> <log>: root's own ansi
     python=$(head -n 1 "$HOME_BIN" | sed 's/^#!//')
     package=$("$python" -c 'import home_tools, pathlib; print(pathlib.Path(home_tools.__file__).parent / "system")')
     printf '[defaults]\nstdout_callback = json\n' >/root/.ansible.cfg
-    outside=$(sudo sh -c "cd / && $ansible_playbook --version" 2>&1)
-    inside=$(sudo sh -c "cd $package && $ansible_playbook --version" 2>&1)
+    outside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd / && $ansible_playbook --version" 2>&1)
+    inside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd $package && $ansible_playbook --version" 2>&1)
     at_sudo_terminal "$log" none "setup --apply"
     code=$?
     rm -f /root/.ansible.cfg
