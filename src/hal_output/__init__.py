@@ -147,7 +147,7 @@ def format_bytes(size: int) -> str:
     """Binary units, nearest rounding, the unit chosen after rounding: `999 B`, `1.0 KiB`,
     `4.2 MiB`, `60 MiB`; one decimal below 10 of a unit, none from 10."""
     value, unit = float(size), 0
-    while round(value, 1) >= BYTES_PER_UNIT and unit < len(BYTE_UNITS) - 1:
+    while value >= BYTES_PER_UNIT - 0.5 and unit < len(BYTE_UNITS) - 1:
         value /= BYTES_PER_UNIT
         unit += 1
     if unit == 0:

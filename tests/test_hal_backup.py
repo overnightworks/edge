@@ -211,8 +211,13 @@ def test_a_backup_row_counts_only_its_own_apps_time(edge_backup, machine, home):
 
 @pytest.mark.parametrize(
     "machine_settings",
-    [{"prints_backup_summary": False}, {"summary_without": {"total_bytes_processed"}}],
-    ids=["no summary", "no size"],
+    [
+        {"prints_backup_summary": False},
+        {"summary_without": {"total_bytes_processed"}},
+        {"source_bytes": True},
+        {"source_bytes": -1},
+    ],
+    ids=["no summary", "no size", "boolean size", "negative size"],
 )
 def test_an_unreadable_backup_summary_fails_the_app_as_not_backed_up(
     edge_backup, machine, home, machine_settings

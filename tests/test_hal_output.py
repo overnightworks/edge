@@ -103,6 +103,7 @@ def test_a_duration_is_whole_seconds_rounded_down_then_minutes_then_hours(
         (1024, "1.0 KiB"),
         (1536, "1.5 KiB"),
         (1048575, "1.0 MiB"),
+        (1048064, "1.0 MiB"),
         (4404019, "4.2 MiB"),
         (int(9.96 * 1024**2), "10 MiB"),
         (60 * 1024**2, "60 MiB"),
