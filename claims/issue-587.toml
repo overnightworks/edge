@@ -1,0 +1,8 @@
+claim_id = "c326c3db579e48c492b7aae969d58049"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "f01efcb88f3014a1b4b1132ee468e50d9c38e58b"
+branch = "claude/issue-587-s7d1-backup-facts"
+scope = ["docs/backup.md", "docs/design/hal-output.html", "src/edge_backup/restic.py", "src/edge_backup/runner.py", "src/hal_output/__init__.py", "tests/edge_backup_support.py", "tests/test_edge_backup.py", "tests/test_hal_backup.py", "tests/test_hal_output.py"]
+opened_commit = "0e7ae8fa0d31793d02aefc487f854f710ce77e0a"
+whole_reason = "The three production files change one sentence, the backed up row's fact; the rest is its documentation, picture alignment and tests, and a split would leave a restic parse nobody reads or a row without its source."
