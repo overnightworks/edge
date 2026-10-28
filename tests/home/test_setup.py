@@ -19,7 +19,7 @@ from home_tools import system_step
 from home_tools.secrets_setup import Boundaries, Terminal
 from home_tools.cli import main
 from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
-from home_tools.system_step import AGENT_USER, CheckState, PlaybookRun, SystemStep
+from home_tools.system_step import AGENT_USER, CheckState, SystemStep
 
 COMMIT_HOOK, TIMERS, SYSTEM, SECRETS = "commit hook", "timers", "system", "secrets"
 ROWS = [COMMIT_HOOK, TIMERS, SYSTEM, SECRETS]
@@ -363,19 +363,19 @@ def playbook_runs(sandbox: Sandbox) -> list[str]:
 
 
 def test_the_system_step_comes_after_the_activation_and_asks_for_sudo_once(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """Rule 2 and rule 5: --apply runs Ansible once, with one become prompt and the diff, and only after the activation."""
+    """Rule 2 and rule 5: --apply runs Ansible once, with the diff, and only after the activation; sudo asks, never Ansible."""
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
     assert (code, lines) == (0, FRESH_APPLY)
     assert argv[:2] == [str(sandbox.layout.ansible_playbook_executable), str(system_step.PLAYBOOK)]
-    assert (argv.count("--ask-become-pass"), "--diff" in argv, "--check" in argv) == (1, True, False)
+    assert ("--ask-become-pass" in argv, "--diff" in argv, "--check" in argv) == (False, True, False)
 
 
 def test_the_playbook_gets_home_and_the_tunnel_files_from_layout_and_the_running_user(
     sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Rule 5: @HOME@ and @OPERATOR_USER@ are extra vars from home's Layout and the running user, never facts gathered under become."""
+    """Rule 5: @HOME@ and @OPERATOR_USER@ are extra vars from home's Layout and the running user, never facts gathered as root."""
     run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
@@ -663,66 +663,6 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
 def test_the_running_user_is_the_operator_the_polkit_rule_names(tmp_path: Path) -> None:
     """Rule 5: @OPERATOR_USER@ is whoever runs `home`, the owner of the files it creates."""
     assert system_step.TERMINAL_BOUNDARIES.operator_user() == tmp_path.owner()
-
-
-RECAP_LINE = "localhost                  : ok=9    changed={changed}    unreachable={unreachable}    failed={failed}    skipped=2"
-
-
-@pytest.mark.parametrize(
-    ("returncode", "output", "expected"),
-    [
-        (0, RECAP_LINE.format(changed=3, unreachable=0, failed=0), PlaybookRun(True, 3)),
-        (0, RECAP_LINE.format(changed=0, unreachable=0, failed=0), PlaybookRun(True, 0)),
-        (2, RECAP_LINE.format(changed=1, unreachable=0, failed=1), PlaybookRun(False, 1)),
-        (4, RECAP_LINE.format(changed=0, unreachable=1, failed=0), PlaybookRun(False, 0)),
-        (1, "ERROR! the playbook could not be read", PlaybookRun(False, 0)),
-    ],
-    ids=["changed", "converged", "failed task", "unreachable", "no recap"],
-)
-def test_a_run_succeeds_only_with_exit_0_and_a_recap_without_failures(returncode: int, output: str, expected: PlaybookRun) -> None:
-    """Rule 4 and rule 7: a run succeeds only when Ansible exits 0 and its recap counts no failed or unreachable host."""
-    assert system_step.read_recap(returncode, f"PLAY RECAP ***\n{output}\n") == expected
-
-
-def fake_ansible(tmp_path: Path, script: str) -> Path:
-    playbook = tmp_path / "ansible-playbook"
-    playbook.write_text(f"#!/bin/sh\n{script}\necho '{RECAP_LINE.format(changed=2, unreachable=0, failed=0)}'\n")
-    playbook.chmod(0o755)
-    return playbook
-
-
-def test_the_runner_shows_ansibles_output_and_reads_its_recap(tmp_path: Path, capfd: pytest.CaptureFixture[str]) -> None:
-    """Rule 4: the output reaches the terminal as it comes, and the run is judged by its recap."""
-    playbook = fake_ansible(tmp_path, "echo 'TASK [Write edge files]'")
-
-    run = system_step.run_playbook([str(playbook)])
-
-    assert run == PlaybookRun(True, 2)
-    assert "TASK [Write edge files]" in capfd.readouterr().out
-
-
-def test_a_run_leaves_no_ansible_state_in_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:
-    """Head ruling 18.10.2026 and rule 4 (the runner): Ansible's home and temp live in a run-scoped directory.
-
-    So no `~/.ansible` is left for `hal check` to flag.
-    """
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("ANSIBLE_NOCOLOR", "0")
-    seen = tmp_path / "seen"
-    playbook = fake_ansible(
-        tmp_path,
-        f'mkdir -p "${{ANSIBLE_HOME:-$HOME/.ansible}}" "${{ANSIBLE_LOCAL_TEMP:-$HOME/.ansible/tmp}}"\n'
-        f'echo "$ANSIBLE_HOME $ANSIBLE_NOCOLOR $ANSIBLE_STDOUT_CALLBACK" > {seen}',
-    )
-
-    assert system_step.run_playbook([str(playbook)]) == PlaybookRun(True, 2)
-
-    ansible_home, nocolor, callback = seen.read_text().split()
-    assert list(home.iterdir()) == []
-    assert not Path(ansible_home).exists()
-    assert (nocolor, callback) == ("1", "default")
 
 
 def run_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, list[str], str]:
