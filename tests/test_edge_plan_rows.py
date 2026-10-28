@@ -1,5 +1,5 @@
-"""The rows `hal apply` prints for its app plan: what each kind of app entry says, from typed
-fields (#296 S5-1)."""
+"""The rows `hal apply` prints for its app plan and its unit plan: what each kind of entry says,
+from typed fields, and the `find_row` helper the apply tests share."""
 
 import re
 from types import SimpleNamespace
