@@ -63,7 +63,7 @@ def _run_hosts(as_json: bool) -> ExitCode:
 
     outcome = external.run_host_check(Path.home(), as_json=as_json, emit=emit)
     for line in outcome.cause:
-        write_error(f"{command(Verb.CHECK)}: {HOSTS}: cannot check, {line}")
+        write_error(f"{CHECK}: {HOSTS}: cannot check, {line}")
     return _HOST_CHECK_EXIT[outcome.exit_code]
 
 
@@ -119,7 +119,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
     try:
         findings = inspection.inspect(arguments.allow_list or inspection.DEFAULT_ALLOW_LIST)
     except inspection.ExposureCheckError as error:
-        write_error(f"{command(Verb.CHECK)}: {EXPOSURE}: cannot check, {error}")
+        write_error(f"{CHECK}: {EXPOSURE}: cannot check, {error}")
         return ExitCode.FAILURE
     if arguments.json:
         print(json.dumps({EXPOSURE: inspection.as_json_objects(findings)}, indent=2))
