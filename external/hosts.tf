@@ -1,5 +1,5 @@
 # The hosts of the enabled catalog entries, keyed by FQDN. src/edge/catalog.py validates the shape
-# before tofu starts (`edge external plan` and `apply` refuse an invalid catalog), so this reads it
+# before tofu starts (`hal apply` refuses an invalid catalog), so this reads it
 # as it stands; `try` covers only the optional keys.
 locals {
   default_host_target = "http://127.0.0.1:8081"

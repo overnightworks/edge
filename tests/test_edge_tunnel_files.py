@@ -44,7 +44,7 @@ EFFECTIVE_UNIT_WITHOUT_EXEC_START = frozenset(
         "PrivateTmp=yes",
     }
 )
-EDGE_SUBCOMMANDS = "{apply,stop,start,external}"
+EDGE_SUBCOMMANDS = "{apply,stop,start}"
 
 
 def render(text: str, values: dict[str, str]) -> str:

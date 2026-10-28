@@ -95,7 +95,7 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | the platform picture, decisions, operations |
 | [docs/stack.md](docs/stack.md) | run, apply, stop, catalog on and off, the emergency switch, rollback |
-| [docs/external.md](docs/external.md) | Cloudflare as code (`edge external`) |
+| [docs/external.md](docs/external.md) | Cloudflare as code (the publish phase of `hal apply`) |
 | [docs/keycloak.md](docs/keycloak.md) | the login, the realm as code, go-live, upgrade |
 | [docs/backup.md](docs/backup.md) | `hal check`, `hal backup`, `hal restore`, what a backup holds, restore |
 | [docs/people.md](docs/people.md) | what an app offers so one person can be exported and erased |

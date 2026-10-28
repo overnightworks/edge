@@ -1,18 +1,15 @@
 [edge-verb]
 ".github/workflows/ci.yml" = 1
 ".gitignore" = 3
-"README.md" = 2
+"README.md" = 1
 "agent-service/setup" = 1
 "compose.yaml" = 1
-"docs/architecture.md" = 124
+"docs/architecture.md" = 116
 "docs/design/hal-output.html" = 18
-"docs/external.md" = 10
-"docs/home.md" = 2
+"docs/external.md" = 4
 "docs/keycloak.md" = 6
 "docs/naming.md" = 1
-"docs/stack.md" = 39
-"external/hosts.tf" = 1
-"external/main.tf" = 1
+"docs/stack.md" = 38
 "keycloak/go-live" = 3
 "probe/edge_copy.py" = 4
 "probe/keycloak/README.md" = 1
@@ -23,13 +20,13 @@
 "src/edge/barrier.py" = 3
 "src/edge/catalog.py" = 1
 "src/edge/checkout.py" = 2
-"src/edge/cli.py" = 2
+"src/edge/cli.py" = 1
 "src/edge/compose.py" = 1
 "src/edge/emergency.py" = 4
 "src/edge/environment.py" = 2
 "src/edge/external/apply.py" = 8
-"src/edge/external/cli.py" = 17
-"src/edge/external/host_check.py" = 4
+"src/edge/external/cli.py" = 12
+"src/edge/external/host_check.py" = 1
 "src/edge/legal_step.py" = 2
 "src/edge/realm/reconcile.py" = 1
 "src/edge/setup.py" = 2
@@ -37,7 +34,6 @@
 "src/edge/terminal.py" = 2
 "src/edge/waiting.py" = 1
 "src/hal/version.py" = 1
-"src/home_tools/secrets_manifest.toml" = 26
 "step-ca/init" = 4
 "tests/home/test_secrets_setup.py" = 3
 "tests/home/test_secrets_view.py" = 1
@@ -48,7 +44,7 @@
 "tests/test_edge_apply_publish.py" = 13
 "tests/test_edge_barrier.py" = 3
 "tests/test_edge_environment.py" = 1
-"tests/test_edge_external.py" = 12
+"tests/test_edge_external.py" = 7
 "tests/test_edge_global_stop.py" = 5
 "tests/test_edge_online_apps.py" = 1
 "tests/test_hal_stack_commands.py" = 8

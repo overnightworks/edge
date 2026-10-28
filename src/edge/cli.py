@@ -1,4 +1,4 @@
-"""`edge`: dispatches to its subcommands (`apply`, `stop`, `start` and `external`)."""
+"""`edge`: dispatches to its subcommands (`apply`, `stop` and `start`)."""
 
 import argparse
 import os
@@ -19,7 +19,6 @@ def main(argv: list[str] | None = None) -> int:
     subcommands = parser.add_subparsers(dest="subcommand", required=True)
     add_apply_subcommand(subcommands)
     add_switch_subcommands(subcommands)
-    external_cli.add_subcommand(subcommands)
     arguments = parser.parse_args(argv)
     return arguments.run(arguments)
 
@@ -29,8 +28,8 @@ def add_apply_subcommand(subcommands: argparse._SubParsersAction) -> None:
         "apply",
         help="switch the units of fleet.yaml on or off, then publish to Cloudflare",
         description="The local part (`--closed`: the units of this repository and the apps of the "
-        "catalog, at a terminal, after `yes`), then, only if it ended clean, the publish "
-        "(`edge external apply`, after its own `yes`). Each part asks only when it has changes.",
+        "catalog, at a terminal, after `yes`), then, only if it ended clean, the publish to "
+        "Cloudflare (after its own `yes`). Each part asks only when it has changes.",
     )
     apply_parser.add_argument(
         "--closed",

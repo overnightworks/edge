@@ -489,24 +489,30 @@ class StepCaInit:
             self.report_failure(failure)
             return unclear
         except StepFailure as failure:
-            if self.read_only:
-                self.tools.say(f"step-ca/init --check: not set up: {self.scrubbed(str(failure))}")
-            else:
-                self.report_failure(failure)
+            self.report_failure(failure)
             return Exit.REFUSED
         except Exception as unexpected:
-            self.tools.say(
-                f"step-ca/init FAILED at {self.current}: "
-                f"unexpected answer ({type(unexpected).__name__})"
+            kind = type(unexpected).__name__
+            self.say_failure(
+                f"unexpected answer at {self.current} ({kind})"
+                if self.read_only
+                else f"unexpected answer ({kind})"
             )
             return unclear
         except KeyboardInterrupt:
-            self.tools.say(f"step-ca/init FAILED at {self.current}: interrupted")
+            self.say_failure("interrupted")
             return unclear
         return Exit.DONE
 
     def report_failure(self, failure: StepFailure) -> None:
-        self.tools.say(f"step-ca/init FAILED at {self.current}: {self.scrubbed(str(failure))}")
+        self.say_failure(self.scrubbed(str(failure)))
+
+    def say_failure(self, fact: str) -> None:
+        """Under `--check` the fact stands bare, so a caller can put it into its own sentence."""
+        if self.read_only:
+            self.tools.say(fact)
+        else:
+            self.tools.say(f"step-ca/init FAILED at {self.current}: {fact}")
 
 
 def main() -> int:

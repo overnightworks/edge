@@ -119,7 +119,7 @@ schaltet das Profil ab; `run.setup` nennt optional den Befehl, der den Schluesse
 [architecture.md](architecture.md) (Abschnitt 8) und wird hier nicht wiederholt.
 
 **Zwei Teile.** Das blosse `edge apply` fuehrt den lokalen Teil (`edge apply --closed`) aus und, nur
-wenn der mit Exit 0 endete, die Publish-Phase (`edge external apply`, [external.md](external.md)). Jeder
+wenn der mit Exit 0 endete, die Publish-Phase (`hal apply`'s publish, [external.md](external.md)). Jeder
 Teil fragt sein eigenes `yes` und nur, wenn er etwas zu aendern hat; gibt es nirgends etwas zu aendern,
 fragt `edge apply` nichts. Endet der lokale Teil nicht mit 0, steht eine Zeile "nothing published", es
 laeuft kein tofu, und der Exit ist der des lokalen Teils. Ein Ctrl-C (SIGINT) vor der Publish-Phase
@@ -167,17 +167,17 @@ sein Image, seine Definition oder sein Tag-Inhalt abweicht; laufende Anfragen en
 
 **Setup.** Eine Einheit mit `setup` wird erst angeschaltet, wenn `<setup> --check` Exit 0 gibt. Der
 Vertrag von `<setup> --check`: fragt nichts, druckt kein Geheimnis, legt nichts an, braucht keinen
-laufenden Dienst; Exit 0 eingerichtet, 1 nicht eingerichtet (eine Zeile sagt, was fehlt), 2 es kann es
-nicht sagen. Eine laufende, im Katalog eingeschaltete Einheit mit `setup` wird bei jedem Apply geprueft:
-ist sie nicht eingerichtet, bekommt sie die Setup-Frage und sperrt das Publizieren. Die Frage kommt vor
-dem Plan ("Type yes to run `<setup>` now"; nur das genaue `yes` zaehlt, `no` bricht den ganzen Lauf
-ab, Exit 1, nichts geaendert). Nach `yes` laeuft das Setup in deinem Terminal, ohne Argumente, ohne
-Zeitlimit, Ausgabe ungefiltert; die Schluessel macht allein dieser Befehl, `edge apply` sieht sie nie.
-Dann prueft `--check` noch einmal und der Plan folgt mit seinem eigenen `yes`. Ein Setup, das scheitert
-oder per Ctrl-C unterbrochen wird, schaltet nichts (Exit 1); was es gemacht hat, bleibt auch nach einem
-`no` zum Plan (Loeschen bleibt Handarbeit). Ohne Terminal laeuft nie ein Setup. Eine per `edge stop`
-ausgeschaltete, noch laufende Einheit, die nicht eingerichtet ist, wird abgewiesen (`edge stop` noch
-einmal).
+laufenden Dienst; Exit 0 eingerichtet, 1 nicht eingerichtet (die letzte Zeile ist die blosse Tatsache,
+was fehlt, ohne Skriptnamen und ohne `FAILED at`), 2 es kann es nicht sagen (ebenso die blosse Tatsache).
+Eine laufende, im Katalog eingeschaltete Einheit mit `setup` wird bei jedem Apply geprueft: ist sie nicht
+eingerichtet, bekommt sie die Setup-Frage und sperrt das Publizieren. Die Frage kommt vor dem Plan ("Type
+yes to run `<setup>` now"; nur das genaue `yes` zaehlt, `no` bricht den ganzen Lauf ab, Exit 1, nichts
+geaendert). Nach `yes` laeuft das Setup in deinem Terminal, ohne Argumente, ohne Zeitlimit, Ausgabe
+ungefiltert; die Schluessel macht allein dieser Befehl, `edge apply` sieht sie nie. Dann prueft `--check`
+noch einmal und der Plan folgt mit seinem eigenen `yes`. Ein Setup, das scheitert oder per Ctrl-C
+unterbrochen wird, schaltet nichts (Exit 1); was es gemacht hat, bleibt auch nach einem `no` zum Plan
+(Loeschen bleibt Handarbeit). Ohne Terminal laeuft nie ein Setup. Eine per `edge stop` ausgeschaltete,
+noch laufende Einheit, die nicht eingerichtet ist, wird abgewiesen (`edge stop` noch einmal).
 
 **Exit.** 0 angewendet und beobachtet oder nichts zu tun; 1 verweigert (auch: ein anderes Apply laeuft),
 abgebrochen, fehlgeschlagen oder teilweise; 2 nicht planbar (falscher Checkout oder Zweig, Baum nicht

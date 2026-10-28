@@ -284,9 +284,9 @@ Weg zum Assistenten; `hal secrets` zeigt nur. Ein Eintrag mit
 `loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
 Der Assistent geht die fehlenden Einträge des Manifests der Reihe nach durch,
-zuerst die fünf von `edge external`. Gelesen werden davon drei:
-`cloudflare/fleet-read` und `opentofu/state-passphrase` für `plan`, danach
-`cloudflare/fleet-write` für `apply`. `github/fleet-read` und
+zuerst die fünf der Publish-Phase von `hal apply`. Gelesen werden davon drei:
+`cloudflare/fleet-read` und `opentofu/state-passphrase` zuerst, danach
+`cloudflare/fleet-write`. `github/fleet-read` und
 `github/fleet-admin` bleiben im Assistenten, aber nichts liest sie, bis
 edge#30 X2/X3 die GitHub-Einstellungen als Code bauen. Es läuft nur am
 eigenen Terminal (stdin und stdout); ohne Terminal endet `hal setup --apply` in der
@@ -342,7 +342,7 @@ Beispiel (gekürzt, ein abgelehnter Versuch):
 
 ```
   › github/fleet-read  new token  the link fills name, owner, expiry and rights
-    why: Nothing reads it today; edge external needs it again once edge#30 X2/X3 builds the GitHub settings as code (repo settings, rulesets, Actions rules, org secret names, never their values). The file stays, nothing is revoked.
+    why: Nothing reads it today; hal apply needs it again once edge#30 X2/X3 builds the GitHub settings as code (repo settings, rulesets, Actions rules, org secret names, never their values). The file stays, nothing is revoked.
     prefilled: Metadata read, Organization secrets read
     [ ] Repository access: All repositories
     [ ] compare the rights in the form with the line above
