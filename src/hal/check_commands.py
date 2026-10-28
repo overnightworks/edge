@@ -74,17 +74,10 @@ EXPOSURE_RULES = {
 }
 
 
-def _exposure_detail(finding: exposure.Finding) -> str:
-    if finding.protocol is None:
-        return f"{finding.problem.value}: edge.name {finding.edge_name or '(none)'}"
-    port = "(random)" if finding.port is None else finding.port.as_json()
-    return f"{finding.problem.value}: {finding.protocol.value} {finding.address or '(none)'}:{port}"
-
-
 def _read_exposure() -> list[Finding]:
     """The scan as the daily check's findings; a scan that cannot run raises."""
     return [
-        Finding(EXPOSURE_RULES[found.problem].value, found.subject, _exposure_detail(found))
+        Finding(EXPOSURE_RULES[found.problem].value, found.subject, json.dumps(found.as_json()))
         for found in inspection.inspect(inspection.DEFAULT_ALLOW_LIST)
     ]
 

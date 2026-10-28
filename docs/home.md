@@ -104,7 +104,7 @@ Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Re
 
 Ein zerbrochener Lauf einer Prüfung ist Action needed („The … check did not run“, Schritt `hal check`); bei Exposure ist das auch Docker nicht erreichbar, `ss` fehlt oder die Erlaubnisliste unlesbar. Der Scan läuft als du, ohne sudo, und braucht bis zu 90 s (zwei `docker`-Aufrufe und `ss`, je 30 s).
 
-Die Funde von Exposure ändern sich mit ihrem Gegenstand, nicht mit dem Port: Wandert sshd von 22 auf 2222, kommt keine Mail; der Bericht zeigt jede Zeile des Scans. Wer diese Version zurücknimmt, löscht auch `~/.local/state/hal/check-findings.txt`, denn der alte Code lehnt den gemerkten Prüfungsnamen `exposure` ab.
+Die Funde von Exposure ändern sich mit ihrem Gegenstand, nicht mit dem Port: Wandert sshd von 22 auf 2222, kommt keine Mail; der Bericht zeigt jede Zeile des Scans.
 
 **Wann gemeldet wird.** Eine Desktop-Benachrichtigung (über `notify-send`, falls installiert) und eine Mail kommen nur,
 wenn eine Action-needed-Stufe neu auftaucht oder verschwindet, auch wenn danach nichts mehr übrig ist; ein zerbrochener oder
@@ -152,7 +152,7 @@ Everything in detail: ~/.local/state/hal/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
-Containers oder Prozesses (bei Exposure, nie Adresse, Port oder Erlaubnisliste), Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz und Logs steht nur, was los ist. Ein
+Containers oder Prozesses, bei Exposure der Name des Containers, Prozesses oder der Unit (nie Adresse, Port, Protokoll oder Erlaubnisliste), Apps (aus `read_by` des Manifests, nur einfache Namen wie `hopin`) und der Zeitpunkt der letzten Sicherung; bei Geheimnissen, Commit-Schutz und Logs steht nur, was los ist. Ein
 ungültiges Konto schickt nichts und nennt Schlüssel und Regel auf stderr, nie den Wert.
 
 **Welcher Kanal zählt.** Der Desktop zählt nur, solange eine grafische Sitzung läuft (`systemctl --user is-active

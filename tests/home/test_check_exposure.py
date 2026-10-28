@@ -1,4 +1,4 @@
-"""Tests of the exposure area of the daily check (#582): what the PC lets in from beyond loopback, as rows, report, mail and remembered identities."""
+"""Tests of the exposure area of the daily check: what the PC lets in from beyond loopback, as rows, report, mail and remembered identities."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ def published_container(
 def test_a_listener_beyond_loopback_is_an_action_in_the_sixth_area(
     clean_home, runner, mail_stub, capsys
 ) -> None:
-    """E1, E5, E6: one row, the action sentence in the mail and popup, and the identity of rule and subject."""
+    """One row, the action sentence in the mail and popup, and the identity of rule and subject."""
     code = home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=22))
 
     output = capsys.readouterr().out.splitlines()
@@ -78,7 +78,7 @@ def test_a_listener_beyond_loopback_is_an_action_in_the_sixth_area(
 
 
 def test_the_same_exposure_on_another_port_is_not_news(clean_home, runner, mail_stub) -> None:
-    """E2: the identity is rule plus subject, so a moved port sends nothing."""
+    """The identity is rule plus subject, so a moved port sends nothing."""
     home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=22))
 
     home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=2222))
@@ -88,7 +88,6 @@ def test_the_same_exposure_on_another_port_is_not_news(clean_home, runner, mail_
 
 
 def test_an_exposure_that_is_gone_is_reported_done(clean_home, runner, mail_stub) -> None:
-    """E3."""
     home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=22))
 
     code = home_check(clean_home, runner)
@@ -100,7 +99,6 @@ def test_an_exposure_that_is_gone_is_reported_done(clean_home, runner, mail_stub
 
 
 def test_a_clean_pc_says_all_six_areas_are_well(clean_home, runner, capsys) -> None:
-    """E10."""
     code = home_check(clean_home, runner)
 
     output = capsys.readouterr().out.splitlines()
@@ -111,7 +109,7 @@ def test_a_clean_pc_says_all_six_areas_are_well(clean_home, runner, capsys) -> N
 def test_a_scan_that_cannot_run_is_a_failure_line_and_the_mail_says_so(
     clean_home, runner, mail_stub, capsys
 ) -> None:
-    """E7: Docker down is exit 3, one broken row, the failure in the report and a mail line."""
+    """Docker down is exit 3, one broken row, the failure in the report and a mail line."""
     code = home_check(
         clean_home, runner, docker_script="echo 'Cannot connect to the Docker daemon' >&2; exit 1"
     )
@@ -127,8 +125,7 @@ def test_a_scan_that_cannot_run_is_a_failure_line_and_the_mail_says_so(
     assert "The Exposure check did not run." in message_of(mail_stub.sent[0]).get_content()
 
 
-def test_the_scan_runs_again_after_it_failed(clean_home, runner, mail_stub) -> None:
-    """Matrix cell 7."""
+def test_a_recovered_scan_is_reported_in_the_mail_as_running_again(clean_home, runner, mail_stub) -> None:
     home_check(clean_home, runner, docker_script="exit 1")
 
     code = home_check(clean_home, runner)
@@ -140,10 +137,9 @@ def test_the_scan_runs_again_after_it_failed(clean_home, runner, mail_stub) -> N
 def test_ctrl_c_during_the_scan_leaves_report_and_state_unchanged(
     clean_home, runner, mail_stub
 ) -> None:
-    """E9."""
     layout = Layout(clean_home)
 
-    code = home_check(clean_home, runner, docker_script="kill -INT $PPID; sleep 5")
+    code = home_check(clean_home, runner, docker_script="kill -INT $PPID; exec sleep 5")
 
     assert code == 130
     assert not layout.check_report_file.exists()
@@ -154,7 +150,7 @@ def test_ctrl_c_during_the_scan_leaves_report_and_state_unchanged(
 def test_neither_the_address_the_port_nor_an_env_value_reach_mail_or_popup(
     clean_home, runner, mail_stub, tmp_path
 ) -> None:
-    """E11, E12: the mail names the container and nothing more; no env value is read into any output."""
+    """The mail names the container and nothing more; no env value is read into any output."""
     docker = docker_with_containers(
         tmp_path, published_container("edge-keycloak-1", "0.0.0.0", "8080")
     )
@@ -175,7 +171,6 @@ def test_neither_the_address_the_port_nor_an_env_value_reach_mail_or_popup(
 
 
 def test_a_duplicate_routing_name_is_an_action(clean_home, runner, mail_stub, tmp_path) -> None:
-    """E4."""
     routed = {"traefik.enable": "true", "edge.name": "blog"}
     docker = docker_with_containers(
         tmp_path,
@@ -198,7 +193,6 @@ def test_a_duplicate_routing_name_is_an_action(clean_home, runner, mail_stub, tm
 def test_many_ports_of_one_process_are_one_row_and_one_mail_line_and_every_report_row(
     clean_home, runner, mail_stub, capsys
 ) -> None:
-    """E5, E16."""
     listeners = "".join(
         f'udp UNCONN 0 0 0.0.0.0:{port} 0.0.0.0:* users:(("dnsmasq",pid=7,fd=3))\n'
         for port in range(40000, 40272)
@@ -207,7 +201,10 @@ def test_many_ports_of_one_process_are_one_row_and_one_mail_line_and_every_repor
     home_check(clean_home, runner, listeners=listeners)
 
     body = message_of(mail_stub.sent[0]).get_content()
-    assert "dnsmasq can be reached from beyond this PC." in capsys.readouterr().out + body
+    exposure_rows = [row for row in capsys.readouterr().out.splitlines() if "exposure" in row]
+    assert len(exposure_rows) == 1
+    assert "dnsmasq can be reached from beyond this PC" in exposure_rows[0]
+    assert "dnsmasq can be reached from beyond this PC." in body
     assert body.count("dnsmasq") == 2  # the sentence and its step
     assert (
         Layout(clean_home)
@@ -218,10 +215,13 @@ def test_many_ports_of_one_process_are_one_row_and_one_mail_line_and_every_repor
 
 
 def test_switching_notifications_off_silences_exposure_news(clean_home, runner, mail_stub) -> None:
-    """E15."""
     write_hal_config(clean_home, "[check]\nnotify = false\n")
 
-    home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=22))
+    code = home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=22))
 
+    assert code == 1
+    assert "exposure\treachable-beyond-loopback\tsshd" in json.loads(
+        Layout(clean_home).check_findings_file.read_text()
+    )
     assert mail_stub.sent == []
     assert runner.notifications == []
