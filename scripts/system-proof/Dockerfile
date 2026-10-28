@@ -15,7 +15,7 @@ FROM ubuntu:26.04
 ENV DEBIAN_FRONTEND=noninteractive
 # The 26.04 archive no longer carries kerneloops; the PC keeps the 24.04 package it was upgraded with, so the image
 # installs that exact .deb from the archive pool for cell R7.
-ARG KERNELOOPS_DEB_URL=http://archive.ubuntu.com/ubuntu/pool/main/k/kerneloops/kerneloops_0.12+git20140509-6ubuntu8_amd64.deb
+ARG KERNELOOPS_DEB_URL=https://archive.ubuntu.com/ubuntu/pool/main/k/kerneloops/kerneloops_0.12+git20140509-6ubuntu8_amd64.deb
 ARG KERNELOOPS_DEB_SHA256=96a71bbc5fcffb6fbf623db34bf1c9ac5484f5263ba1c5ea479d82384de27a7e
 # Ansible dates the cache by its success stamp or the lists directory, so empty indexes must also be stale.
 # The base image's policy-rc.d (exit 101) is removed last, as on the PC, so a package installed in the proof starts its service.
@@ -43,7 +43,7 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
         systemd \
         systemd-sysv \
     && update-alternatives --set sudo /usr/bin/sudo.ws \
-    && curl --fail --silent --show-error --location --output /tmp/kerneloops.deb "$KERNELOOPS_DEB_URL" \
+    && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --output /tmp/kerneloops.deb "$KERNELOOPS_DEB_URL" \
     && echo "$KERNELOOPS_DEB_SHA256  /tmp/kerneloops.deb" | sha256sum --check --strict \
     && apt-get install -y --no-install-recommends /tmp/kerneloops.deb \
     && rm /tmp/kerneloops.deb \
