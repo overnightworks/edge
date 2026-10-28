@@ -53,12 +53,29 @@ from edge import compose, switches
 
 APPLIED_FILE = "applied.json"
 TRAEFIK_STATIC_CONFIG = "/etc/traefik/traefik.yml"  # where Traefik reads its static config
-DEFINITION_CHANGED = "its compose definition changed"
-UNFINISHED = "the last recreate did not finish"
 
 # A file bind's path in the checkout -> the sha256 of its bytes. The entry of a followed service
 # may hold more keys, owned by the step that writes it (`edge.realm.reconcile`).
 type Digests = Mapping[str, str]
+
+
+class CauseKind(StrEnum):
+    DEFINITION_CHANGED = "definition changed"
+    FILE_CHANGED = "file changed"
+    FILE_UNRECORDED = "file unrecorded"
+    UNFINISHED = "unfinished"
+    RECORD_UNTRUSTED = "record untrusted"
+    RECORD_NAMES_OTHERS = "record names others"
+    PULLED_IN = "pulled in"
+
+
+@dataclass(frozen=True)
+class Cause:
+    """Why a service is planned; `subject` is the file, the dependency, the joined names the
+    record holds too many of, or the sentence of a record that cannot be trusted."""
+
+    kind: CauseKind
+    subject: str = ""
 
 
 class CoreError(Exception):
@@ -293,18 +310,13 @@ class CorePlan:
 
     service: str
     action: CoreAction
-    why: str
+    why: tuple[Cause, ...]
     digests: Digests
     left_unstarted: bool
 
     @property
     def files(self) -> str:
         return ", ".join(self.digests)
-
-    def describe(self) -> str:
-        if self.action is CoreAction.NOT_STARTED:
-            return f"{self.service}: {self.why}; it is not running and is not started"
-        return f"{self.service}: recreate ({self.why})"
 
     def recreated(self, followed: Collection[str]) -> str:
         """The success line once the recreate is observed and every barrier is proven; one for a
@@ -335,13 +347,13 @@ def plan_core(
         current = digests(file_binds(config["services"][service], checkout), checkout)
         whys = _own_changes(config, service, service in changed, checkout, current, reading)
         left_unstarted = _left_unstarted(config, states, reading, checkout, service)
-        if left_unstarted and UNFINISHED not in whys:
-            whys.append(UNFINISHED)
+        if left_unstarted and Cause(CauseKind.UNFINISHED) not in whys:
+            whys.append(Cause(CauseKind.UNFINISHED))
         whys += _pulled_in(config, service, plans)
         if whys:
             live = left_unstarted or compose.has_running_container(states, (service,))
             action = CoreAction.RECREATE if live else CoreAction.NOT_STARTED
-            plans[service] = CorePlan(service, action, "; ".join(whys), current, left_unstarted)
+            plans[service] = CorePlan(service, action, tuple(whys), current, left_unstarted)
     return list(plans.values())
 
 
@@ -367,16 +379,9 @@ class FollowerPlan:
     service: str
     unit: str
     action: FollowerAction
-    why: str
+    why: tuple[Cause, ...]
     digests: Digests
     gate: Gate
-
-    def describe(self) -> str:
-        if self.action is FollowerAction.HELD:
-            return f"{self.service}: {self.why}; {self.unit} is {self.gate}, so it is not started"
-        if self.action is FollowerAction.STARTS_WITH_UNIT:
-            return f"{self.service}: {self.why}; it starts with {self.unit}"
-        return f"{self.service}: recreate ({self.why})"
 
     def recreated(self) -> str:
         return f"{self.service} is recreated and runs the checked-out {', '.join(self.digests)}"
@@ -412,7 +417,7 @@ def plan_followers(
             action = FollowerAction.RECREATE
         else:
             action = FollowerAction.STARTS_WITH_UNIT
-        plans.append(FollowerPlan(follower, unit, action, "; ".join(whys), current, gate))
+        plans.append(FollowerPlan(follower, unit, action, tuple(whys), current, gate))
     return plans
 
 
@@ -423,12 +428,12 @@ def _own_changes(
     checkout: Path,
     current: Digests,
     reading: Reading,
-) -> list[str]:
+) -> list[Cause]:
     """Why the service itself changed: a container labelled with another definition hash, or a
     file it binds that differs from the record."""
     whys = []
     if definition_changed:
-        whys.append(DEFINITION_CHANGED)
+        whys.append(Cause(CauseKind.DEFINITION_CHANGED))
     if follows(config, service, checkout) and (why := _why_changed(current, reading, service)):
         whys.append(why)
     return whys
@@ -448,10 +453,12 @@ def _left_unstarted(
     )
 
 
-def _pulled_in(config: Mapping[str, Any], service: str, plans: Mapping[str, CorePlan]) -> list[str]:
+def _pulled_in(
+    config: Mapping[str, Any], service: str, plans: Mapping[str, CorePlan]
+) -> list[Cause]:
     """A reason for each core service the service depends on that is recreated."""
     return [
-        f"{dependency} is recreated"
+        Cause(CauseKind.PULLED_IN, dependency)
         for dependency in dependencies(config, service)
         if dependency in plans and plans[dependency].action is CoreAction.RECREATE
     ]
@@ -511,17 +518,17 @@ def _config_hash_labels(
     return labels
 
 
-def _why_changed(current: Digests, reading: Reading, service: str) -> str | None:
+def _why_changed(current: Digests, reading: Reading, service: str) -> Cause | None:
     if reading.problem:
-        return reading.problem
+        return Cause(CauseKind.RECORD_UNTRUSTED, reading.problem)
     if reading.unfinished(service):
-        return UNFINISHED
+        return Cause(CauseKind.UNFINISHED)
     applied = reading.entries.get(service, {})
     for name, digest in current.items():
         if name not in applied:
-            return f"{name} has no applied record"
+            return Cause(CauseKind.FILE_UNRECORDED, name)
         if applied[name] != digest:
-            return f"{name} changed"
+            return Cause(CauseKind.FILE_CHANGED, name)
     if others := sorted(applied.keys() - current.keys()):
-        return f"{APPLIED_FILE} names {', '.join(others)}, which {service} does not mount"
+        return Cause(CauseKind.RECORD_NAMES_OTHERS, ", ".join(others))
     return None
