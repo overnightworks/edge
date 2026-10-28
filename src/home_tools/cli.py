@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from hal_output import write_error
 from home_tools import secrets_setup, secrets_view, setup, system_step
 from home_tools import next as next_steps
 from home_tools.platform_check import DiskSpaceReader, read_disk_space
@@ -42,17 +42,18 @@ MONOTONIC_CLOCK: Callable[[], float] = time.monotonic
 
 SUBCOMMANDS = (next_steps, secrets_setup, setup)
 UNEXPECTED_ERROR_EXIT = 3
+MANIFEST_INVALID_EXIT = 2
 
 EXAMPLES = """\
-Beispiele:
-  home next            was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl
-  home secrets         zeigt jedes Geheimnis, nie einen Wert
-  home secrets --setup führt am Terminal durch jedes fehlende Geheimnis
-  home setup           zeigt, was der Commit-Hook gegen Geheimnisse noch braucht; at a terminal it asks once for sudo
-  home setup --apply   richtet quality, die Engines und den Hook ein, then the system step (asks once for sudo)
-  home <befehl> --help Einzelheiten zu einem Befehl
+Examples:
+  home next            what you need to do now, each step with its exact command
+  home secrets         every secret, never a value
+  home secrets --setup walks you through every missing secret at a terminal
+  home setup           shows what the commit hook against secrets still needs; at a terminal it asks once for sudo
+  home setup --apply   sets up quality, the engines and the hook, then the system step (asks once for sudo)
+  home <command> --help details of one command
 
-Anleitung: README.md im Repository home-tools.
+Guide: docs/home.md in the edge repository.
 """
 
 
@@ -82,32 +83,17 @@ def build_layout_and_ports(
     )
 
 
-def _with_german_help(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("-h", "--help", action="help", help="zeigt diese Hilfe und beendet sich")
-    return parser
-
-
-def _subcommand_adder(subcommands: argparse._SubParsersAction) -> Callable[..., argparse.ArgumentParser]:
-    def add_parser(name: str, **kwargs: object) -> argparse.ArgumentParser:
-        return _with_german_help(subcommands.add_parser(name, add_help=False, **kwargs))
-
-    return add_parser
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="home",
-        add_help=False,
-        description="Zeigt, was am PC von dir gebraucht wird, und führt durch die Geheimnisse.",
+        description="Shows what this PC needs from you and walks you through the secrets.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _with_german_help(parser)
     parser.set_defaults(error_may_quote_a_secret=False)
-    subcommands = parser.add_subparsers(title="Befehle", metavar="<befehl>", required=True)
-    add_parser = _subcommand_adder(subcommands)
+    subcommands = parser.add_subparsers(title="Commands", metavar="<command>", required=True)
     for subcommand in SUBCOMMANDS:
-        subcommand.register(add_parser)
+        subcommand.register(subcommands.add_parser)
     return parser
 
 
@@ -129,10 +115,10 @@ def main(
     try:
         return args.handler(args, layout, ports)
     except secrets_view.ManifestError as error:
-        print(f"home: {error}", file=sys.stderr)
-        return 2
+        write_error(str(error))
+        return MANIFEST_INVALID_EXIT
     except Exception as error:
         # A subcommand that handles secrets never has an unexpected error's message shown: it may quote a value.
         message = "" if args.error_may_quote_a_secret else f": {error}"
-        print(f"home: unerwarteter Fehler ({type(error).__name__}){message}", file=sys.stderr)
+        write_error(f"unexpected error ({type(error).__name__}){message}")
         return UNEXPECTED_ERROR_EXIT

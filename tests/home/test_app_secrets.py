@@ -140,6 +140,14 @@ def test_the_packaged_manifest_holds_no_value_of_hopins_session_secret() -> None
     assert not re.search(r"[A-Za-z0-9_-]{43,}", PACKAGED_MANIFEST.read_text())
 
 
+def test_the_packaged_manifest_names_its_readers_in_english() -> None:
+    reader_names = [name for entry in load_manifest(PACKAGED_MANIFEST) for name in entry.read_by]
+
+    assert all(name.isascii() for name in reader_names)
+    assert {"cloudflared tunnel (management)", "agent-runtime#115, measurement runs 0b2/0e"} <= set(reader_names)
+    assert any(name.startswith("cloudflared tunnel run (by hand;") for name in reader_names)
+
+
 # --- HopIn's TURN key: asked hidden, stored unverified (O6) ---------------------------------------------------------
 
 
