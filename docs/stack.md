@@ -150,13 +150,10 @@ Abruf liest die globale Git-Konfiguration, damit er sich wie `git pull` ueber de
 anmeldet; edge liest, uebergibt und druckt nie ein Credential und verweigert eine URL mit Passwort. Er
 schreibt nur Objekte, `FETCH_HEAD` und `origin/main`; HEAD, Index und Baum bleiben. Scheitert er (kein
 Netz, kein `origin`, Anmeldung, 120 s), oder hat der Checkout Commits, die `origin/main` fehlen, oder
-ist er daneben gewachsen, endet es mit Exit 2 und aendert nichts. Wartende Commits zeigt er mit Hash
-und Betreff und ihre Dateien nach Wirkung: live sobald aktualisiert (`dynamic/`, `mcp/dynamic/`),
-von `edge apply` neu erstellt (`traefik.yml`, `traefik-mcp.yml`, `compose.yaml`), Halt fuer `uv sync`
-(`pyproject.toml`, `uv.lock`), von `edge apply` nicht angewendet (Binds der Einheiten: `keycloak/`,
-`legal/`, `step-ca/ca.json`), sonstige. Der Plan wendet HEAD an, nie die wartenden Commits; die bringt der
-Betreiber bis S2.4c mit `git -C ~/git/edge merge --ff-only <Hash>` selbst herein und ruft den Apply
-noch einmal auf.
+ist er daneben gewachsen, endet es mit Exit 2 und aendert nichts. Der Checkout steht danach als eine Zeile: `checkout current` oder `checkout N behind`
+mit dem Merge-Befehl darunter. Der Plan wendet HEAD an, nie die wartenden Commits; die bringt der Betreiber
+bis S2.4c mit `git -C ~/git/edge merge --ff-only <Hash>` selbst herein und ruft den Apply noch
+einmal auf.
 
 **Der Kern und die Follower.** Welche Dienste `edge apply --closed` neu erstellt, in welcher
 Reihenfolge, und wie der Eintrag in `applied.json` gefuehrt wird:

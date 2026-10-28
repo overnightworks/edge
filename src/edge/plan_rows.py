@@ -3,7 +3,7 @@
 
 from enum import StrEnum
 
-from edge import core, switches
+from edge import checkout, core, switches
 from edge.appkit_step import APPKIT_UNIT, TARGETS, AppkitPlan
 from edge.apps import AppKind, AppPlan, AppsPlan, OffPlan, SkippedNote, StaysStoppedNote
 from edge.built_image import ENDS_RUNS, BuiltRecreate
@@ -16,6 +16,7 @@ from hal_output import Glyph, Group, Row, TrailingNoun
 _SEPARATOR = " · "
 _DIGEST_SHOWN = 4
 _DEFINITION_CHANGED = "definition changed"
+CHECKOUT = "checkout"
 
 
 class PlanEvent(StrEnum):
@@ -43,10 +44,32 @@ class LegalEvent(TrailingNoun):
     NEW_RECORD = "new record"
 
 
+class CheckoutEvent(StrEnum):
+    CURRENT = "current"
+    BEHIND = "behind"
+
+
 class PlanGroup(StrEnum):
     CORE = "core"
     UNITS = "units"
     APPS = "apps"
+
+
+def checkout_row(origin: checkout.Origin) -> Row:
+    """The live checkout against origin's `main`: current, or behind with the way to bring the
+    waiting commits in by hand."""
+    if origin.standing is checkout.Standing.BEHIND:
+        return Row(
+            Glyph.NEEDS_YOU,
+            CHECKOUT,
+            CheckoutEvent.BEHIND,
+            f"plan applies {origin.head} without them",
+            count=origin.behind,
+            details=(f"git -C {checkout.LIVE_CHECKOUT} merge --ff-only {origin.sha}",),
+        )
+    return Row(
+        Glyph.DONE, CHECKOUT, CheckoutEvent.CURRENT, f"{origin.short} · origin/{checkout.MAIN}"
+    )
 
 
 def plan_groups(plan: Plan) -> tuple[Group, ...]:
