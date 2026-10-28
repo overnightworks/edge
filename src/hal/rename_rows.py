@@ -104,7 +104,7 @@ def _home_as_tilde(text: str, home: Path) -> str:
 
 
 def write_done_row(row: StepRow, home: Path, elapsed_seconds: float | None = None) -> None:
-    """The done row of a step; a step that takes long shows how long after its fact."""
+    """The done row of a step; the caller passes its duration when the row should show one."""
     subject, _, done = row.kind.value
     fact = _home_as_tilde(row.fact if row.done_fact is None else row.done_fact, home)
     if elapsed_seconds is not None:

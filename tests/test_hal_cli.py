@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -229,8 +230,14 @@ VALID_ARGUMENTS = {
 
 
 @pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
-def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys):
+def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypatch):
     """The one verb grammar has `--dry-run` and no `--apply`; no alias is left."""
+
+    def forbidden(arguments):
+        raise AssertionError(f"hal {command.name} ran on --apply")
+
+    guarded = tuple(replace(one, run=forbidden) if one is command else one for one in cli.COMMANDS)
+    monkeypatch.setattr(cli, "COMMANDS", guarded)
     with pytest.raises(SystemExit) as stop:
         cli.main([command.name, *VALID_ARGUMENTS.get(command.name, ()), "--apply"])
 
