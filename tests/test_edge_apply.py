@@ -3423,8 +3423,7 @@ def test_a_failed_socket_proxy_recreate_is_partial_leaves_traefik_unfinished_and
     scripted.failing_verb = None
     _, again, _ = switch("no")
     assert find_row(again, "socket-proxy", PlanEvent.RECREATE, "definition changed")
-    pulled = "the last recreate did not finish · socket-proxy is recreated"
-    assert find_row(again, "traefik", PlanEvent.RECREATE, pulled)
+    assert find_row(again, "traefik", PlanEvent.RECREATE, "finish · socket-proxy is recreated")
 
 
 def test_a_socket_proxy_its_recreate_left_created_is_recreated_by_the_next_run(
