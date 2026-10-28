@@ -20,7 +20,7 @@ from test_edge_apply import (
     up_calls,
     write_fleet,
 )
-from test_edge_plan_rows import find_row
+from test_edge_plan_rows import find_row, plain
 
 from edge import switches
 from edge.plan_rows import PlanEvent
@@ -123,7 +123,7 @@ def test_a_reference_bump_recreates_agent_service_once_under_the_one_yes(running
 
     assert exit_code == 0
     assert recreate_row(out, bump_fact(old))
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
     assert scripted.container_ids["agent-service"] != ids["agent-service"]
     assert scripted.container_ids["agent-egress"] == ids["agent-egress"]

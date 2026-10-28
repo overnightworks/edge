@@ -328,7 +328,7 @@ def test_apply_while_another_apply_runs_changes_nothing(hal, applying):
     result = hal("apply", answers=("yes",))
 
     assert result.exit_code == ExitCode.FAILURE
-    assert "another `edge apply --closed` is running; nothing changed" in result.err
+    assert "another `hal apply` is running; nothing changed" in result.err
     assert "edge apply: nothing published" in result.err
     assert applying.scripted.changing_verbs() == []
 

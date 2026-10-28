@@ -34,7 +34,7 @@ from test_edge_apply import (
     up_calls,
     write_fleet,
 )
-from test_edge_plan_rows import find_row
+from test_edge_plan_rows import find_row, plain
 
 from edge.plan_rows import PlanEvent
 
@@ -103,7 +103,7 @@ def test_a_changed_definition_recreates_a_running_unit_service_alone_then_nothin
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert bool(find_row(out, "step-ca", PlanEvent.RECREATE, "definition changed")) == (
         "step-ca" in drifted
     )
@@ -193,7 +193,7 @@ def test_two_units_with_a_changed_definition_are_two_lines_in_dependency_order_u
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert up_calls(scripted) == [RECREATE_STEP_CA, RECREATE_KEYCLOAK_DB, RECREATE_KEYCLOAK]
 
 

@@ -156,7 +156,7 @@ def test_an_app_is_planned_and_started_after_one_yes_and_the_next_apply_changes_
     assert exit_code == 0, err
     assert "switch on      " in out
     assert "v2026.10.22.1 · into ~/srv/hopin" in out
-    assert "edge apply --closed: hopin is on at v2026.10.22.1" in out
+    assert "\nhopin is on at v2026.10.22.1\n" in out
     again = app_world.apply()
     assert again[0] == 0
     assert "nothing to change" in again[1]
@@ -552,6 +552,12 @@ def test_a_stopped_app_with_a_newer_tag_waiting_stays_stopped_and_its_switch_sta
     assert checkout.Git(app_world.srv).call(mirrored).stdout == b""  # nothing fetched
 
 
+STILL_RUNNING = [
+    "error: switched off but still running, nothing switched",
+    "next: hal stop hopin",
+]
+
+
 @pytest.mark.parametrize("kept_off_by", ["marker", "barrier"])
 def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_world, kept_off_by):
     deployed(app_world)
@@ -566,9 +572,7 @@ def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_
     exit_code, _, err = app_world.apply()
 
     assert exit_code == 1
-    assert (
-        "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
-    )
+    assert err.splitlines() == STILL_RUNNING
     assert app_world.docker.verbs == ["ps"]
     assert app_world.scripted.changing_verbs() == changes_before
     assert {row["State"] for row in app_world.docker.rows} == {"running"}
@@ -591,9 +595,7 @@ def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_re
 
     assert exit_code == 1
     assert len(setup_run.commands) == 1
-    assert (
-        "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
-    )
+    assert err.splitlines() == STILL_RUNNING
     assert "nothing to change" not in out
     assert "stays stopped" not in out
     assert app_world.scripted.changing_verbs() == changes_before
@@ -637,9 +639,7 @@ def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops
     assert app_world.runtime.health.clock() < apps.HEALTH_SECONDS  # the wait ended early
     assert exit_code == 1
     assert "hopin was switched off meanwhile (since 18.10. 08:00); not started" in err
-    assert "`edge start hopin` switches it back on" in err
-    assert "hal start" not in err
-    assert "`edge apply` again" not in err
+    assert err.splitlines()[-1] == "next: hal start hopin"
     assert not any(row["State"] == "running" for row in app_world.docker.rows)
     assert not (app_world.state / "deployed").exists()
     assert marks.mark(KEY) is not None

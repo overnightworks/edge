@@ -55,7 +55,7 @@ commits. Nothing in the checkout changes: only `.git` gains the fetched objects,
 
 import fcntl
 import os
-import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
@@ -64,11 +64,19 @@ from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
 from edge.appkit_step import AppkitError, Rename, plan_appkit
-from edge.apps import AppError, AppRuntime, plan_apps, retry_advice
+from edge.apps import AppError, AppRuntime, plan_apps, retry_command
 from edge.legal_section import LegalError
 from edge.legal_step import RECORD_FILE, plan_legal
 from edge.plan import Plan
-from edge.plan_rows import checkout_row, plan_groups
+from edge.plan_rows import (
+    ChangeNoun,
+    changes_in,
+    checkout_row,
+    environment_row,
+    local_changes_row,
+    plan_groups,
+    still_runs_row,
+)
 from edge.realm import reconcile
 from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
@@ -84,16 +92,22 @@ from edge.unit_plans import (
     unobserved,
 )
 from edge.waiting import fetched
-from hal_output import write_groups, write_row
+from hal_output import (
+    Glyph,
+    Verdict,
+    confirmed,
+    counted,
+    write_error,
+    write_groups,
+    write_row,
+    write_verdict,
+)
+from hal_output.command import Verb, command
 
-EnsureEnvironment = Callable[[Path], str | None]
-COMMAND = "edge apply --closed"
+EnsureEnvironment = Callable[[Path], environment.Settings | None]
 APPLY_LOCK = "apply.lock"
 _PRIVATE_DIRECTORY = 0o700
 _PRIVATE_FILE = 0o600
-# The emergency command's name; `emergency` owns the verb but imports this module, so it
-# cannot be imported here.
-EMERGENCY_STOP = "edge stop --all"
 
 
 class ApplyExit(IntEnum):
@@ -195,25 +209,28 @@ def apply_closed(
     realm_backup: reconcile.Backup | None = None,
     app_runtime: AppRuntime | None = None,
     rename: Rename = os.rename,
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    if terminal.refused_without_terminal(COMMAND):
+    started = clock()
+    if not terminal.at_terminal():
+        write_error(terminal.NEEDS_TERMINAL)
         return ApplyExit.REFUSED
     if refusal := checkout.not_live_checkout_line(repository, home or Path.home()):
-        _say(refusal)
+        write_error(refusal)
         return ApplyExit.CANNOT_PLAN
     try:
         lock = _take_apply_lock(state_directory)
     except OSError as error:
-        _say(f"cannot take {state_directory / APPLY_LOCK} ({error.strerror})")
+        write_error(f"cannot take {state_directory / APPLY_LOCK} ({error.strerror})")
         return ApplyExit.CANNOT_PLAN
     if lock is None:
-        _say(f"another `{COMMAND}` is running; nothing changed")
+        write_error(f"another `{command(Verb.APPLY)}` is running; nothing changed")
         return ApplyExit.REFUSED
     try:
         live = checkout.Git(repository, git)
         if not (_on_clean_main(live) and _environment_ready(repository, ensure_environment)):
             return ApplyExit.CANNOT_PLAN
-        if (origin := fetched(live, _say)) is None:
+        if (origin := fetched(live, write_error)) is None:
             return ApplyExit.CANNOT_PLAN
         write_row(checkout_row(origin))
         return _plan_and_apply(
@@ -227,21 +244,14 @@ def apply_closed(
             realm_backup or reconcile.Backup.installed(repository, _tell),
             app_runtime or AppRuntime.of(home or Path.home(), state_directory),
             rename,
+            lambda: clock() - started,
         )
     finally:
         os.close(lock)
 
 
-def _say(line: str) -> None:
-    print(f"{COMMAND}: {line}", file=sys.stderr)
-
-
-def _show(line: str) -> None:
-    print(f"{COMMAND}: {line}")
-
-
 def _tell(line: str) -> None:
-    print(f"{COMMAND}: {line}", flush=True)
+    print(line, flush=True)
 
 
 def _take_apply_lock(state_directory: Path) -> int | None:
@@ -267,10 +277,14 @@ def _take_apply_lock(state_directory: Path) -> int | None:
 
 def _on_clean_main(git: checkout.Git) -> bool:
     """True on a born `main` with nothing changed; else False, after saying why (#95 rules 5, 6)."""
-    refusals = checkout.not_clean_main(git)
-    for line in refusals:
-        _say(line)
-    return not refusals
+    if (refusal := checkout.not_clean_main(git)) is None:
+        return True
+    if refusal.paths:
+        write_row(local_changes_row(refusal.paths))
+        write_error(refusal.message, f"git -C {checkout.LIVE_CHECKOUT} status")
+    else:
+        write_error(refusal.message)
+    return False
 
 
 def _environment_ready(repository: Path, ensure_environment: EnsureEnvironment) -> bool:
@@ -279,10 +293,10 @@ def _environment_ready(repository: Path, ensure_environment: EnsureEnvironment) 
     try:
         written = ensure_environment(repository)
     except environment.EnvironmentRefused as refusal:
-        _say(str(refusal))
+        write_error(str(refusal))
         return False
     if written:
-        _say(written)
+        write_row(environment_row(written))
     return True
 
 
@@ -297,6 +311,7 @@ def _plan_and_apply(
     realm_backup: reconcile.Backup,
     app_runtime: AppRuntime,
     rename: Rename,
+    elapsed: Callable[[], float],
 ) -> int:
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
@@ -315,11 +330,19 @@ def _plan_and_apply(
                 break
             completed = [m.unit.key for m in missing]
     except CANNOT_PLAN_ERRORS as error:
-        print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
+        write_error(f"cannot plan, {error}")
         return ApplyExit.CANNOT_PLAN
     if planned.changes_nothing:
         _write_plan(planned)
-        print(f"{COMMAND}: nothing to change")
+        write_verdict(
+            Verdict(
+                Glyph.DONE,
+                "nothing to change",
+                (),
+                details=("units and apps checked",),
+                elapsed_seconds=elapsed(),
+            )
+        )
         return ApplyExit.APPLIED_OR_NOTHING
     return _confirm_and_switch(
         engine,
@@ -348,22 +371,27 @@ def _missing_setups(planned: Plan, repository: Path, check: setup.SetupCheck) ->
 
 
 def _refusal(missing: Sequence[MissingSetup], planned: Plan, setups_ran: bool) -> int | None:
-    """REFUSED when a unit or app `edge stop` keeps off still runs, or, after the setups ran, a unit
+    """REFUSED when a unit or app a stop keeps off still runs, or, after the setups ran, a unit
     is still not set up: none is started."""
-    lines = [
-        f"{COMMAND}: {item.unit.key} is switched off but still runs and is not set up; "
-        f"nothing switched; run `edge stop {item.unit.key}` again; {item.check_line}"
-        for item in missing
-        if item.kept_stopped
-    ] + [f"{COMMAND}: {line}" for line in planned.app_plans.switched_off_still_running]
-    if not lines and setups_ran:
-        lines = [
-            f"{COMMAND}: {item.unit.key} is not set up after the setups ran; "
-            f"nothing switched; run `{item.unit.setup}`, then `{COMMAND}` again; {item.check_line}"
-            for item in missing
-        ]
-    if lines:
-        print(*lines, sep="\n", file=sys.stderr)
+    still_running = [
+        *(still_runs_row(item.unit.key, item.check_line) for item in missing if item.kept_stopped),
+        *(still_runs_row(key, "") for key in planned.app_plans.switched_off_still_running),
+    ]
+    if still_running:
+        for row in still_running:
+            write_row(row)
+        write_error(
+            "switched off but still running, nothing switched",
+            command(Verb.STOP, still_running[0].subject),
+        )
+        return ApplyExit.REFUSED
+    if setups_ran and missing:
+        for item in missing:
+            write_error(
+                f"{item.unit.key} is not set up after the setups ran; nothing switched; "
+                f"run `{item.unit.setup}` first; {item.check_line}",
+                command(Verb.APPLY) if item is missing[-1] else None,
+            )
         return ApplyExit.REFUSED
     return None
 
@@ -377,8 +405,8 @@ def _ask_and_run_setups(
     """Ask for every setup first, then run them in turn; an exit code when the run ends here."""
     for item in missing:
         print(f"{item.unit.key} is not set up: {item.check_line}")
-        if not terminal.confirmed(f"run `{item.unit.setup}` now"):
-            _say(f"aborted, nothing changed; run `{item.unit.setup}` yourself or answer yes")
+        if not confirmed(f"run `{item.unit.setup}` now"):
+            write_error(f"aborted, nothing changed; run `{item.unit.setup}` yourself or answer yes")
             return ApplyExit.REFUSED
     for item in missing:
         if (exit_code := _run_one_setup(item, repository, check, run_setup)) is not None:
@@ -392,27 +420,28 @@ def _run_one_setup(
     check: setup.SetupCheck,
     run_setup: setup.SetupRunner,
 ) -> int | None:
-    command = item.unit.setup
+    setup_command = item.unit.setup
     try:
-        ran = run_setup(repository / str(command), repository)
+        ran = run_setup(repository / str(setup_command), repository)
     except OSError as error:
-        print(f"{COMMAND}: cannot start `{command}`, {error}", file=sys.stderr)
+        write_error(f"cannot start `{setup_command}`, {error}")
         return ApplyExit.CANNOT_PLAN
     if ran.interrupted:
-        print(file=sys.stderr)
-        _say(
-            f"interrupted during `{command}`; nothing switched; keys may already "
-            f"exist; run `{COMMAND}` again"
+        write_error(
+            f"interrupted during `{setup_command}`; nothing switched; keys may already exist",
+            command(Verb.APPLY),
+            fresh_line=True,
         )
         return ApplyExit.REFUSED
     if ran.exit_code:
-        _say(
-            f"`{command}` failed (exit {ran.exit_code}); nothing switched; keys may "
-            f"already exist; run `{COMMAND}` again"
+        write_error(
+            f"`{setup_command}` failed (exit {ran.exit_code}); nothing switched; keys may "
+            "already exist",
+            command(Verb.APPLY),
         )
         return ApplyExit.REFUSED
     if line := setup.not_set_up_line(item.unit, repository, check):
-        print(f"{COMMAND}: `{command}` ran, still not set up: {line}", file=sys.stderr)
+        write_error(f"`{setup_command}` ran, still not set up: {line}")
         return ApplyExit.REFUSED
     return None
 
@@ -450,7 +479,7 @@ class CorePhase:
     ) -> str | None:
         config = planned.fleet.config
         recreator = ServiceRecreator(
-            engine, marks, planned.read, config, self.watch, progress, _show
+            engine, marks, planned.read, config, self.watch, progress, print
         )
         followers = [
             plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
@@ -489,7 +518,7 @@ class CorePhase:
         except (compose.ComposeError, core.CoreError) as error:
             return f"could not {progress.step}, {error}"
         if recreates and len(recreates) == len(planned.core):
-            print(f"{COMMAND}: the core is current")
+            print("the core is current")
         return None
 
     def _stopped_meanwhile(
@@ -537,7 +566,7 @@ class CorePhase:
         if plan.service in followed:
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
             self.record.write(plan.service, plan.digests, followed)
-        print(f"{COMMAND}: {plan.recreated(followed)}")
+        print(plan.recreated(followed))
         return None
 
     def record_switched_on(
@@ -575,9 +604,9 @@ class CorePhase:
         ):  # fmt: skip
             match proof:
                 case barrier.Proven(unit):
-                    print(f"{COMMAND}: the barrier of {unit} is proven")
+                    print(f"the barrier of {unit} is proven")
                 case barrier.NoHost(unit):
-                    print(f"{COMMAND}: {unit}: no host behind Traefik, so no barrier")
+                    print(f"{unit}: no host behind Traefik, so no barrier")
                 case barrier.Unproven():
                     unproven.append(proof)
         if not unproven:
@@ -590,7 +619,7 @@ class CorePhase:
             failures = "; ".join(f"{proof.unit}: {proof.failure}" for proof in unproven)
         return (
             f"{barriers} not proven after the {service} recreate ({failures}): {units} may be "
-            f"reachable through Traefik; to close the tunnel now: {EMERGENCY_STOP}"
+            f"reachable through Traefik; to close the tunnel now: {command(Verb.OFFLINE)}"
         )
 
 
@@ -622,15 +651,14 @@ def _observe_and_record(
     return mismatched
 
 
-def _apply_realm(
+def _realm_step(
     engine: compose.Compose,
     planned: Plan,
     marks: switches.Switches,
     core_phase: CorePhase,
     backup: reconcile.Backup,
-) -> bool:
-    """The realm step after the unit switches; says its lines and whether it ended partial."""
-    realm = reconcile.Realm(
+) -> reconcile.Realm:
+    return reconcile.Realm(
         engine,
         reconcile.Observer(engine),
         backup,
@@ -640,11 +668,21 @@ def _apply_realm(
         marks,
         planned.read.get(reconcile.REALM_UNIT),
     )
-    result = realm.run(planned.realm)
+
+
+def _apply_realm(
+    engine: compose.Compose,
+    planned: Plan,
+    marks: switches.Switches,
+    core_phase: CorePhase,
+    backup: reconcile.Backup,
+) -> bool:
+    """The realm step after the unit switches; says its lines and whether it ended partial."""
+    result = _realm_step(engine, planned, marks, core_phase, backup).run(planned.realm)
     for line in result.lines:
-        print(f"{COMMAND}: {line}")
+        print(line)
     if result.failure:
-        print(f"{COMMAND}: partial, {result.failure}; run `{COMMAND}` again", file=sys.stderr)
+        write_error(f"partial, {result.failure}", command(Verb.APPLY))
     return bool(result.failure)
 
 
@@ -653,16 +691,15 @@ def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> 
     failed = False
     for plan, failure in planned.app_plans.run(marks, progress):
         if failure:
-            advice = retry_advice(plan.app.key, failure, COMMAND)
-            print(f"{COMMAND}: partial, {failure}; {advice}", file=sys.stderr)
+            write_error(f"partial, {failure}", retry_command(plan.app.key, failure))
             failed = True
         else:
-            print(f"{COMMAND}: {plan.app.key} is on at {plan.release.tag}")
+            print(f"{plan.app.key} is on at {plan.release.tag}")
     return failed
 
 
 def _say_aborted(completed_setups: Sequence[str]) -> None:
-    _say(
+    write_error(
         f"aborted, setup of {', '.join(completed_setups)} completed; nothing switched"
         if completed_setups
         else "aborted, nothing changed"
@@ -670,13 +707,18 @@ def _say_aborted(completed_setups: Sequence[str]) -> None:
 
 
 def _say_interrupted(progress: Progress, interruption: KeyboardInterrupt) -> None:
-    print(file=sys.stderr)
-    _say(
-        f"interrupted while changing {progress.unit} ({progress.step}); "
-        f"its state may be partial, run `{COMMAND}` to see"
+    notes = getattr(interruption, "__notes__", ())
+    write_error(
+        "; ".join(
+            (
+                f"interrupted while changing {progress.unit} ({progress.step}); "
+                "its state may be partial",
+                *notes,
+            )
+        ),
+        command(Verb.APPLY),
+        fresh_line=True,
     )
-    for note in getattr(interruption, "__notes__", ()):
-        _say(note)
 
 
 def _write_plan(planned: Plan) -> None:
@@ -692,9 +734,13 @@ def _confirm_and_switch(
     completed_setups: Sequence[str],
     realm_backup: reconcile.Backup,
 ) -> int:
-    _show("the plan")
+    print("the plan")
     _write_plan(planned)
-    if not terminal.confirmed("apply exactly this plan"):
+    if not (changes := changes_in(planned)):  # only an unreadable realm: no step would act
+        result = _realm_step(engine, planned, marks, core_phase, realm_backup).run(planned.realm)
+        write_error(str(result.failure), command(Verb.APPLY))
+        return ApplyExit.REFUSED
+    if not confirmed(f"apply {counted(changes, ChangeNoun.CHANGE)}"):
         _say_aborted(completed_setups)
         return ApplyExit.REFUSED
     plans, read = planned.plans, planned.read
@@ -707,7 +753,7 @@ def _confirm_and_switch(
             or planned.legal.write(progress)
             or core_phase.run(engine, planned, marks, progress)
         ):
-            _say(f"partial, {failure}; no unit switched; run `{COMMAND}` again")
+            write_error(f"partial, {failure}; no unit switched", command(Verb.APPLY))
             return ApplyExit.REFUSED
         for plan in changes:
             if since := switch(engine, plan, progress, marks, read):
@@ -718,7 +764,7 @@ def _confirm_and_switch(
         realm_failed = _apply_realm(engine, planned, marks, core_phase, realm_backup)
         apps_failed = _apply_apps(planned, marks, progress)
     except (compose.ComposeError, switches.SwitchError, core.CoreError) as error:
-        _say(f"partial, {progress.unit}: could not {progress.step}, {error}")
+        write_error(f"partial, {progress.unit}: could not {progress.step}, {error}")
         return ApplyExit.REFUSED
     except KeyboardInterrupt as interruption:
         _say_interrupted(progress, interruption)
@@ -733,14 +779,14 @@ def _report_switched(
     later_steps_failed: bool,
 ) -> int:
     for unit, since in withheld.items():
-        _say(
+        write_error(
             f"partial, {unit} was switched off meanwhile "
             f"(since {switches.describe_since(since)}); not started"
         )
     for plan in mismatched:
-        _say(f"partial, {plan.unit.key} is not {plan.action} after the change")
+        write_error(f"partial, {plan.unit.key} is not {plan.action} after the change")
     if mismatched or withheld or later_steps_failed:
         return ApplyExit.REFUSED
     for plan in changes:
-        print(f"{COMMAND}: {plan.unit.key} is {plan.action}")
+        print(f"{plan.unit.key} is {plan.action}")
     return ApplyExit.APPLIED_OR_NOTHING

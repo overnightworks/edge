@@ -28,7 +28,7 @@ def tree(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def ensure(tree: Path, group_lookup=docker_group) -> str | None:
+def ensure(tree: Path, group_lookup=docker_group) -> environment.Settings | None:
     return environment.ensure(tree, group_lookup)
 
 
@@ -46,7 +46,7 @@ def test_a_missing_file_is_written_with_the_zone_and_the_docker_gid_privately(tr
     assert written.splitlines()[0].startswith("#")
     assert written.endswith(CORRECT)
     assert stat.S_IMODE((tree / ".env").stat().st_mode) == 0o600
-    assert said == f"wrote {tree / '.env'}: EDGE_DOMAIN={ZONE}, DOCKER_GID={DOCKER_GID}"
+    assert said == environment.Settings(ZONE, str(DOCKER_GID))
 
 
 def test_a_written_file_is_accepted_by_the_next_run_without_a_line(tree):
@@ -94,7 +94,7 @@ def test_a_differing_file_is_named_with_both_values_and_never_rewritten(tree, co
 
     assert line in said
     assert "but edge derives" in said
-    assert said.endswith("delete it and `edge apply --closed` writes it again")
+    assert said.endswith("delete it and `hal apply` writes it again")
     assert (tree / ".env").read_text() == content
 
 

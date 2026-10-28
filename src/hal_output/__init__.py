@@ -1,5 +1,6 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of a row, a verdict, an error and the indented detail lines under a row.
+to show, and the form of a row, a verdict, an error, the indented detail lines under a row and the
+`yes` that confirms an action.
 `hal_output.command` owns the program name. It imports nothing else of this repository."""
 
 import os
@@ -10,6 +11,7 @@ from datetime import datetime
 from enum import Enum, StrEnum
 from typing import TextIO
 
+CONFIRMATION = "yes"
 DETAIL_INDENT = "    "
 SUBJECT_WIDTH = 14
 EVENT_WIDTH = 14
@@ -268,3 +270,13 @@ def write_detail(*lines: str, tone: Tone = Tone.PLAIN) -> None:
     for line in lines:
         text = f"{DETAIL_INDENT}{printable(line)}"
         print(text if tone.value is None else _styled(text, tone.value, stdout))
+
+
+def confirmed(purpose: str) -> bool:
+    """Ask `Type yes to <purpose>: ` on stdout and return whether the answer is exactly `yes`: no
+    trimming, no case folding; a closed stdin is a no, and Ctrl-C is not caught."""
+    prompt = f"Type {_styled(CONFIRMATION, _BOLD, sys.stdout)} to {printable(purpose)}: "
+    try:
+        return input(prompt) == CONFIRMATION
+    except EOFError:
+        return False
