@@ -1,4 +1,4 @@
-# A throwaway Ubuntu 24.04 with systemd as PID 1, dbus and polkitd, for the container proof of `home setup`'s
+# A throwaway Ubuntu 26.04 with systemd as PID 1, dbus and polkitd, for the container proof of `home setup`'s
 # system step (#40). cloudflared comes from Cloudflare's apt repository; its config names a fake tunnel id, and
 # the credential beside it is a dummy that only lets the unit try to start. No real secret is ever in here.
 # python3 and python3-apt supply Ansible's interpreter and apt module binding in this fixture.
@@ -7,8 +7,10 @@
 # logs a fatal every night) and kerneloops are Ubuntu's own packages as the PC has them, for the cells R0-R7 (#422): the
 # apply purges rsyslog, and the proof checks what that leaves. docker.io is the engine itself, with the root:docker socket the
 # agents' refusal cells (A1-8, A1-9) need and the cells DK1-DK7 drive; docker-compose-v2 is the `docker compose` of DK6;
-# busybox-static makes the rootfs it imports, so no image is pulled at proof time. The base stays 24.04 until the system step runs on 26.04's sudo-rs (#374).
-FROM ubuntu:24.04
+# busybox-static makes the rootfs it imports, so no image is pulled at proof time.
+# 26.04 makes sudo-rs the default `sudo`. The image carries both, and the `sudo` alternative is pinned to classic sudo
+# (/usr/bin/sudo.ws), the variant the system step runs under today; sudo-rs stays installed, unused.
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Ansible dates the cache by its success stamp or the lists directory, so empty indexes must also be stale.
@@ -34,12 +36,15 @@ RUN echo "postfix postfix/main_mailer_type select No configuration" | debconf-se
         python3-apt \
         rsyslog \
         sudo \
+        sudo-rs \
         systemd \
         systemd-sysv \
+    && update-alternatives --set sudo /usr/bin/sudo.ws \
     && mkdir -p --mode=0755 /usr/share/keyrings \
     && curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
         --output /usr/share/keyrings/cloudflare-main.gpg https://pkg.cloudflare.com/cloudflare-main.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared noble main" \
+    # Cloudflare's repository has no 26.04 codename (404 for resolute); `any` is the one it serves for every release.
+    && echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
         > /etc/apt/sources.list.d/cloudflared.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends cloudflared \

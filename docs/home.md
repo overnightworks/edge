@@ -679,7 +679,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
   the cells prove that a refused run and the dry run delete nothing, that the purge and the deletion are complete without
   touching the installer's logs, that mail lines stay in the journal, that a retry converges, that kerneloops restarts without
-  `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 24.04, so the proof does not run
+  `kern.log`, and that `apt install rsyslog` restores a working package. The image is Ubuntu 26.04, so the proof does not run
   the removal's maintainer scripts of the release on the PC nor its systemd; the PC's own facts cover that.
   The container runs a real Docker engine (its images and snapshots live in anonymous volumes that `run.sh` removes with the container);
   cell DK1 proves, before the first apply, that it answers with the default `json-file` log driver, runs an imported rootfs
@@ -687,7 +687,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   backup), DK3 the refusals and a Docker that does not answer, DK4 the dry run and the restart on need only, DK5 that a
   running `unless-stopped` container comes back, one stopped by hand stays down and both keep `json-file`, DK6 that a
   container created afterwards is read by `docker logs`, `docker compose logs` and `journalctl CONTAINER_NAME=`, and DK7 the
-  rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the 24.04 package's
+  rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the 26.04 package's
   Docker without a GPU, not the PC's. The agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
 ### Das Mail-Konto von `hal check`
