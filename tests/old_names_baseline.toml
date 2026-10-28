@@ -1,5 +1,5 @@
 [edge-verb]
-"docs/architecture.md" = 116
+"docs/architecture.md" = 9
 "docs/design/hal-output.html" = 18
 "src/edge/barrier.py" = 2
 "src/edge/environment.py" = 1
