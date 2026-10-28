@@ -6,10 +6,9 @@ import fnmatch
 import json
 import os
 import re
-import shlex
 import stat
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -20,9 +19,9 @@ import pytest
 from hal import check_commands, secrets_commands, setup_commands
 from hal import cli as hal_cli
 from hal import config as hal_config
-from hal.grammar import ExitCode
+import host_support
 from terminal_support import type_at_prompt
-from hal.workstation import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
+from hal.workstation import backup_check, logs_check, platform_check, secrets_view, system_step
 from hal.workstation import ports as home_ports
 from hal.workstation.secrets_setup import Boundaries as SecretsBoundaries
 from hal.workstation.secrets_setup import Terminal as SecretsTerminal
@@ -82,12 +81,6 @@ verify = "gh auth status"
 """
 
 
-@pytest.fixture(autouse=True)
-def empty_log_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The logs check looks at /var/log, which this machine fills; the tests look at an empty directory."""
-    monkeypatch.setattr(check, "LOG_DIRECTORY", tmp_path / "var-log")
-
-
 class FakeDisk:
     """The disk the platform check reads; the free share is the scenario, never this machine's."""
 
@@ -105,34 +98,6 @@ class FakeDisk:
         return platform_check.DiskSpace(self.TOTAL, round(self.TOTAL * self.free_share))
 
 
-@pytest.fixture
-def fake_disk() -> FakeDisk:
-    """A runner's disk may be over 90 % full, and a nearly full disk is an action: a `hal check` test hands in this roomy fake."""
-    return FakeDisk()
-
-
-@pytest.fixture(autouse=True)
-def stand_in_tunnel_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """The tunnel config at /etc names this machine's tunnel; the tests read a stand-in naming a test tunnel."""
-    config = tmp_path_factory.mktemp("etc-cloudflared") / "config.yml"
-    config.write_text(f"tunnel: {TEST_TUNNEL_ID}\n")
-    monkeypatch.setattr(tunnel_config, "TUNNEL_CONFIG", config)
-    return config
-
-
-@pytest.fixture
-def use_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Path]:
-    """Points `hal secrets` at a manifest written from the given text."""
-
-    def use(text: str) -> Path:
-        path = tmp_path / "secrets_manifest.toml"
-        path.write_text(text)
-        monkeypatch.setattr(secrets_view, "MANIFEST_PATH", path)
-        return path
-
-    return use
-
-
 def plant_secrets(home: Path) -> None:
     """Every place the active manifest names for a live entry gets a fake secret, with the modes a tidy ~/.secrets keeps."""
     for entry in load_manifest(secrets_view.MANIFEST_PATH):
@@ -144,25 +109,6 @@ def plant_secrets(home: Path) -> None:
     secrets_dir = Layout(home).secrets_dir
     for directory in (secrets_dir, *(path for path in secrets_dir.rglob("*") if path.is_dir())):
         directory.chmod(0o700)
-
-
-@pytest.fixture
-def furnish_clean_home(use_manifest: Callable[[str], Path]) -> Callable[[Path], Path]:
-    """Makes a home directory one with nothing to report: the README knows every entry and every secret of the test manifest is in place."""
-
-    def furnish(home: Path) -> Path:
-        use_manifest(TEST_MANIFEST)
-        home.mkdir(exist_ok=True)
-        (home / "README.md").write_text(HOME_README)
-        plant_secrets(home)
-        return home
-
-    return furnish
-
-
-@pytest.fixture
-def clean_home(tmp_path: Path, furnish_clean_home: Callable[[Path], Path]) -> Path:
-    return furnish_clean_home(tmp_path / "home")
 
 
 PASSWORD_CANARY = "CANARY-SMTP-PASSWORD-9f3"
@@ -275,11 +221,6 @@ class RecordingRunner:
         return [call for call in self.calls if call[0] == "systemd-run"]
 
 
-@pytest.fixture
-def runner() -> RecordingRunner:
-    return RecordingRunner()
-
-
 class RunnerWithRealGitAndQuality(RecordingRunner):
     """The hook check reads git and the stub quality, so these two run for real; every other tool stays as in RecordingRunner."""
 
@@ -307,11 +248,6 @@ class ProbeThatCannotStart(FakeProbe):
 
     def __call__(self, argv: Sequence[str]) -> int | None:
         raise PermissionError(argv[0])
-
-
-@pytest.fixture
-def probe() -> FakeProbe:
-    return FakeProbe()
 
 
 # What the stub scanner refuses; assembled from parts, as every fake key in these tests is.
@@ -367,7 +303,7 @@ esac
 """
 
 
-def _write_executable(path: Path, text: str) -> None:
+def write_executable(path: Path, text: str) -> None:
     path.write_text(text)
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
@@ -437,44 +373,6 @@ class Sandbox:
         return SecretsBoundaries(terminal, never, never)
 
 
-@pytest.fixture
-def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
-    home = tmp_path / "home"
-    home.mkdir()
-    stub_bin = tmp_path / "stub-bin"
-    stub_bin.mkdir()
-    _write_executable(stub_bin / "uv", STUB_UV)
-    _write_executable(tmp_path / "stub-quality", STUB_QUALITY)
-    global_git_config = tmp_path / "global-gitconfig"
-    global_git_config.write_text("[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n")
-    uv_calls = tmp_path / "uv-calls"
-    unit_directory = tmp_path / "checkout-units"
-    unit_directory.mkdir()
-    for name, value in {
-        "HOME": str(home),
-        "XDG_CONFIG_HOME": str(home / ".config"),
-        "GIT_CONFIG_GLOBAL": str(global_git_config),
-        "GIT_CONFIG_SYSTEM": os.devnull,
-        "PATH": f"{stub_bin}{os.pathsep}{os.environ['PATH']}",
-        "STUB_QUALITY": str(tmp_path / "stub-quality"),
-        "STUB_UV_LOG": str(uv_calls),
-        "STUB_RECEIPT_GIT": RECORDED_RECEIPT_GIT,
-    }.items():
-        monkeypatch.setenv(name, value)
-    for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
-        monkeypatch.delenv(name, raising=False)
-    # A real ~/git/edge in the sandbox home would be a repository the hook check reports on.
-    monkeypatch.setattr(home_ports, "edge_units_directory", lambda _layout: unit_directory)
-    # The packaged manifest names secrets this sandbox home lacks; the secrets step of `hal setup` looks at none unless a test names some.
-    empty_manifest = tmp_path / "empty-secrets-manifest.toml"
-    empty_manifest.write_text("secret = []\n")
-    monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
-    system = FakeSystem(FakePlaybook())
-    monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
-    monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
-    return Sandbox(home, global_git_config, uv_calls, system)
-
-
 class RunnerWithCleanLogs(RunnerWithRealGitAndQuality):
     """The logs check reads docker and journalctl; this machine runs no container and its journal is young."""
 
@@ -505,32 +403,12 @@ def write_backup_status(home: Path, state: str = "ok", last_backup: datetime | N
     status_file.write_text(json.dumps(document))
 
 
-@pytest.fixture
-def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
-    monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
-    write_backup_status(clean_home)
-    assert run_hal_setup(home=clean_home, secrets_setup_boundaries=sandbox.secrets_boundaries) == ExitCode.OK
-
-
 def write_hal_config(home: Path, text: str) -> Path:
     """Write hal's settings file under `home`, at the path `hal.config` reads."""
     config_file = hal_config.config_path(home)
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(text)
     return config_file
-
-
-def write_host_shims(directory: Path, listeners: str, docker_script: str) -> None:
-    """The `docker` and `ss` the exposure scan runs: no container and no listener unless a test says so."""
-    directory.mkdir(exist_ok=True)
-    for name, script in {
-        "docker": docker_script,
-        "ss": f"printf %s {shlex.quote(listeners)}",
-    }.items():
-        shim = directory / name
-        shim.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
-        shim.chmod(0o755)
 
 
 def home_check(
@@ -549,7 +427,7 @@ def home_check(
         return home_ports.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
 
     shims = home.parent / "host-shims"
-    write_host_shims(shims, listeners, docker_script)
+    host_support.write_host_shims(shims, listeners, docker_script)
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(check_commands, "build_layout_and_ports", build_ports)
         patch.setenv("PATH", f"{shims}{os.pathsep}{os.environ['PATH']}")
@@ -625,11 +503,6 @@ def restarting_containers(runner, *names: str) -> None:
 
 def no_container_restarts(runner) -> None:
     runner.platform_listing = ""
-
-
-@pytest.fixture
-def mail_stub(clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MailStub:
-    return set_up_mail(clean_home, tmp_path, monkeypatch)
 
 
 def message_of(sent: SentMail) -> email.message.EmailMessage:

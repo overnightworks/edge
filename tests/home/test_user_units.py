@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import Sandbox, run_hal_setup
+from workstation_support import Sandbox, run_hal_setup
 
 from hal.grammar import ExitCode
 from hal.workstation import ports

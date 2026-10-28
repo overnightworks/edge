@@ -672,24 +672,6 @@ def test_exits_3_when_the_allow_list_is_missing(tmp_path, capsys):
     assert "cannot read" in capsys.readouterr().err
 
 
-@pytest.fixture
-def fake_docker(monkeypatch, tmp_path):
-    """A `docker` first on PATH answering `ps` and `inspect` with the script; `ss` is silent."""
-
-    def install_command(name: str, script: str) -> None:
-        executable = tmp_path / "bin" / name
-        executable.parent.mkdir(exist_ok=True)
-        executable.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
-        executable.chmod(0o755)
-
-    def install(script: str) -> None:
-        install_command("docker", script)
-        install_command("ss", "exit 0")
-        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
-
-    return install
-
-
 def run_against_real_host_commands(tmp_path) -> int:
     allow_list = tmp_path / "allow-list.toml"
     allow_list.write_text("", encoding="utf-8")
@@ -705,11 +687,11 @@ def process_is_running(pid: int) -> bool:
 
 
 def test_exits_3_naming_the_command_that_does_not_answer_in_time_and_kills_it(
-    fake_docker, monkeypatch, tmp_path, capsys
+    fake_host, monkeypatch, tmp_path, capsys
 ):
     monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
     pid_file = tmp_path / "docker.pid"
-    fake_docker(f'echo $$ > "{pid_file}"\nexec sleep 30')
+    fake_host(docker_script=f'echo $$ > "{pid_file}"\nexec sleep 30')
 
     assert run_against_real_host_commands(tmp_path) == 3
     assert "docker ps did not answer within 0.2 s" in capsys.readouterr().err
@@ -720,9 +702,9 @@ def test_exits_3_naming_the_command_that_does_not_answer_in_time_and_kills_it(
     assert not process_is_running(hung_pid)
 
 
-def test_names_ss_as_ss_when_it_does_not_answer_in_time(fake_docker, monkeypatch, tmp_path, capsys):
+def test_names_ss_as_ss_when_it_does_not_answer_in_time(fake_host, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(host, "HOST_COMMAND_TIMEOUT_SECONDS", 0.2)
-    fake_docker("exit 0")
+    fake_host()
     (tmp_path / "bin" / "ss").write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
 
     assert run_against_real_host_commands(tmp_path) == 3
@@ -734,9 +716,9 @@ SHORT_INSPECT_ANSWERS = {"empty list": "[]", "one of two": '[{"Name": "/a"}]'}
 
 @pytest.mark.parametrize("answer", SHORT_INSPECT_ANSWERS.values(), ids=SHORT_INSPECT_ANSWERS.keys())
 def test_exits_3_when_docker_inspect_answers_fewer_containers_than_docker_ps_listed(
-    fake_docker, tmp_path, capsys, answer
+    fake_host, tmp_path, capsys, answer
 ):
-    fake_docker(f'[ "$1" = ps ] && printf "aaa\\nbbb\\n" || echo \'{answer}\'')
+    fake_host(docker_script=f'[ "$1" = ps ] && printf "aaa\\nbbb\\n" || echo \'{answer}\'')
 
     assert run_against_real_host_commands(tmp_path) == 3
     assert "docker ps listed 2" in capsys.readouterr().err

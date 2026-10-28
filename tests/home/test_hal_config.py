@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 
-from conftest import write_hal_config
+from workstation_support import write_hal_config
 
 from hal import config as hal_config
 from hal.workstation.check import CheckSettings

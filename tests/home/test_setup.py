@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock, Sandbox, run_captured_hal_setup, run_hal_setup
+from workstation_support import FakeClock, Sandbox, run_captured_hal_setup, run_hal_setup
 
 import hal.workstation
 from hal import cli as hal_cli

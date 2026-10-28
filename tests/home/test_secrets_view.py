@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 from secrets_support import run_wizard
-from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
+from workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
 
 from hal.workstation import secrets_view
 from hal.workstation.secrets_setup import Boundaries, Terminal, WalkEnd

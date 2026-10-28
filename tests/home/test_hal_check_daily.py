@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
-from conftest import FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, restarting_containers, write_hal_config
+from workstation_support import FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, restarting_containers, write_hal_config
 
 from hal import cli as hal_cli
 from hal import config as hal_config

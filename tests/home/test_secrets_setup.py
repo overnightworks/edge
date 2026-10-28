@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, symlinked_folder_fix
+from workstation_support import FAKE_SECRET_VALUE, symlinked_folder_fix
 from secrets_support import FakeSync, FakeTerminal, guided_boundaries, run_wizard
 
 from hal.workstation import secrets_setup

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
+from workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
 from secrets_support import FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
 from test_secrets_view import findings_of
 

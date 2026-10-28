@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import RunnerWithCleanLogs, Sandbox, home_check, message_of
+from workstation_support import RunnerWithCleanLogs, Sandbox, home_check, message_of
 
 from hal.stack import switches
 from hal.workstation.layout import Layout
