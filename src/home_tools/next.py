@@ -58,17 +58,11 @@ class Source:
     shows_error: str
 
 
-def _as_command(text: str) -> str:
-    """An owner quotes a whole command in backticks; the step shows it bare."""
-    inner = text.removeprefix("`").removesuffix("`")
-    return inner if text != inner and "`" not in inner else text
-
-
 def _setup_apply_step(ports: Ports, expected: str, why: str = "") -> OperatorStep:
     """`hal setup --apply` runs every step, so whichever is open, it asks the operator for sudo in the own window; not the agent."""
     asks_for_sudo = setup.apply_asks_for_sudo(ports)
     return OperatorStep(
-        _as_command(hook_check.SETUP_APPLY),
+        secrets_setup.as_command(hook_check.SETUP_APPLY),
         OWN_TERMINAL if asks_for_sudo else ANY_TERMINAL,
         f"{expected}; it asks once for sudo" if asks_for_sudo else expected,
         why,
@@ -94,7 +88,7 @@ def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
         where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
         yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
-        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} {Presence.PRESENT.value}")
+        yield OperatorStep(secrets_setup.as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} {Presence.PRESENT.value}")
 
 
 def _cleared(finding: SecretFinding) -> str:
@@ -104,7 +98,7 @@ def _cleared(finding: SecretFinding) -> str:
 def _fix_steps(fixable: list[SecretFinding]) -> Iterator[OperatorStep]:
     """Every finding that names its fix is a step; what blocks the wizard first, since it stores nothing below such a folder."""
     for finding in sorted(fixable, key=lambda finding: finding.rule not in secrets_view.SETUP_BLOCKERS):
-        command = _as_command(finding.fix)
+        command = secrets_setup.as_command(finding.fix)
         where = ANY_TERMINAL if command != finding.fix else BY_HAND
         yield OperatorStep(command, where, _cleared(finding))
 
@@ -150,7 +144,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
     yield from _fix_steps(fixable)
     yield from _missing_secret_steps(entries_found_by(FindingRule.MISSING))
     for entry in entries_found_by(FindingRule.VERIFICATION_FAILED):
-        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} {Verification.PASSED.value}")
+        yield OperatorStep(secrets_setup.as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} {Verification.PASSED.value}")
     for entry in entries_found_by(FindingRule.REVOCATION_UNCONFIRMED):
         yield OperatorStep(entry.revoke_url, f"Browser, {entry.name} widerrufen", "das Token steht dort nicht mehr")
     for findings in without_fix.values():
@@ -164,7 +158,7 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
         if finding.fix == hook_check.SETUP_APPLY:
             yield _setup_apply_step(ports, cleared)
         else:
-            yield OperatorStep(_as_command(finding.fix), ANY_TERMINAL, cleared)
+            yield OperatorStep(secrets_setup.as_command(finding.fix), ANY_TERMINAL, cleared)
 
 
 # Most blocking first: a folder state blocks the wizard, the secrets block edge, the hook guards every commit.
