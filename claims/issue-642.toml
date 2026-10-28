@@ -1,7 +1,0 @@
-claim_id = "33a72f753caa4e00bf9627f97650af65"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "d52c4887c2808e937f592e3855cff9823496f8e3"
-branch = "claude/issue-642-architecture-every-command-hal"
-scope = ["docs/architecture.md", "tests/old_names_baseline.toml"]
-opened_commit = "334efc4e35fae8622d2985dcbc970c64c6b9a041"
