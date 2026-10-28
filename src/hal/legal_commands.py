@@ -6,11 +6,11 @@ from datetime import date
 from enum import StrEnum
 from pathlib import Path
 
-from edge import compose, legal_step
-from edge.legal_section import LegalError
 from hal.grammar import Asks, Command, ExitCode
-from hal_output import Glyph, Row, write_error, write_row
-from hal_output.command import Verb, command
+from hal.output import Glyph, Row, write_error, write_row
+from hal.output.command import Verb, command
+from hal.stack import compose, legal_step
+from hal.stack.legal_section import LegalError
 
 
 class LegalEvent(StrEnum):

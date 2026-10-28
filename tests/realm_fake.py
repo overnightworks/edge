@@ -14,7 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from edge.realm import new_digest_key
+from hal.stack.realm import new_digest_key
 
 SECRET = "the-config-cli-secret"
 TOKEN = "an-access-token-from-the-fake"

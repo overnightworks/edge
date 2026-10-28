@@ -14,8 +14,8 @@ import pytest
 from conftest import FAKE_SECRET_VALUE, symlinked_folder_fix
 from secrets_support import FakeSync, FakeTerminal, guided_boundaries, run_wizard
 
-from home_tools import secrets_setup
-from home_tools.secrets_setup import (
+from hal.workstation import secrets_setup
+from hal.workstation.secrets_setup import (
     CLOUDFLARE_TOKEN_PAGE,
     NO_BROWSER,
     OPEN_PROMPT,
@@ -26,8 +26,8 @@ from home_tools.secrets_setup import (
     WalkEnd,
     github_page,
 )
-from home_tools.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
-from home_tools.secrets_view import SecretEntry, TokenSource, load_manifest
+from hal.workstation.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
+from hal.workstation.secrets_view import SecretEntry, TokenSource, load_manifest
 
 # Two guided tokens, one generated passphrase, in the order the walk must keep.
 SETUP_MANIFEST = """\

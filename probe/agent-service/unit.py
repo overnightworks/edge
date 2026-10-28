@@ -68,7 +68,7 @@ from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
 from signer import SignerProbe
 
-from edge import compose
+from hal.stack import compose
 
 SERVICE = Target.SERVICE.compose_service
 REFUSAL_SECONDS = 60

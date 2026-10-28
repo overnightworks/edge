@@ -13,7 +13,7 @@ routing name that is not valid, by design of the `edge.name: PROBE` label that k
 
 Before each `compose up` the probe writes appkit's tokens and fonts into this checkout, where the
 themes read them (`appkit-<version>/` beside each theme's `css/`), through
-`uv run --project <checkout> python -m edge.appkit_step <checkout>`. Any interpreter starts the probe, but
+`uv run --project <checkout> python -m hal.stack.appkit_step <checkout>`. Any interpreter starts the probe, but
 `uv` must be on `PATH`; a failing write ends the probe before the stack exists.
 
 An exported `DOCKER_GID` overrides the host's `docker` group id in the compose environment; unset
@@ -77,7 +77,7 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   meets the TOTP enrolment and then the passkey page at the browser sign-in, and a second run asks
   nothing and adds no user. Its typed password joins proof 7's sweep, and master's admin events
   are off. Passkey registration itself is not driven. Proof 12 (#242) drives the realm step of
-  `hal apply` (`edge.realm.reconcile`) against this stack: its Compose, a repository of the realm
+  `hal apply` (`hal.stack.realm.reconcile`) against this stack: its Compose, a repository of the realm
   files, and `hal` (from the checkout's `.venv` or the PATH) under a scratch HOME with its
   own `apps.toml` for this stack's Keycloak database. It holds that a first step backs up, proves
   the restore of that snapshot and applies, and a second plan is quiet and its step makes no

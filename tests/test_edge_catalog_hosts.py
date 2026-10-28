@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edge import catalog
+from hal.stack import catalog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = PROJECT_ROOT / "external" / "tests" / "fixtures"

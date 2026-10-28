@@ -16,8 +16,8 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
-from edge.realm import observe
-from edge.realm.declared import declared_realm
+from hal.stack.realm import observe
+from hal.stack.realm.declared import declared_realm
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -232,7 +232,7 @@ def test_the_signing_key_and_the_ca_root_are_compose_secrets_from_the_manifests_
     """E3, B1, T1: `key_file` and `ca_file` are the service's secret targets, and each secret's
     source is the path the secrets manifest names for it, so the folder is never mounted."""
     compose = yaml.safe_load((ROOT / "compose.yaml").read_text())
-    manifest = tomllib.loads((ROOT / "src/home_tools/secrets_manifest.toml").read_text())
+    manifest = tomllib.loads((ROOT / "src/hal/workstation/secrets_manifest.toml").read_text())
     paths = {entry["name"]: entry["paths"] for entry in manifest["secret"]}
     key_secret, ca_secret = "agent_service_signing_key", "step_ca_root_certificate"
 

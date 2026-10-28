@@ -7,8 +7,8 @@ from pathlib import Path
 import pytest
 from git_support import hal_program, run_hal
 
-from edge import legal_section
 from hal import cli
+from hal.stack import legal_section
 
 ROOT = Path(__file__).resolve().parents[1]
 KEY = "hopin"

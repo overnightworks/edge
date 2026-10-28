@@ -37,7 +37,7 @@ from test_edge_apply import (
 )
 from test_edge_plan_rows import detail_lines, find_row, plain
 
-from edge.plan_rows import LegalEvent
+from hal.stack.plan_rows import LegalEvent
 
 FLEET = (
     f"cloudflare:\n  zone: {ZONE}\nservices:\n"

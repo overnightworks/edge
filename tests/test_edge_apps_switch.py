@@ -23,7 +23,7 @@ from test_edge_apps import (
     world,  # noqa: F401 the fixture, requested by name below
 )
 
-from edge import apps, barrier, catalog, switches
+from hal.stack import apps, barrier, catalog, switches
 
 DOMAIN = "edge-fixture.invalid"
 BARRIER = "the barrier a stop wrote\n"

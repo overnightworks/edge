@@ -10,9 +10,9 @@ import pytest
 from git_support import SOURCE
 
 from hal import cli
-from hal_output.command import PROGRAM, Verb, command
+from hal.output.command import PROGRAM, Verb, command
 
-OWNER = SOURCE / "hal_output" / "command.py"
+OWNER = SOURCE / "hal" / "output" / "command.py"
 HAND_WRITTEN_COMMAND = re.compile(
     rf"(?<![\w/.\-]){re.escape(PROGRAM)} (?:(?:{'|'.join(Verb)})\b|--)"
 )

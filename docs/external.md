@@ -1,6 +1,6 @@
 # Externe Dienste als Code
 
-Referenz fuer den Betreiber und fuer Entwickler von `external/` und `src/edge/external/`. Sie nennt die
+Referenz fuer den Betreiber und fuer Entwickler von `external/` und `src/hal/stack/external/`. Sie nennt die
 Befehle und was sie garantieren; `hal apply --help` und der Code halten den Rest. Wo diese Schicht in
 der Plattform liegt: [architecture.md](architecture.md). Der lokale Teil von `hal apply` und die
 Publish-Phase: [stack.md](stack.md).

@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 
-from hal_output.command import Verb
+from hal.output.command import Verb
 
 
 class ExitCode(IntEnum):

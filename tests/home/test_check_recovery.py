@@ -8,7 +8,7 @@ from datetime import datetime
 import pytest
 from conftest import REPORT_DISPLAY
 
-from home_tools import check
+from hal.workstation import check
 
 
 @pytest.mark.parametrize(

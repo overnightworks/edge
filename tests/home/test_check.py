@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status, write_hal_config
 
-from home_tools import check, mail
-from home_tools.layout import Layout, run_command
+from hal.workstation import check, mail
+from hal.workstation.layout import Layout, run_command
 
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")

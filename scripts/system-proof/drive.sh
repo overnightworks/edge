@@ -185,8 +185,8 @@ plant_fake_secrets() {  # plant_fake_secrets [drop]: a fake file for every live 
 import sys
 from pathlib import Path
 
-from home_tools import secrets_view
-from home_tools.tunnel_config import with_tunnel_id
+from hal.workstation import secrets_view
+from hal.workstation.tunnel_config import with_tunnel_id
 
 home = Path.home()
 live = [entry for entry in secrets_view.load_manifest(secrets_view.MANIFEST_PATH) if not entry.retired]
@@ -1831,7 +1831,7 @@ cell_p_wrong_password() {  # cell_p_wrong_password <cell> <log>: sudo refuses th
 cell_p_config_of_root() {  # cell_p_config_of_root <cell> <log>: root's own ansible.cfg does not override the packaged one
     local cell=$1 log=$2 code python package ansible_playbook=/home/tester/.local/bin/ansible-playbook outside inside
     python=$(head -n 1 "$HAL_BIN" | sed 's/^#!//')
-    package=$(PYTHONDONTWRITEBYTECODE=1 "$python" -c 'import home_tools, pathlib; print(pathlib.Path(home_tools.__file__).parent / "system")')
+    package=$(PYTHONDONTWRITEBYTECODE=1 "$python" -c 'import hal.workstation, pathlib; print(pathlib.Path(hal.workstation.__file__).parent / "system")')
     printf '[defaults]\nstdout_callback = json\n' >/root/.ansible.cfg
     outside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd / && $ansible_playbook --version" 2>&1)
     inside=$(sudo env PYTHONDONTWRITEBYTECODE=1 sh -c "cd $package && $ansible_playbook --version" 2>&1)

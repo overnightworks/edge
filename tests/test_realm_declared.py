@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from edge.realm import observe
-from edge.realm.declared import KINDS, DeclaredError, declared_realm
+from hal.stack.realm import observe
+from hal.stack.realm.declared import KINDS, DeclaredError, declared_realm
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 

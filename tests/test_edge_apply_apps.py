@@ -45,7 +45,7 @@ from test_edge_apply import (
 )
 from test_edge_plan_rows import plain
 
-from edge import apps, barrier, checkout, compose, emergency, switches
+from hal.stack import apps, barrier, checkout, compose, emergency, switches
 
 APP = "github: {{org: overnightworks}}\nservices:\n  hopin:\n    repo: {repo}\n    run: {run}\n"
 

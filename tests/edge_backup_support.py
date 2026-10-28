@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from edge_backup import host, sqlite_copy
-from edge_backup.cli import DEFAULT_APPS
-from edge_backup.docker import (
+from hal.backup import host, sqlite_copy
+from hal.backup.cli import DEFAULT_APPS
+from hal.backup.docker import (
     FILE_COUNT_LABEL,
     RESTORE_OWNER_LABEL,
     RESTORE_OWNER_ROLE,
@@ -26,7 +26,7 @@ from edge_backup.docker import (
     SQLITE_COPY_LABEL,
     SQLITE_OWNER_LABEL,
 )
-from edge_backup.settings import RESTIC_HOSTNAME
+from hal.backup.settings import RESTIC_HOSTNAME
 
 CANARY_PASSWORD = "canary-7f3e-never-print-me"
 DUMP = b"PGDMP custom archive"

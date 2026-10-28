@@ -11,7 +11,7 @@ from conftest import FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandb
 
 from hal import cli as hal_cli
 from hal import config as hal_config
-from home_tools.layout import Layout
+from hal.workstation.layout import Layout
 
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")

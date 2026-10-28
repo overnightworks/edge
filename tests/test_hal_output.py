@@ -8,7 +8,7 @@ from enum import StrEnum
 import pytest
 from terminal_support import put_on_terminals
 
-from hal_output import (
+from hal.output import (
     HEADING_THRESHOLD,
     Glyph,
     Group,

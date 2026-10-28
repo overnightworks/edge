@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from edge import compose, core, switches
-from edge.realm import observe, reconcile
-from edge.realm.reconcile import RealmAction, RealmPlan, RealmRestart
+from hal.stack import compose, core, switches
+from hal.stack.realm import observe, reconcile
+from hal.stack.realm.reconcile import RealmAction, RealmPlan, RealmRestart
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
@@ -861,7 +861,7 @@ def interrupted(*_):
         file.write("interrupted\\n")
     raise KeyboardInterrupt
 signal.signal(signal.SIGINT, interrupted)
-from edge.realm import observe, reconcile
+from hal.stack.realm import observe, reconcile
 try:
     reconcile.run_edge_backup(sys.argv[2:], 600, say=print)
 except KeyboardInterrupt:

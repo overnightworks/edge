@@ -9,9 +9,10 @@ from typing import Any, cast
 
 import pytest
 
-from edge import checkout, releases
-from edge.appkit_step import AppkitPlan
-from edge.apps import (
+from hal.output import DETAIL_INDENT, Glyph, Group, Row
+from hal.stack import checkout, releases
+from hal.stack.appkit_step import AppkitPlan
+from hal.stack.apps import (
     AppKind,
     AppPlan,
     AppRuntime,
@@ -20,9 +21,9 @@ from edge.apps import (
     SkippedNote,
     StaysStoppedNote,
 )
-from edge.built_image import ENDS_RUNS, BuiltRecreate
-from edge.catalog import App, Unit
-from edge.core import (
+from hal.stack.built_image import ENDS_RUNS, BuiltRecreate
+from hal.stack.catalog import App, Unit
+from hal.stack.core import (
     Cause,
     CauseKind,
     CoreAction,
@@ -31,12 +32,18 @@ from edge.core import (
     FollowerPlan,
     Gate,
 )
-from edge.legal_step import LegalPlan
-from edge.plan import Plan
-from edge.plan_rows import CHECKOUT, CheckoutEvent, PlanEvent, PlanGroup, checkout_row, plan_groups
-from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
-from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import DETAIL_INDENT, Glyph, Group, Row
+from hal.stack.legal_step import LegalPlan
+from hal.stack.plan import Plan
+from hal.stack.plan_rows import (
+    CHECKOUT,
+    CheckoutEvent,
+    PlanEvent,
+    PlanGroup,
+    checkout_row,
+    plan_groups,
+)
+from hal.stack.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
+from hal.stack.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
 
 APP = App("hopin", True, "master")
 OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"

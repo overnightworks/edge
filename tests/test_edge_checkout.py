@@ -24,7 +24,7 @@ from git_support import (
     with_origin,
 )
 
-from edge import checkout
+from hal.stack import checkout
 
 # githooks(5): every hook git may run, so a sentinel catches whichever one would.
 HOOK_NAMES = (

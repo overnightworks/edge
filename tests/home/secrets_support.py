@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from home_tools.layout import Layout
-from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries, Terminal, TokenVerifier, WalkEnd, run_setup
+from hal.workstation.layout import Layout
+from hal.workstation.secrets_setup import TERMINAL_BOUNDARIES, Boundaries, Terminal, TokenVerifier, WalkEnd, run_setup
 
 WIZARD_NOW = datetime(2026, 10, 17, 9, 0)
 

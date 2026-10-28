@@ -21,16 +21,16 @@ from edge_backup_support import (
     declare_apps,
 )
 
-from edge_backup import sqlite_copy
-from edge_backup.apps import AppsError, SqliteDatabase, parse_apps
-from edge_backup.docker import (
+from hal.backup import sqlite_copy
+from hal.backup.apps import AppsError, SqliteDatabase, parse_apps
+from hal.backup.docker import (
     SERVER_START_LABEL,
     SQLITE_CHECK_LABEL,
     SQLITE_COPY_LABEL,
     SQLITE_OWNER_LABEL,
 )
-from edge_backup.settings import SQLITE_IMAGE
-from edge_backup.verify import Manifest, VerificationError
+from hal.backup.settings import SQLITE_IMAGE
+from hal.backup.verify import Manifest, VerificationError
 
 WRITER = """
 import sqlite3, sys

@@ -16,7 +16,7 @@ from test_edge_global_stop import (
     systemd,  # noqa: F401 the fixture, requested by name below
 )
 
-from edge import barrier
+from hal.stack import barrier
 
 APP_FLEET = (
     "cloudflare: {zone: probe.test}\ngithub: {org: overnightworks}\n"

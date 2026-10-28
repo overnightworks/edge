@@ -8,7 +8,7 @@ from pathlib import Path
 from conftest import write_hal_config
 
 from hal import config as hal_config
-from home_tools.check import CheckSettings
+from hal.workstation.check import CheckSettings
 
 
 def test_an_empty_file_gives_the_defaults(tmp_path: Path) -> None:

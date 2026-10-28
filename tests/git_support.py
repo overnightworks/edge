@@ -1,5 +1,5 @@
 """Real git repositories under `tmp_path` and runs of hal's console script against them, shared by
-the tests of `edge.checkout` and `hal`.
+the tests of `hal.stack.checkout` and `hal`.
 
 Nothing here sets GIT_CONFIG_GLOBAL: the code under test drops every `GIT_*` variable, so a test
 setting one would prove nothing. A test module points HOME and XDG_CONFIG_HOME at throwaway
@@ -12,7 +12,7 @@ import sys
 from collections.abc import Collection, Mapping
 from pathlib import Path
 
-from edge import checkout
+from hal.stack import checkout
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
 HAL_SOURCE = SOURCE / "hal"

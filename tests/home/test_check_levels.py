@@ -8,9 +8,9 @@ from types import ModuleType
 
 import pytest
 
-from home_tools import backup_check, check, hook_check, logs_check, platform_check, secrets_view
-from home_tools.exposure_check import ExposureRule
-from home_tools.report import Level
+from hal.workstation import backup_check, check, hook_check, logs_check, platform_check, secrets_view
+from hal.workstation.exposure_check import ExposureRule
+from hal.workstation.report import Level
 
 FINDING_CONSTRUCTORS = {"Finding", "HookFinding"}
 

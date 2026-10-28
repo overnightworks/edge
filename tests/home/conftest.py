@@ -22,14 +22,14 @@ from hal import cli as hal_cli
 from hal import config as hal_config
 from hal.grammar import ExitCode
 from terminal_support import type_at_prompt
-from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
-from home_tools import ports as home_ports
-from home_tools.secrets_setup import Boundaries as SecretsBoundaries
-from home_tools.secrets_setup import Terminal as SecretsTerminal
-from home_tools.secrets_view import load_manifest
-from home_tools.setup import QUALITY_SOURCE
-from home_tools.layout import Layout, run_command
-from home_tools.tunnel_config import TUNNEL_ID_PLACEHOLDER
+from hal.workstation import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
+from hal.workstation import ports as home_ports
+from hal.workstation.secrets_setup import Boundaries as SecretsBoundaries
+from hal.workstation.secrets_setup import Terminal as SecretsTerminal
+from hal.workstation.secrets_view import load_manifest
+from hal.workstation.setup import QUALITY_SOURCE
+from hal.workstation.layout import Layout, run_command
+from hal.workstation.tunnel_config import TUNNEL_ID_PLACEHOLDER
 
 
 # Path-shaped tokens make these entries known, so the state `home` writes never becomes a finding itself.

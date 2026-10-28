@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk, unit_listing_matching
 
-from home_tools import platform_check
+from hal.workstation import platform_check
 
 NOW = datetime(2026, 10, 23, 12, 0)
 

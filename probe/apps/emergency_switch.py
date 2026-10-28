@@ -15,7 +15,7 @@ from collections.abc import Mapping
 import edge_copy
 from edge_copy import HAL_FAILURE, HAL_OK, expect
 
-from edge import checkout
+from hal.stack import checkout
 
 
 def squeezed(text: str) -> str:

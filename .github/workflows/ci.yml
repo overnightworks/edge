@@ -35,7 +35,7 @@ jobs:
       # The compose file interpolates the domain: the zone fleet.yaml names, as `hal apply` writes it to .env.
       - name: EDGE_DOMAIN is fleet.yaml's cloudflare.zone
         run: |
-          PYTHONPATH=src uv run --no-sync python -c 'from pathlib import Path; from edge import catalog; print("EDGE_DOMAIN=" + catalog.zone(catalog.read(Path("fleet.yaml"))))' >> "$GITHUB_ENV"
+          PYTHONPATH=src uv run --no-sync python -c 'from pathlib import Path; from hal.stack import catalog; print("EDGE_DOMAIN=" + catalog.zone(catalog.read(Path("fleet.yaml"))))' >> "$GITHUB_ENV"
 
       - name: overnightworks-hal lint
         run: |
@@ -47,11 +47,11 @@ jobs:
         # pyproject.toml's pythonpath makes src and scripts importable.
         run: uv run --no-sync --no-build pytest --cov=src --cov=scripts --cov=probe/agent-service --cov-report=xml:coverage.xml
 
-      # home's, hal's and hal_output's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
+      # home's, hal's and hal.output's floor: edge's own code carries none, so the floor is per path, not a global fail_under.
       # If a home or hal path moves, this include moves with it. hal's console script runs in child
       # processes, which [tool.coverage.run] patch = ["subprocess"] measures.
-      - name: home's, hal's and hal_output's code stay at 100 % line and branch coverage
-        run: uv run --no-sync --no-build coverage report --include='src/home_tools/*,src/hal/*,src/hal_output/*' --fail-under=100 --show-missing
+      - name: home's, hal's and hal.output's code stay at 100 % line and branch coverage
+        run: uv run --no-sync --no-build coverage report --include='src/hal/*.py,src/hal/workstation/*,src/hal/output/*' --fail-under=100 --show-missing
 
       # The quality gate never runs tests; it scans the report this job hands over.
       - name: Upload the coverage report
@@ -68,8 +68,8 @@ jobs:
           uv run --isolated --no-project --no-build --with dist/*.whl hal backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl hal restore --help
           uv run --isolated --no-project --no-build --with dist/*.whl hal check --help
-          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F edge_check/allow-list.toml
-          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F home_tools/system/ansible.cfg
+          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F hal/exposure/allow-list.toml
+          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F hal/workstation/system/ansible.cfg
           scratch=$(mktemp -d)
           mkdir "$scratch/home" "$scratch/work"
           UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/overnightworks_hal-*.whl
@@ -88,7 +88,7 @@ jobs:
           head -n 1 "$scratch/err" | grep -q '^error:'
           # docs/naming.md: `hal` must import from the tool's own environment, not from a stray package.
           tool_dir="$scratch/tools/overnightworks-hal"
-          for module in hal hal_output; do
+          for module in hal hal.output; do
             module_file=$("$tool_dir/bin/python" -I -c "import $module; print($module.__file__)")
             case $module_file in "$tool_dir/"*) ;; *) echo "$module imported from $module_file"; exit 1 ;; esac
           done
@@ -226,7 +226,7 @@ jobs:
               sys.exit("realm-observer is not in the apply profile alone, or depends on a service")
           if observer.get("secrets") != [{"source": "keycloak_config_cli_secret", "target": "config_cli_secret"}]:
               sys.exit(f"realm-observer's secret is not the config-cli secret file: {observer.get('secrets')}")
-          if observer.get("volumes") != ["./src/edge/realm/observe.py:/opt/observer/observe.py:ro"]:
+          if observer.get("volumes") != ["./src/hal/stack/realm/observe.py:/opt/observer/observe.py:ro"]:
               sys.exit(f"realm-observer mounts more than observe.py read-only: {observer.get('volumes')}")
           if observer.get("environment") != {"PYTHONDONTWRITEBYTECODE": "1"}:
               sys.exit(f"realm-observer's environment is not exactly PYTHONDONTWRITEBYTECODE: {observer.get('environment')}")
@@ -379,7 +379,7 @@ jobs:
 
       # The one tofu test entry point: the tofu installed above, an exact environment, mocked providers.
       - name: "#123 X1d: the OpenTofu tests run through edge's entry point"
-        run: PYTHONPATH=src uv run --no-sync python -m edge.external.tofu_test
+        run: PYTHONPATH=src uv run --no-sync python -m hal.stack.external.tofu_test
 
       # The quality gate scans the history for literal-looking secrets; the structural rule (a
       # literal in keycloak/*.yaml or any compose file, in block, flow or list style) reads the parsed YAML.

@@ -18,13 +18,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
-from edge.terminal import at_terminal
 from hal import rename_rows
 from hal.grammar import Asks, Command, ExitCode, add_dry_run
+from hal.output import confirmed, printable
+from hal.output.command import Verb
 from hal.rename_rows import Finding, StepKind, StepRow
-from hal_output import confirmed, printable
-from hal_output.command import Verb
-from home_tools.layout import Layout, registered_worktrees
+from hal.stack.terminal import at_terminal
+from hal.workstation.layout import Layout, registered_worktrees
 
 OWNER = "overnightworks"
 NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9._-]*")

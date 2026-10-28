@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from edge import compose
-from edge_backup.restic import container_argv
-from edge_backup.settings import Settings
+from hal.backup.restic import container_argv
+from hal.backup.settings import Settings
+from hal.stack import compose
 
 ROOT = Path(__file__).resolve().parents[1]
 APPLY_PROFILE = "apply"

@@ -33,11 +33,11 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "src"))  # the emergency switch has one owner: edge.switches
+sys.path.insert(0, str(REPO / "src"))  # the emergency switch has one owner: hal.stack.switches
 
-from edge import switches  # noqa: E402
-from edge_backup import runner as backup_runner  # noqa: E402
-from edge_backup.settings import Settings as BackupSettings  # noqa: E402
+from hal.backup import runner as backup_runner  # noqa: E402
+from hal.backup.settings import Settings as BackupSettings  # noqa: E402
+from hal.stack import switches  # noqa: E402
 
 SECRET_FILES = ("db-password", "config-cli-secret", "bootstrap-admin-password")
 BOOTSTRAP_SECRET = "bootstrap-admin-password"

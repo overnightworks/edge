@@ -4,7 +4,7 @@ import subprocess
 
 import pytest
 
-from edge.realm import reconcile
+from hal.stack.realm import reconcile
 
 
 def _answering(stdout: str, stderr: str, code: int):

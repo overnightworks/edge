@@ -1,7 +1,7 @@
 # The stack: run, apply, stop
 
 Reference for the operator and for an engineer changing the stack commands. It names the commands and
-the contracts they keep; the commands' own `--help` and `src/edge/`, `src/hal/` hold the rest. The
+the contracts they keep; the commands' own `--help` and `src/hal/stack/`, `src/hal/` hold the rest. The
 picture of the platform, and the state table that owns every guard of `stop`, `start` and `apply`, is
 [architecture.md](architecture.md) (section 8). The sections "Dienste an und aus" and "Notschalter"
 are German, the rest English.
@@ -84,7 +84,7 @@ socket directory volume is tmpfs and holds nothing; remove its definition alone 
 
 ## Exception E: where the five stack commands and `hal setup` deviate
 
-`hal`'s exit codes are in `src/hal/grammar.py`, its error form in `src/hal_output/__init__.py`, and `hal --help` shows both. `hal apply`, `stop`, `start`,
+`hal`'s exit codes are in `src/hal/grammar.py`, its error form in `src/hal/output/__init__.py`, and `hal --help` shows both. `hal apply`, `stop`, `start`,
 `offline` and `online` end with 0, 2 for a usage error, or with 3 for every outcome of the stack that
 is not "applied or nothing to do"; an uncaught Ctrl-C ends with 130. They deviate in exactly three
 ways:

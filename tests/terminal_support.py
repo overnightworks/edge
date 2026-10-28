@@ -1,4 +1,4 @@
-"""The terminal stand-in and the environment recipe of hal_output's colour contract."""
+"""The terminal stand-in and the environment recipe of hal.output's colour contract."""
 
 import io
 import sys

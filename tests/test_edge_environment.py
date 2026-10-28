@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from edge import environment
+from hal.stack import environment
 
 ZONE = "edge-fixture.invalid"
 DOCKER_GID = 998

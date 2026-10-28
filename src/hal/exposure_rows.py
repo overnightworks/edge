@@ -6,8 +6,8 @@ from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 
-from edge_check.exposure import Finding, Problem, Protocol
-from hal_output import Glyph, Noun, Row, TrailingNoun, Verdict, counted, write_row, write_verdict
+from hal.exposure.exposure import Finding, Problem, Protocol
+from hal.output import Glyph, Noun, Row, TrailingNoun, Verdict, counted, write_row, write_verdict
 
 
 class Event(StrEnum):

@@ -53,7 +53,7 @@ from alias_routing import AliasRouting  # noqa: E402
 from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
 from emergency_switch import EmergencySwitch  # noqa: E402
 
-from edge import checkout  # noqa: E402
+from hal.stack import checkout  # noqa: E402
 
 CORE_PROJECT = "edge-apps-probe"
 DOMAIN = "probe.invalid"

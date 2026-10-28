@@ -55,10 +55,10 @@ from test_edge_external import (
 )
 from test_edge_global_stop import FakeSystemd, hosts_asked  # noqa: F401 the fixture, used by `fakes`
 
-from edge import apply, barrier, catalog, compose, emergency, switches, tunnel
-from edge import cli as stack
 from hal import cli, stack_commands
 from hal.grammar import ExitCode
+from hal.stack import apply, barrier, catalog, compose, emergency, switches, tunnel
+from hal.stack import cli as stack
 
 REAL_STOP_UNIT = emergency.stop_unit
 REAL_START_UNIT = emergency.start_unit

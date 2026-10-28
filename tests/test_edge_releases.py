@@ -2,7 +2,7 @@
 
 import pytest
 
-from edge import releases
+from hal.stack import releases
 
 
 def newest_of(*tags: str, on_branch: tuple[str, ...] | None = None) -> releases.Choice:

@@ -1,14 +1,14 @@
 """The files of `tunnel/` (#76): the cloudflared unit, its drop-ins and the stop-only polkit rule
 that home-tools#9 installs. edge only ships them; the pins below keep them equal to the facts
-`edge.tunnel` and `edge.switches` own. polkit's real verdict and `systemd-analyze verify` are
-home-tools#9 B1's, where cloudflared and systemd as PID 1 exist."""
+`hal.stack.tunnel` and `hal.stack.switches` own. polkit's real verdict and `systemd-analyze verify`
+are home-tools#9 B1's, where cloudflared and systemd as PID 1 exist."""
 
 import re
 from pathlib import Path
 
 import pytest
 
-from edge import switches, tunnel
+from hal.stack import switches, tunnel
 
 TUNNEL_FILES = Path(__file__).resolve().parents[1] / "tunnel"
 BASE_UNIT = TUNNEL_FILES / tunnel.CLOUDFLARED_UNIT

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import REPORT_DISPLAY, RunnerWithCleanLogs, Sandbox, home_check, restarting_containers, write_hal_config
 
-from home_tools.layout import Layout
+from hal.workstation.layout import Layout
 
 
 pytestmark = pytest.mark.usefixtures("quiet_pc")

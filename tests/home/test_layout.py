@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from home_tools import layout
-from home_tools.layout import run_command
+from hal.workstation import layout
+from hal.workstation.layout import run_command
 
 
 @pytest.mark.parametrize(

@@ -12,7 +12,7 @@ from edge_backup_support import (
     schema_one_status,
 )
 
-from edge_backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
+from hal.backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
 
 
 def _leave_a_partial_snapshot(machine: Machine) -> str:

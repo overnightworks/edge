@@ -1,6 +1,6 @@
 """The one readiness budget a run spends on Docker and the database together."""
 
-from edge_backup.settings import READINESS_POLL_SECONDS, READINESS_TIMEOUT
+from hal.backup.settings import READINESS_POLL_SECONDS, READINESS_TIMEOUT
 
 
 def test_backup_waits_at_most_the_readiness_budget_for_docker_and_the_database_together(

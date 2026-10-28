@@ -8,10 +8,10 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from edge import checkout
 from hal.grammar import Asks, Command, ExitCode
-from hal_output import printable, write_error
-from hal_output.command import PROGRAM, Verb, command
+from hal.output import printable, write_error
+from hal.output.command import PROGRAM, Verb, command
+from hal.stack import checkout
 
 # The tree this code lives in, looked up when the command runs: an installed wheel has none.
 CODE_TREE = Path(__file__).resolve().parents[2]

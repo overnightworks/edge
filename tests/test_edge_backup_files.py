@@ -15,8 +15,8 @@ from edge_backup_support import (
     mount_of,
 )
 
-from edge_backup.apps import AppsError, SqliteDatabase, SqliteFiles, parse_apps
-from edge_backup.docker import FILE_COUNT_LABEL, SQLITE_OWNER_LABEL
+from hal.backup.apps import AppsError, SqliteDatabase, SqliteFiles, parse_apps
+from hal.backup.docker import FILE_COUNT_LABEL, SQLITE_OWNER_LABEL
 
 BUILDS = {
     "run1/out/talk/index.html": b"x",

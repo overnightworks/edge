@@ -91,6 +91,6 @@ def test_the_default_write_runs_the_step_through_the_repositorys_own_uv_run(
         str(probe.REPO),
         "python",
         "-m",
-        "edge.appkit_step",
+        "hal.stack.appkit_step",
         str(probe.REPO),
     ]

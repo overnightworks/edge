@@ -15,7 +15,7 @@ from types import MappingProxyType
 import pytest
 import yaml
 
-from edge import barrier, catalog, switches
+from hal.stack import barrier, catalog, switches
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 ADDRESS = "127.0.0.1:8081"

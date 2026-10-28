@@ -11,8 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from edge.external import cloudflare_read
-from edge.external.cloudflare_read import (
+from hal.stack.external import cloudflare_read
+from hal.stack.external.cloudflare_read import (
     AccessGroup,
     App,
     CloudflareClient,

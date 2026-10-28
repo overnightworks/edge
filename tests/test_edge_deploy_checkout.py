@@ -10,7 +10,7 @@ import pytest
 from app_support import COMPOSE, URL, Origin, origin_at
 from git_support import plain_git
 
-from edge import checkout, deploy_checkout
+from hal.stack import checkout, deploy_checkout
 
 
 @pytest.fixture(autouse=True)

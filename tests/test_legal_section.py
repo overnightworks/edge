@@ -3,7 +3,7 @@ quotes the text; what it accepts, with the bytes it hands on."""
 
 import pytest
 
-from edge.legal_section import (
+from hal.stack.legal_section import (
     CANONICAL_RULE,
     ELEMENTS,
     MAXIMUM_BYTES,

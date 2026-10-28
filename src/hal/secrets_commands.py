@@ -1,13 +1,13 @@
 """`hal secrets`: every secret of the manifest, never a value. It only views; the wizard that sets
-up what is missing is `hal setup`. The view is `home_tools.secrets_view`; this module adds
+up what is missing is `hal setup`. The view is `hal.workstation.secrets_view`; this module adds
 the grammar and the exit code."""
 
 import argparse
 
 from hal.grammar import Asks, Command, ExitCode
-from hal_output.command import Verb, command
-from home_tools import secrets_view
-from home_tools.ports import build_layout_and_ports
+from hal.output.command import Verb, command
+from hal.workstation import secrets_view
+from hal.workstation.ports import build_layout_and_ports
 
 HELP = f"""\
 {command(Verb.SECRETS)}             every secret of the manifest: file, check, expiry

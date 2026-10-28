@@ -11,7 +11,7 @@ import pytest
 from conftest import Sandbox, run_hal_setup, split_at_the_prompt
 
 from hal.grammar import ExitCode
-from home_tools.system_step import AGENT_USER
+from hal.workstation.system_step import AGENT_USER
 
 PROMPT = "Type yes to set up 2 open rows: "
 SUDO_ANNOUNCEMENT = "  › system          needs sudo     tunnel, polkit, journal, mail, agent account"

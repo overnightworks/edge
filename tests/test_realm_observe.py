@@ -36,8 +36,8 @@ from realm_fake import (
     uid,
 )
 
-from edge.realm import change_lines
-from edge.realm import observe as observer
+from hal.stack.realm import change_lines
+from hal.stack.realm import observe as observer
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -264,7 +264,7 @@ def test_service_account_roles_and_mappers_are_removed_one_line_each(
 def test_a_name_holding_esc_and_a_newline_prints_as_one_escaped_line(
     keycloak: FakeKeycloak,
 ) -> None:
-    """Rule 7: every name passes through hal_output.printable."""
+    """Rule 7: every name passes through hal.output.printable."""
 
     def console_group(realms: dict[str, FakeRealm]) -> None:
         realms["hallucinai"].groups["/probe\x1b[31mred\nline"] = Group()
@@ -530,7 +530,9 @@ def test_import_checksums_prints_only_each_realms_checksum_attributes_and_needs_
 def fresh_observer(name: str) -> ModuleType:
     """observe.py loaded anew from its file, so its opener is built under the current
     environment rather than the one the test session imported it in."""
-    spec = importlib.util.spec_from_file_location(name, REPOSITORY / "src/edge/realm/observe.py")
+    spec = importlib.util.spec_from_file_location(
+        name, REPOSITORY / "src/hal/stack/realm/observe.py"
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -724,7 +726,7 @@ def test_every_config_cli_import_type_maps_onto_the_coverage_table() -> None:
 def test_observe_py_imports_alone_with_python_isolated(tmp_path: Path) -> None:
     """Rule 2 and U29: standard library only, nothing of src on the path."""
     alone = tmp_path / "observe.py"
-    shutil.copy(REPOSITORY / "src/edge/realm/observe.py", alone)
+    shutil.copy(REPOSITORY / "src/hal/stack/realm/observe.py", alone)
 
     result = subprocess.run(
         [sys.executable, "-I", str(alone), "--help"],

@@ -8,18 +8,18 @@ import argparse
 import json
 from pathlib import Path
 
-from edge.external import cli as external
-from edge.external import host_check
-from edge_check import exposure, inspection
 from hal import config as hal_config
 from hal import exposure_rows
+from hal.exposure import exposure, inspection
 from hal.grammar import Asks, Command, ExitCode
-from hal_output import write_error
-from hal_output.command import Verb, command
-from home_tools import check as daily_check
-from home_tools.exposure_check import ExposureRule
-from home_tools.ports import build_layout_and_ports
-from home_tools.report import Finding
+from hal.output import write_error
+from hal.output.command import Verb, command
+from hal.stack.external import cli as external
+from hal.stack.external import host_check
+from hal.workstation import check as daily_check
+from hal.workstation.exposure_check import ExposureRule
+from hal.workstation.ports import build_layout_and_ports
+from hal.workstation.report import Finding
 
 EXPOSURE = "exposure"
 HOSTS = "hosts"

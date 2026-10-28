@@ -73,8 +73,8 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
-from edge import checkout, compose, core, tunnel  # noqa: E402
-from edge.plan_rows import PlanEvent  # noqa: E402
+from hal.stack import checkout, compose, core, tunnel  # noqa: E402
+from hal.stack.plan_rows import PlanEvent  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"

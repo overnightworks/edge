@@ -1,4 +1,4 @@
-# The hosts of the enabled catalog entries, keyed by FQDN. src/edge/catalog.py validates the shape
+# The hosts of the enabled catalog entries, keyed by FQDN. src/hal/stack/catalog.py validates the shape
 # before tofu starts (`hal apply` refuses an invalid catalog), so this reads it
 # as it stands; `try` covers only the optional keys.
 locals {

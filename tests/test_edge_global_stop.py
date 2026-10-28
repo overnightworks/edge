@@ -19,7 +19,7 @@ from test_edge_apply import (
     switch_off,
 )
 
-from edge import barrier, catalog, compose, emergency, switches, tunnel
+from hal.stack import barrier, catalog, compose, emergency, switches, tunnel
 
 PROBE_FLEET = "services:\n  probe:\n    run: {enabled: true}\n"
 FIRST_STOP = "2026-10-17T22:10:04+02:00"
