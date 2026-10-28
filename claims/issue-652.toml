@@ -1,8 +1,0 @@
-claim_id = "9d8134c63c72410893d04fc1631dc538"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "2ac5eca56baf4183ca15fe270f4b3ad1e71b3231"
-branch = "claude/issue-652-tests-under-hal"
-scope = ["docs/architecture.md", "pyproject.toml", "quality/baseline.toml", "scripts/system-proof/drive.sh", "tests"]
-opened_commit = "fdc7edb63cc88ae00ef84cac298bff80c994c0bd"
-whole_reason = "The test files take hal names (test_edge_* become test_stack_*, test_backup_*, test_exposure_check, test_hal_launcher; tests/home merges into tests as test_workstation_*), tests/home/conftest.py splits into conftest fixtures and workstation_support, the three docker and ss shim writers become one, exemptions and baselines follow by name."
