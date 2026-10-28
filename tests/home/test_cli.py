@@ -5,16 +5,15 @@ import pytest
 from home_tools import cli
 
 
-@pytest.mark.parametrize(
-    ("argv", "heading"),
-    [(["--help"], "Examples:"), (["secrets", "--help"], "Examples:"), (["next", "--help"], "Examples:"), (["setup", "--help"], "Examples:")],
-)
-def test_help_shows_examples(argv: list[str], heading: str, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize("argv", [["--help"], ["secrets", "--help"], ["next", "--help"], ["setup", "--help"]])
+def test_help_is_english_and_shows_examples(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         cli.main(argv)
 
+    help_text = capsys.readouterr().out
     assert exited.value.code == 0
-    assert heading in capsys.readouterr().out
+    assert "Examples:" in help_text
+    assert help_text.isascii()
 
 
 def test_home_without_a_subcommand_is_a_usage_error() -> None:
