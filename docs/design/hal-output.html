@@ -639,7 +639,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <h2 id="s-check"><span class="tag new">neu für H5m5</span> <code>hal check</code>: der tägliche Check, eine Zeile je Bereich</h2>
     <p class="sub">Gesegnet 27.10.2026, eingefroren mit H5m5. Ein bloßes <code>hal check</code> ist der tägliche Check (ab H5m6); der Timer ruft dasselbe um 09:00. Eine Zeile je Bereich, in der Reihenfolge der Mail. Der lange Bericht steht weiter in der Datei, die das Popup öffnet. Namen erfunden.</p>
   </div>
-  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> fünf Bereiche statt sechs, die Zeile <code>exposure</code> kommt mit H5m7; der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt; der Bericht liegt bis H5m6 noch im alten Zustandsverzeichnis.</p>
+  <p class="s2note"><b>Beim Einfrieren angepasst (H5m5):</b> fünf Bereiche statt sechs, die Zeile <code>exposure</code> kommt mit H5m7; der Befehl heißt bis H5m6 noch anders; die Sätze stehen so, wie die Regeln der Mail sie schreiben, ohne den Schlusspunkt.</p>
   <p class="s2note"><b>Zeichen:</b> <code>✓</code> alles gut, <code>!</code> du musst etwas tun, <code>·</code> nur ein Hinweis, <code>✗</code> der Bereich konnte nicht prüfen. Hat ein Bereich mehrere Funde, steht der erste da und <code>+N more</code>; alle stehen im Bericht. <code>next:</code> nennt den Schritt des ersten Handlungsbedarfs.</p>
   <div class="pair">
     <div class="stack">
@@ -692,7 +692,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Exit-Codes wie heute:</b> 0 alles gut, 1 Funde (der Timer zählt das als Erfolg), 2 Konfiguration oder Manifest ungültig, 3 ein Bereich konnte nicht prüfen. Bei 3 steht die Fehlerzeile mit <code>next:</code> auf stderr.</li>
     <li><b>Mail und Popup bleiben, wie sie sind</b> (seit heute Englisch). Das Terminal zeigt nur die Kurzform; der Bericht in der Datei ist die Langform.</li>
     <li><code>hal check</code> ohne Bereich ist die tägliche Prüfung; <code>hal check exposure</code> zeigt nur diesen Bereich, <code>--json</code> gibt es nur mit einem Bereich.</li>
-    <li><b>Der Bericht zieht nach <code>~/.local/state/hal/</code></b>, sobald der alte Befehl weg ist (H5m6); bis dahin liegt er im alten Zustandsverzeichnis.</li>
+    <li><b>Der Bericht liegt in <code>~/.local/state/hal/</code></b>, ebenso das Gemerkte der letzten Meldung.</li>
   </ul>
 </section>
 
@@ -924,7 +924,7 @@ Type <span class="w">yes</span> to reopen the tunnel: yes
     [ ] TTL: leave the start date empty, End Date 28.10.2027
     [ ] Continue to summary › Create Token, copy the value
     Enter opens the page in your browser:
-<span class="d">    opened https://dash.cloudflare.com/profile/api-tokens</span>
+<span class="d">    opened dash.cloudflare.com/profile/api-tokens</span>
     paste the token (hidden, empty skips):
 <span class="g">  ✓</span> cloudflare/fleet-write  verified   <span class="d">~/.secrets/cloudflare/fleet-write (600)</span></pre>
       <p class="was">heute: <code>== cloudflare/fleet-write (Token, fehlt)</code> … <code>Token einfügen (unsichtbar; leer überspringt):</code></p>

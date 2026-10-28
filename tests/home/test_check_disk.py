@@ -1,4 +1,4 @@
-"""Tests of the disk-low finding in `home check` (#460): the mail, the report and an unreadable filesystem."""
+"""Tests of the disk-low finding in `hal check` (#460): the mail, the report and an unreadable filesystem."""
 
 from __future__ import annotations
 

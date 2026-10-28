@@ -1,6 +1,6 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of a row, a verdict and an error. It imports nothing else of this
-repository."""
+to show, and the form of a row, a verdict, an error and the indented detail lines under a row. It
+imports nothing else of this repository."""
 
 import os
 import sys
@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import Enum, StrEnum
 from typing import TextIO
 
+DETAIL_INDENT = "    "
 SUBJECT_WIDTH = 14
 EVENT_WIDTH = 14
 
@@ -59,6 +60,14 @@ _VERDICT_STYLES = {
     Glyph.UNCHANGED: _DIM,
     Glyph.CHANGE: "1;34",
 }
+
+
+class Tone(Enum):
+    """How a detail line looks on a terminal: unstyled, dim, or in the needs-you row's yellow."""
+
+    PLAIN = None
+    DIM = _DIM
+    WARNING = _ROW_STYLES[Glyph.NEEDS_YOU]
 
 
 class Noun(StrEnum):
@@ -121,12 +130,13 @@ def printable(text: str) -> str:
     )
 
 
-def _counted(number: int, label: StrEnum) -> str:
-    text = printable(str(label))
-    if isinstance(label, Noun) and number != 1:
+def counted(count: int, noun: StrEnum) -> str:
+    """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`."""
+    text = printable(str(noun))
+    if isinstance(noun, Noun) and count != 1:
         first, separator, rest = text.partition(" ")
         text = f"{first}s{separator}{rest}"
-    return f"{number} {text}"
+    return f"{count} {text}"
 
 
 def write_row(row: Row) -> None:
@@ -134,7 +144,7 @@ def write_row(row: Row) -> None:
     On a terminal only the glyph is coloured and the fact dim; a `·` row is dim as a whole."""
     stdout = sys.stdout
     subject = printable(row.subject)
-    event = printable(str(row.event)) if row.count is None else _counted(row.count, row.event)
+    event = printable(str(row.event)) if row.count is None else counted(row.count, row.event)
     fact = printable(row.fact).rstrip()
     columns = f"{subject:<{SUBJECT_WIDTH}}  {event:<{EVENT_WIDTH}}"
     if row.glyph is Glyph.UNCHANGED:
@@ -151,13 +161,13 @@ def write_verdict(verdict: Verdict) -> None:
     the hint. On a terminal the glyph and summary are bold in the glyph's colour, the counts and
     the run time dim; a `next:` line follows when the verdict has a next step."""
     stdout = sys.stdout
-    counted = ", ".join(_counted(number, label) for number, label in verdict.counts if number)
+    shown_counts = ", ".join(counted(number, label) for number, label in verdict.counts if number)
     hint = [printable(verdict.hint)] if verdict.hint else []
-    headline_text = printable(verdict.summary) or counted
+    headline_text = printable(verdict.summary) or shown_counts
     headline = _styled(
         f"{verdict.glyph.value} {headline_text}", verdict.glyph.verdict_style, stdout
     )
-    counts = [_styled(counted, _DIM, stdout)] if counted and verdict.summary else []
+    counts = [_styled(shown_counts, _DIM, stdout)] if shown_counts and verdict.summary else []
     details = [_styled(printable(detail), _DIM, stdout) for detail in verdict.details]
     run_time = (
         [_styled(format_duration(verdict.elapsed_seconds), _DIM, stdout)]
@@ -169,10 +179,21 @@ def write_verdict(verdict: Verdict) -> None:
         print(f"{_styled('next:', _CYAN, stdout)} {printable(verdict.next_step)}")
 
 
-def write_error(message: str, next_step: str | None = None) -> None:
+def write_error(message: str, next_step: str | None = None, *, fresh_line: bool = False) -> None:
     """`error: <message>` and, when there is a way on, `next: <command>` on stderr; on a terminal
-    the labels are bold red and cyan."""
+    the labels are bold red and cyan. `fresh_line` first ends a line a hidden prompt left open."""
     stderr = sys.stderr
+    if fresh_line:
+        print(file=stderr)
     print(f"{_styled('error:', _BOLD_RED, stderr)} {printable(message)}", file=stderr)
     if next_step:
         print(f"{_styled('next:', _CYAN, stderr)} {printable(next_step)}", file=stderr)
+
+
+def write_detail(*lines: str, tone: Tone = Tone.PLAIN) -> None:
+    """Each line on stdout under a row, indented and escaped; on a terminal it takes the tone's
+    style."""
+    stdout = sys.stdout
+    for line in lines:
+        text = f"{DETAIL_INDENT}{printable(line)}"
+        print(text if tone.value is None else _styled(text, tone.value, stdout))

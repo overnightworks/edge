@@ -63,19 +63,16 @@ from pathlib import Path
 from typing import Any
 
 from edge import barrier, catalog, checkout, compose, core, environment, setup, switches, terminal
-from edge.appkit_step import AppkitError, AppkitPlan, Rename, plan_appkit
-from edge.apps import AppError, AppRuntime, AppsPlan, plan_apps, retry_advice
-from edge.built_image import BuiltRecreate
+from edge.appkit_step import AppkitError, Rename, plan_appkit
+from edge.apps import AppError, AppRuntime, plan_apps, retry_advice
 from edge.legal_section import LegalError
-from edge.legal_step import RECORD_FILE, LegalPlan, plan_legal
+from edge.legal_step import RECORD_FILE, plan_legal
+from edge.plan import Plan
 from edge.realm import reconcile
 from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
     Action,
-    Fleet,
-    KeptImage,
     Progress,
-    Recreate,
     UnitPlan,
     plan_switches,
     plan_unit_services,
@@ -115,53 +112,6 @@ CANNOT_PLAN_ERRORS = (
     LegalError,
     AppkitError,
 )
-
-
-@dataclass(frozen=True)
-class Plan:
-    fleet: Fleet
-    read: Mapping[str, switches.Mark | None]
-    core: list[core.CorePlan]
-    followers: list[core.FollowerPlan]
-    built: list[BuiltRecreate]
-    recreates: list[Recreate]
-    plans: list[UnitPlan]
-    images: list[KeptImage]
-    realm: reconcile.RealmPlan
-    app_plans: AppsPlan
-    appkit: AppkitPlan
-    legal: LegalPlan
-
-    @property
-    def changes_nothing(self) -> bool:
-        return (
-            self.realm.settled
-            and all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
-            and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
-            and all(plan.action is core.FollowerAction.HELD for plan in self.followers)
-            and not self.built
-            and not self.recreates
-            and self.app_plans.changes_nothing
-            and self.appkit.changes_nothing
-            and self.legal.changes_nothing
-        )
-
-    def describe(self) -> list[str]:
-        plans = (
-            *self.core,
-            *self.followers,
-            *self.built,
-            *self.recreates,
-            *self.plans,
-            *self.images,
-        )
-        return [
-            *self.appkit.describe(),
-            *self.legal.describe(),
-            *(plan.describe() for plan in plans),
-            *self.realm.lines,
-            *self.app_plans.describe(),
-        ]
 
 
 @dataclass(frozen=True)

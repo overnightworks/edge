@@ -27,15 +27,15 @@ import urllib.request
 import uuid
 import warnings
 import webbrowser
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlsplit
 
-from hal_output import Glyph, Row, write_row
+from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -65,11 +65,11 @@ NO_TERMINAL_EXIT = 2
 ENTRY_FAILED_EXIT = 2
 ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
-OPEN_PROMPT = "Enter öffnet die Seite im Browser. "
-PASTE_PROMPT = "Token einfügen (unsichtbar; leer überspringt): "
-NO_BROWSER = "Kein Browser ließ sich öffnen; die Seite von Hand öffnen:"
-UNSENDABLE_PASTE = "ein Token hat nur sichtbare ASCII-Zeichen, ohne Leerzeichen; nichts geprüft"
-EXPOSED_INPUT_REFUSAL = "abgebrochen: dieses Terminal kann die Eingabe nicht verbergen; nichts gelesen. Ein anderes Terminal nehmen."
+OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
+PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
+OPENED = "opened"
+NO_BROWSER = "no browser opened · open it yourself:"
+UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
 
 PASTE_AGAIN = "paste again or leave empty"
 PASSPHRASE_BYTES = 48
@@ -164,11 +164,11 @@ def _utc_now() -> datetime:
 def _judge(provider: Provider, response: Response, now: datetime) -> Verdict:
     label = PROVIDER_LABELS[provider]
     if response.status != 200:
-        return Verdict(Outcome.REFUSED, f"{label} antwortet {response.status}")
+        return Verdict(Outcome.REFUSED, f"{label} answers {response.status}")
     if provider is Provider.CLOUDFLARE:
         status = _cloudflare_token_status(response.body)
         if status != CLOUDFLARE_ACTIVE:
-            return Verdict(Outcome.REFUSED, f"{label} meldet das Token als {status or 'unbekannt'}, nicht {CLOUDFLARE_ACTIVE}")
+            return Verdict(Outcome.REFUSED, f"{label} reports the token as {status or 'unknown'}, not {CLOUDFLARE_ACTIVE}")
         try:
             not_before = _cloudflare_not_before(response.body)
         except ValueError:  # the message may quote the answer, so the refusal says nothing of it
@@ -186,9 +186,9 @@ def verify_token(source: TokenSource, value: str, fetch: Fetch = http_fetch, clo
     try:
         response = fetch(request)
     except ValueError:  # http.client refuses a header it cannot send with a message that quotes the value
-        return Verdict(Outcome.REFUSED, f"der Wert lässt sich {PROVIDER_LABELS[source.provider]} nicht als Token senden")
+        return Verdict(Outcome.REFUSED, f"the value cannot be sent to {PROVIDER_LABELS[source.provider]} as a token")
     if response is None:
-        return Verdict(Outcome.UNREACHABLE, f"{PROVIDER_LABELS[source.provider]} nicht erreichbar; später noch einmal")
+        return Verdict(Outcome.UNREACHABLE, f"{PROVIDER_LABELS[source.provider]} unreachable; try again later")
     return _judge(source.provider, response, clock())
 
 
@@ -239,7 +239,7 @@ def _levels(home: Path, directory: Path) -> tuple[Path, ...]:
 
 
 def _refused_below(unfit: SecretFinding) -> str:
-    return f"{unfit.subject} {unfit.detail}: erst {unfit.fix}"
+    return f"{unfit.subject} {unfit.detail}: first {unfit.fix}"
 
 
 def _private_directories(home: Path, directory: Path) -> None:
@@ -297,7 +297,7 @@ def store_new_secret(layout: Layout, place: PurePosixPath, value: str, sync: Dis
                 sync(fresh_file.fileno())
             os.link(fresh, target)
         except FileExistsError:
-            raise StoreRefused(f"{HOME_PREFIX}{place} ist inzwischen vorhanden und bleibt unverändert") from None
+            raise StoreRefused(f"{HOME_PREFIX}{place} appeared meanwhile and stays unchanged") from None
         finally:
             fresh.unlink(missing_ok=True)
 
@@ -320,16 +320,25 @@ def github_page(entry: SecretEntry, source: TokenSource) -> str:
     return f"{GITHUB_TOKEN_PAGE}?{urlencode(fields, quote_via=quote)}"
 
 
-def _github_briefing(entry: SecretEntry, source: TokenSource, _now: datetime) -> list[str]:
+def github_rights_prose(scope: Iterable[str]) -> str:
+    """`name:level` rights as prose, one entry per permission with its levels folded, in first-appearance order."""
+    levels_by_permission: dict[str, list[str]] = {}
+    for right in scope:
+        name, level = right.split(":", 1)
+        levels_by_permission.setdefault(name, []).append(level)
+    entries = []
+    for name, levels in levels_by_permission.items():
+        words = name.replace("_", " ")
+        entries.append(f"{words[:1].upper()}{words[1:]} {' and '.join(levels)}")
+    return ", ".join(entries)
+
+
+def _github_briefing(_entry: SecretEntry, source: TokenSource, _now: datetime) -> list[str]:
     return [
-        f"Seite: GitHub, neues Fine-grained-Token. Login: dein GitHub-Konto, Inhaber der Org {source.resource}.",
-        f"Der Link füllt vor: Name {entry.name}, Resource owner {source.resource}, Ablauf {source.expires_in_days} Tage,"
-        " die Beschreibung und diese Rechte:",
-        *(f"  - {right.replace(':', ': ', 1)}" for right in source.scope),
-        "Von Hand, das kann kein Link vorgeben:",
-        "  [ ] Repository access: All repositories",
-        "  [ ] die Rechte im Formular mit der Liste oben vergleichen",
-        "  [ ] Generate token, dann den Wert kopieren",
+        f"prefilled: {github_rights_prose(source.scope)}",
+        "[ ] Repository access: All repositories",
+        "[ ] compare the rights in the form with the line above",
+        "[ ] Generate token, copy the value",
     ]
 
 
@@ -341,27 +350,26 @@ def cloudflare_page(_entry: SecretEntry, _source: TokenSource) -> str:
 def _cloudflare_briefing(entry: SecretEntry, source: TokenSource, now: datetime) -> list[str]:
     ends = (now + timedelta(days=source.expires_in_days)).date()
     return [
-        "Seite: Cloudflare, My Profile › API Tokens. Login: dein Cloudflare-Konto.",
-        "Cloudflare füllt nichts vor; von Hand:",
-        "  [ ] Create Token › Custom token › Get started",
-        f"  [ ] Token name: {entry.name}",
-        *(f"  [ ] Permissions: {right}" for right in source.scope),
-        "  [ ] Account Resources: Include › dein Konto",
-        f"  [ ] Zone Resources: Include › Specific zone › {source.resource}",
-        f"  [ ] TTL: leave the start date empty, set only the End Date {ends:%d.%m.%Y}",
-        "  [ ] Continue to summary › Create Token, dann den Wert kopieren",
+        "[ ] Create Token › Custom token › Get started",
+        f"[ ] Token name: {entry.name}",
+        *(f"[ ] Permissions: {right}" for right in source.scope),
+        "[ ] Account Resources: Include › your account",
+        f"[ ] Zone Resources: Include › Specific zone › {source.resource}",
+        f"[ ] TTL: leave the start date empty, set only the End Date {ends:%d.%m.%Y}",
+        "[ ] Continue to summary › Create Token, copy the value",
     ]
 
 
 @dataclass(frozen=True)
 class ProviderGuide:
+    how: str
     page: Callable[[SecretEntry, TokenSource], str]
     briefing: Callable[[SecretEntry, TokenSource, datetime], list[str]]
 
 
 GUIDES = {
-    Provider.GITHUB: ProviderGuide(github_page, _github_briefing),
-    Provider.CLOUDFLARE: ProviderGuide(cloudflare_page, _cloudflare_briefing),
+    Provider.GITHUB: ProviderGuide("the link fills name, owner, expiry and rights", github_page, _github_briefing),
+    Provider.CLOUDFLARE: ProviderGuide(f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} fills in nothing", cloudflare_page, _cloudflare_briefing),
 }
 
 
@@ -374,16 +382,12 @@ class WizardEvent(StrEnum):
     VERIFIED = "verified"
     GENERATED = "generated"
     STORED = "stored"
+    NEW_TOKEN = "new token"
     REJECTED = "rejected"
     SKIPPED = "skipped"
     NOT_CHECKED = "not checked"
     BY_HAND = "by hand"
     NOT_STORED = "not stored"
-
-
-def _say(*lines: str) -> None:
-    for line in lines:
-        print(line)
 
 
 def _write_entry_row(glyph: Glyph, entry_name: str, event: WizardEvent, fact: str) -> None:
@@ -448,14 +452,31 @@ def _accepted_paste(entry: SecretEntry, source: TokenSource, boundaries: Boundar
     return None
 
 
+def _shown_address(page: str) -> str:
+    """Host and path of the page, with `?…` when it has a query; the scheme and the prefilled parameters stay out of the walk."""
+    parts = urlsplit(page)
+    return f"{parts.netloc}{parts.path}{'?…' if parts.query else ''}"
+
+
 def _offer_page(terminal: Terminal, page: str) -> None:
     terminal.ask(OPEN_PROMPT)
-    _say(f"Geöffnet: {page}" if terminal.open_page(page) else f"{NO_BROWSER} {page}")
+    if terminal.open_page(page):
+        write_detail(f"{OPENED} {_shown_address(page)}", tone=Tone.DIM)
+    else:
+        write_detail(f"{NO_BROWSER} {page}", tone=Tone.WARNING)
+
+
+def _announce(entry: SecretEntry, how: str) -> None:
+    """The row that opens a walk for a token, then why it is needed."""
+    _write_entry_row(Glyph.ANNOUNCE, entry.name, WizardEvent.NEW_TOKEN, how)
+    if entry.purpose:
+        write_detail(f"why: {entry.purpose}")
 
 
 def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, boundaries: Boundaries, now: datetime) -> bool:
     guide = GUIDES[source.provider]
-    _say(*guide.briefing(entry, source, now))
+    _announce(entry, guide.how)
+    write_detail(*guide.briefing(entry, source, now))
     _offer_page(boundaries.terminal, guide.page(entry, source))
     value = _accepted_paste(entry, source, boundaries)
     return value is not None and _stored(entry, layout, boundaries, value)
@@ -463,7 +484,8 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
     """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
-    _say(f"Anlegen: {entry.recreate}")
+    _announce(entry, f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} cannot check this one")
+    write_detail(f"create: {entry.recreate}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
@@ -481,10 +503,26 @@ class Step(Enum):
 
 # What an unexpected error left of the one entry it stopped, as the disk shows it afterwards.
 WHAT_FAILURE_LEFT = {
-    Presence.PRESENT: "{name} ist gespeichert",
-    Presence.MISSING: "für {name} nichts gespeichert",
-    Presence.UNKNOWN: "ob {name} gespeichert ist, ist nicht feststellbar",
+    Presence.PRESENT: "{name} is stored",
+    Presence.MISSING: "{name} is not stored",
+    Presence.UNKNOWN: "cannot tell whether {name} is stored",
 }
+
+
+class Interruption(StrEnum):
+    """How the person ended the walk at one entry."""
+
+    CTRL_C = "interrupted"
+    INPUT_ENDED = "input ended"
+
+
+class EntryInterrupted(Exception):
+    """The person interrupted the walk, or its input ended, while one entry was set up."""
+
+    def __init__(self, entry_name: str, cause: Interruption) -> None:
+        super().__init__(entry_name)
+        self.entry_name = entry_name
+        self.cause = cause
 
 
 class EntryFailed(Exception):
@@ -501,7 +539,7 @@ class EntryFailed(Exception):
 
     def report(self) -> str:
         left = WHAT_FAILURE_LEFT[self.left].format(name=self.entry_name)
-        return f"abgebrochen bei {self.entry_name}: unerwarteter Fehler ({self.error_type}); {left}. Weiter mit: hal setup --apply"
+        return f"stopped at {self.entry_name} · unexpected {self.error_type} · {left}"
 
 
 def _presence_on_disk(entry: SecretEntry, layout: Layout) -> Presence:
@@ -526,16 +564,17 @@ def open_entries(layout: Layout) -> list[tuple[SecretEntry, Presence]]:
 def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
     try:
         return _set_up(entry, layout, boundaries, now)
-    except (EOFError, getpass.GetPassWarning):
+    except KeyboardInterrupt:
+        raise EntryInterrupted(entry.name, Interruption.CTRL_C) from None
+    except EOFError:
+        raise EntryInterrupted(entry.name, Interruption.INPUT_ENDED) from None
+    except getpass.GetPassWarning:
         raise
     except Exception as error:
         raise EntryFailed(entry.name, error, _presence_on_disk(entry, layout)) from None
 
 
 def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
-    _say("", f"== {entry.name} ({entry.kind.label}, fehlt)")
-    if entry.purpose:
-        _say(f"Wofür: {entry.purpose}")
     if not entry.written_by_setup:
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.recreate}")
         return Step.BY_HAND
@@ -547,7 +586,6 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
     elif entry.kind is SecretKind.UNVERIFIED_TOKEN:
         stored = _set_up_unverified_token(entry, layout, boundaries)
     else:
-        _say("Wird zufällig erzeugt und nie gezeigt.")
         stored = _stored(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES))
     return Step.STORED if stored else Step.STILL_MISSING
 
@@ -565,6 +603,9 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
+STILL_OPEN_EXIT = 1
+
+
 def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
@@ -575,23 +616,36 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    return 1 if still_open or by_hand else 0
+    return STILL_OPEN_EXIT if still_open or by_hand else 0
+
+
+SETUP_NEXT_STEP = "hal setup --apply"
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
-        print("home secrets --setup läuft nur am eigenen Terminal; ohne --setup zeigt home secrets nur an.", file=sys.stderr)
+        write_error(
+            "secrets setup needs your own terminal window · nothing changed",
+            "hal setup --apply in your own terminal window",
+        )
         return NO_TERMINAL_EXIT
     try:
         return _walk(layout, boundaries, now)
-    except (KeyboardInterrupt, EOFError):
-        print("\nabgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply", file=sys.stderr)
+    except EntryInterrupted as interrupted:
+        write_error(
+            f"{interrupted.cause} at {interrupted.entry_name} · no file half written",
+            SETUP_NEXT_STEP,
+            fresh_line=True,
+        )
         return ABORTED_EXIT
     except getpass.GetPassWarning:
-        print(f"\n{EXPOSED_INPUT_REFUSAL}", file=sys.stderr)
+        write_error(
+            "this terminal cannot hide what you type · nothing read",
+            "hal setup --apply in another terminal window",
+        )
         return NO_TERMINAL_EXIT
     except EntryFailed as failed:
-        print(f"\n{failed.report()}", file=sys.stderr)
+        write_error(failed.report(), SETUP_NEXT_STEP)
         return ENTRY_FAILED_EXIT
 
 

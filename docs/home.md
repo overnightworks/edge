@@ -5,7 +5,7 @@ Jeder Unterbefehl erklärt sich mit `home <befehl> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
 Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
-es einen Fund gibt (das ist kein Fehler — `systemd/home-check.service` trägt
+es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
 `SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei oder das
 Geheimnis-Manifest ungültig ist, `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
@@ -58,7 +58,7 @@ Jeder Befehl steht nur einmal da.
 Die Schlusszeile zählt die Buchhaltung je Art, in fester Reihenfolge und ohne
 Pfad: unbekannte Dateien in `~/.secrets`. Die sortiert ein Agent ein; jede
 Löschentscheidung kommt als eine Liste zu dir. Die einzelnen Funde zeigen
-`home check` und `home secrets`.
+`hal check` und `home secrets`.
 
 Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
 „Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
@@ -70,15 +70,15 @@ Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
 Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
 Prüfung; `3` nur bei einem unerwarteten Fehler.
 
-## home check
+## hal check
 
 ```
-home check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
+hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benachrichtigung und eine Mail
 ```
 
-`home check` fährt jede Prüfung, die nichts ändert — die Ansicht von
+`hal check` fährt jede Prüfung, die nichts ändert — die Ansicht von
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
-Bericht nach `~/.local/state/home/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
+Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
 Ein nacktes `hal check` ist derselbe Lauf, im selben Prozess: dieselben Zeilen, derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde. Von Hand getippt liefert es also auch Neuigkeiten aus; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
 
@@ -114,15 +114,15 @@ Services, Backup“ (mit den Bereichen im Action needed), „PC check: all well 
 all well“. Der Text der Benachrichtigung sind die Sätze der Action-needed-Funde und der Pfad des Berichts. Die
 Benachrichtigung trägt den Knopf „Open report“; ein Klick öffnet den
 Bericht mit `xdg-open`. Gewartet wird nicht im Check, sondern in einer
-losgelösten Einheit (`systemd-run --user --collect`), sodass `home check` und
+losgelösten Einheit (`systemd-run --user --collect`), sodass `hal check` und
 der Timer-Dienst sofort enden.
 
-Die zuletzt gemeldete Fundmenge hält `~/.local/state/home/check-findings.txt`. Der saubere Stand wird ebenfalls
+Die zuletzt gemeldete Fundmenge hält `~/.local/state/hal/check-findings.txt`. Der saubere Stand wird ebenfalls
 gemerkt, sodass ein wiederkehrender Action-needed-Fund wieder meldet. Scheitert eine fällige Benachrichtigung, bleibt die
 zuletzt gemeldete Fundmenge stehen, und der nächste Lauf meldet, was dann noch von ihr abweicht.
 
 **Die Mail.** Sie geht über `msmtp`, als du, mit dem Konto aus `~/.secrets/smtp/account.toml`, und nur, wenn diese Datei
-existiert; fehlt sie, schickt `home check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
+existiert; fehlt sie, schickt `hal check` nichts und meldet keinen Fehler (der Tagesbericht listet die fehlenden
 Einträge). Der Text hat oben jeden Fund mit Action needed als Satz mit genau einem nächsten Schritt (neue Punkte mit „(new)“,
 höchstens 20, dann „… and N more, see report“), darunter was nicht mehr ansteht, dann eine Zeile je Bereich und
 den Pfad des Berichts:
@@ -144,7 +144,7 @@ Secrets: Note – Credentials for hopin are still missing
 Server logs: OK
 
 Notes are not urgent; home next shows what you can do.
-Everything in detail: ~/.local/state/home/check-report.md
+Everything in detail: ~/.local/state/hal/check-report.md
 ```
 
 Keine Zahl, nie ein Wert, Name oder Pfad eines Geheimnisses, nie eine Datei aus dem Home: Genannt werden nur das Compose-Projekt eines
@@ -193,7 +193,7 @@ Was die Prüfung nicht sieht, weil es flüchtig ist oder außer Reichweite liegt
 - `--no-verify`;
 - Repositories außerhalb von `~/git`;
 - ein `includeIf "onbranch:…"`, das nur für den Branch gilt, der beim Lauf von
-  `home check` ausgecheckt ist.
+  `hal check` ausgecheckt ist.
 
 Kann die Prüfung nicht laufen (git lässt sich nicht starten), gilt sie als
 zerbrochen, nie als sauber.
@@ -277,7 +277,7 @@ nach 20 Sekunden ab.
 Beispiel (gekürzt):
 
 ```
-# home secrets 15.10.2026 09:00 | 2 Funde
+# home secrets 15.10.2026 09:00 | 2 findings
 
 | Name | Art | Datei | Prüfung | Ablauf | Ort | Neu anlegen |
 |---|---|---|---|---|---|---|
@@ -328,7 +328,7 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 `hal setup` hat dafür den Schritt „Geheimnisse“: Er gilt als erledigt, wenn das Manifest
 auf diesem PC kein offenes Geheimnis hat (nur `stat`); offen ist auch ein Eintrag, dessen
 Vorhandensein sich nicht feststellen lässt. Ohne `--apply` nennt er die offenen in der Zeile
-`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; `--apply` führt den Assistenten aus, der ein eigenes Terminal braucht. Der
+`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; `--apply` zeigt vor dem Assistenten `! secrets  N missing  a, b` und führt ihn dann aus; er braucht ein eigenes Terminal. Der
 Assistent ist derselbe wie `home secrets --setup`, und `--setup` unten meint ihn. Ein Eintrag mit
 `loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
@@ -346,7 +346,8 @@ Fine-grained-Tokens keine API, und für Cloudflare bräuchte der Assistent
 einen Admin-Schlüssel auf der Platte. Den Login im Browser macht deshalb der
 Mensch, alles andere der Assistent. Je Token:
 
-1. Er sagt, was kommt: welche Seite, welcher Login, welche Rechte, wofür.
+1. Er sagt, was kommt: eine Zeile `›` mit dem Eintrag und `new token`, darunter `why:` (wofür) und die
+   Checkliste der Rechte. Ein erzeugter oder von Hand anzulegender Eintrag druckt nur seine Ergebniszeile.
    Vorher prüft er die Ordner auf dem Weg: Ist einer lockerer als `700`, für
    seinen Besitzer verschlossen, ein Symlink („ist ein Symlink“) oder kein
    Ordner, nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
@@ -389,36 +390,32 @@ endet mit `✓ cloudflare/turn-hopin/key-id  stored  not verified · ~/.secrets/
 Beispiel (gekürzt, ein abgelehnter Versuch):
 
 ```
-== github/fleet-read (Token, fehlt)
-Wofür: Nichts liest es heute; edge external verlangt es erst wieder, wenn edge#30 X2/X3 die GitHub-Einstellungen als Code baut (Repo-Einstellungen, Rulesets, Actions-Regeln, Namen der Org-Secrets, nie ihre Werte). Die Datei bleibt, widerrufen wird nichts.
-Seite: GitHub, neues Fine-grained-Token. Login: dein GitHub-Konto, Inhaber der Org overnightworks.
-Der Link füllt vor: Name github/fleet-read, Resource owner overnightworks, Ablauf 366 Tage, die Beschreibung und diese Rechte:
-  - metadata: read
-  - organization_secrets: read
-Von Hand, das kann kein Link vorgeben:
-  [ ] Repository access: All repositories
-  [ ] die Rechte im Formular mit der Liste oben vergleichen
-  [ ] Generate token, dann den Wert kopieren
-Enter öffnet die Seite im Browser.
-Geöffnet: https://github.com/settings/personal-access-tokens/new?name=github%2Ffleet-read&…
-Token einfügen (unsichtbar; leer überspringt):
-  ✗ github/fleet-read  rejected  GitHub antwortet 401 · paste again or leave empty
-Token einfügen (unsichtbar; leer überspringt):
+  › github/fleet-read  new token  the link fills name, owner, expiry and rights
+    why: Nothing reads it today; edge external needs it again once edge#30 X2/X3 builds the GitHub settings as code (repo settings, rulesets, Actions rules, org secret names, never their values). The file stays, nothing is revoked.
+    prefilled: Metadata read, Organization secrets read
+    [ ] Repository access: All repositories
+    [ ] compare the rights in the form with the line above
+    [ ] Generate token, copy the value
+    Enter opens the page in your browser:
+    opened github.com/settings/personal-access-tokens/new?…
+    paste the token (hidden, empty skips):
+  ✗ github/fleet-read  rejected  GitHub answers 401 · paste again or leave empty
+    paste the token (hidden, empty skips):
   ✓ github/fleet-read  verified  ~/.secrets/github/fleet-read (600)
-
-== opentofu/state-passphrase (Dienstpasswort, fehlt)
-Wofür: OpenTofu verschlüsselt damit State und Plan unter ~/.secrets/opentofu.
-Wird zufällig erzeugt und nie gezeigt.
   ✓ opentofu/state-passphrase  generated  ~/.secrets/opentofu/state-passphrase (600) · never shown
 ```
+
+`opened` zeigt Host und Pfad der Seite, bei einer Abfrage mit `?…`; öffnet kein Browser die
+Seite, steht die ganze Adresse in der gelben Zeile `no browser opened`.
 
 Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
 `next: hal apply`; es zeigt den Plan vor seinem Ja. Allein gefahren endet
 der Assistent mit der letzten Eintragszeile und dem Exit-Code. Exit-Code: `0` nichts fehlt mehr,
 `1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
-Eintrag, `130` abgebrochen. Ein unerwarteter Fehler nennt nur seine Art und den
-Eintrag, nie seine Meldung, denn die könnte einen Wert zitieren, dazu, ob dieser
+Eintrag, `130` abgebrochen. Strg-C und das Ende der Eingabe nennen den Eintrag, an dem sie trafen.
+Ein unerwarteter Fehler nennt nur seine Art und den Eintrag, nie seine
+Meldung, denn die könnte einen Wert zitieren, dazu, ob dieser
 Eintrag danach gespeichert ist, und `hal setup --apply` zum Weitermachen;
 vorher gespeicherte Einträge bleiben.
 
@@ -510,7 +507,7 @@ come before the system step, which is the one that asks for sudo:
    another version.
 7. **System.** The playbook `src/home_tools/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
-   It also installs `msmtp` and `ca-certificates` for the mail of `home check`, purges `rsyslog`
+   It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
    restarting Docker while it does not report `journald`.
    It asks once for sudo.
@@ -537,7 +534,7 @@ a minute, `1h02m` from an hour) and stands after the counts and before the hint;
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit keeps the `failed` row. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
 `--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
@@ -596,7 +593,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 - **rsyslog is removed.** After the refusals below pass, the play purges the package `rsyslog` (apt, no autoremove) and then
   deletes `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err` and `ufw.log` with every rotation (`name` and `name.*`
   directly under `/var/log`, files only) **without a copy**, not even to `/var/backups/home-setup`: a copy would outlive the
-  30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `home check` reads the
+  30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `hal check` reads the
   same list. The purge comes first, so a running rsyslog cannot recreate a deleted file. Both tasks work by state, so a run
   interrupted between them is finished by the next `--apply`, and a second one reports `changed=0`. The dry run lists the
   purge and each file it would delete, and changes nothing. `cloud-init.log`, `dpkg.log` and `alternatives.log` stay.
@@ -612,7 +609,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
     back the packaged one.
 - **The mail packages.** After the refusals below pass, the play installs `msmtp` and `ca-certificates` with apt, without
   Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `--apply` reports `changed=0`.
-  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `home check` then reports "mail failed: msmtp could not deliver via" while
+  Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `hal check` then reports "mail failed: msmtp could not deliver via" while
   `~/.secrets/smtp/account.toml` exists.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
   locked password, the shell `/usr/sbin/nologin`, a home with mode 0700, no subuid or subgid range
@@ -658,7 +655,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 
   Or roll back as described.
 - **Docker's log default.** The same run merges `"log-driver": "journald"` into `/etc/docker/daemon.json` (`DOCKER_LOG_DRIVER`
-  in `src/home_tools/system_step.py`, which `home check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
+  in `src/home_tools/system_step.py`, which `hal check` reads too). Every other key stays, such as `runtimes.nvidia`; the file is
   written root-owned, mode 644, with sorted keys, so the diff of a file that only holds the runtime is one new line, and it is
   checked with `dockerd --validate` before it replaces the old one. A file that does not parse, one that is not an object, a
   `log-opts` key, another `log-driver`, and a Docker that does not answer `docker info` are refused before anything is
@@ -676,7 +673,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   (a hanging restart skips the rescue on Ctrl-C) makes the next apply refuse, because Docker does not answer. Then remove
   `log-driver` from `/etc/docker/daemon.json` by hand; the backup holds the old bytes.
 - **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
-  the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `home check` there:
+  the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `hal check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
   a rejected login and a stalled server. Its cells R0-R7 drive rsyslog's removal there: the image carries rsyslog, an
   unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
@@ -693,7 +690,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   rescue, against a proof-only `docker.service` drop-in whose flag contradicts the file. The proof runs the 24.04 package's
   Docker without a GPU, not the PC's. The agents' refusal cells A1-8 and A1-9 run against the engine's own `docker.socket`.
 
-### Das Mail-Konto von `home check`
+### Das Mail-Konto von `hal check`
 
 Zwei Dateien, beide von Hand angelegt, beide Modus 0600, beide im Geheimnis-Manifest:
 
@@ -741,7 +738,7 @@ zu löschen.
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `home check` ab |
+| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
 
 Beispiel:
 
@@ -760,7 +757,7 @@ ln -s ~/git/edge/bin/home ~/.local/bin/home
 ```
 
 Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
-`systemd/` und startet die Timer, darunter `home-check.timer`. `hal` liegt nicht im PATH; der
+`systemd/` und startet die Timer, darunter `hal-check.timer`. `hal` liegt nicht im PATH; der
 Starter des Checkouts ruft es auf.
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/home` ist ein Link auf
@@ -773,7 +770,7 @@ Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked
 ausführen (oder `home` über `bin/home` aufrufen), bevor der Timer läuft.
 
 Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
-nach) und fährt nur `home check`.
+nach) und fährt nur `hal check`.
 
 ## Tests
 

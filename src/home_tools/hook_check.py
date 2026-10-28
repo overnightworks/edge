@@ -1,4 +1,4 @@
-"""`home check`'s hook check: sees when the global commit hook stops applying, because git fails open when it drifts.
+"""`hal check`'s hook check: sees when the global commit hook stops applying, because git fails open when it drifts.
 
 `setup.py` owns the expected state (the rendered hook, the pinned quality, the hooks directory); this module only compares
 the machine against it and names the fix command of each difference. A tool that cannot be run raises, so the check
@@ -175,16 +175,16 @@ def collect_findings(layout: Layout, run: CommandRunner) -> list[HookFinding]:
 
 
 def render_report(findings: list[HookFinding], now: datetime) -> str:
-    lines = [f"# home hook {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
+    lines = [f"# hook {now:%d.%m.%Y %H:%M} | {findings_count(len(findings))}", ""]
     if findings:
         rows = [[f.rule, f.subject, f.detail, f.fix] for f in findings]
-        lines += markdown_table(["Regel", "Gegenstand", "Befund", "Korrektur"], rows)
+        lines += markdown_table(["Rule", "Subject", "Finding", "Fix"], rows)
     else:
-        lines.append("Keine Funde.")
+        lines.append("No findings.")
     return "\n".join(lines) + "\n"
 
 
 def inspect(layout: Layout, run: CommandRunner, now: datetime) -> tuple[list[HookFinding], str]:
-    """What `home check` reads of the hook; findings and their report."""
+    """What `hal check` reads of the hook; findings and their report."""
     findings = collect_findings(layout, run)
     return findings, render_report(findings, now)

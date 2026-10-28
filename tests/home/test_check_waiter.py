@@ -1,4 +1,4 @@
-"""The detached unit `home check` starts for a notification click, run against stub tools (#29 rules 1 to 3)."""
+"""The detached unit `hal check` starts for a notification click, run against stub tools (#29 rules 1 to 3)."""
 
 from __future__ import annotations
 

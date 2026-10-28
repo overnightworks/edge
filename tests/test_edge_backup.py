@@ -33,7 +33,7 @@ from edge_backup_support import (
     removed_servers,
 )
 
-from edge_backup import cli, host
+from edge_backup import cli, docker, host
 from edge_backup.apps import AppsError, Audio, DumpKind, PostgresDatabase, PostgresMajor, parse_apps
 from edge_backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from edge_backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
@@ -148,7 +148,7 @@ def test_an_app_named_like_the_pre_apply_tag_is_refused_before_anything_runs(
     outcome = edge_backup(*declare_apps(home, pre_apply_app), "backup", "pre-apply")
 
     assert (outcome.exit_code, machine.calls) == (3, [])
-    assert "als restic-Tag pre-apply belegt" in outcome.err
+    assert "taken by the restic tag pre-apply" in outcome.err
     assert outcome.status is None
 
 
@@ -215,7 +215,7 @@ def test_the_restored_audio_is_counted_by_the_manifests_own_rule(edge_backup, ma
     edge_backup("backup")
     edge_backup("restore", "--test")
 
-    scans = [argv for label, argv in machine.calls if label == "Zählen der Dateien"]
+    scans = [argv for label, argv in machine.calls if label == docker.FILE_COUNT_LABEL]
     assert [mount_of(argv, "/scanned")["type"] for argv in scans] == ["volume", "bind"]
     assert len({tuple(argv[argv.index("--entrypoint") :]) for argv in scans}) == 1
     assert all(any(m.endswith("target=/scanned,readonly") for m in argv) for argv in scans)
@@ -229,7 +229,7 @@ def test_restore_test_removes_only_throwaway_servers_it_owns_by_id(edge_backup, 
 
     assert outcome.exit_code == 0, outcome.err
     assert removed_servers(machine) == ["1eft0ver", RESTORE_SERVER_ID]
-    start = machine.argv_of("Start der Wegwerf-Datenbank")
+    start = machine.argv_of(docker.SERVER_START_LABEL)
     assert start[start.index("--label") + 1] == f"{RESTORE_OWNER_LABEL}={RESTORE_OWNER_ROLE}"
 
 
@@ -240,16 +240,16 @@ def test_restore_test_never_removes_a_foreign_container_holding_the_name(edge_ba
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "Start der Wegwerf-Datenbank ended with exit 125" in outcome.out
+    assert f"{docker.SERVER_START_LABEL} ended with exit 125" in outcome.out
     assert removed_servers(machine) == []
 
 
 @pytest.mark.parametrize(
     ("output", "complaint"),
     [
-        (b"", "docker run meldete keine Container-ID"),
-        (f"WARNING: platform mismatch\n{RESTORE_SERVER_ID}\n".encode(), "keine Container-ID"),
-        (b"not-a-container-id\n", "docker run meldete keine Container-ID"),
+        (b"", "docker run reported no container id"),
+        (f"WARNING: platform mismatch\n{RESTORE_SERVER_ID}\n".encode(), "no container id"),
+        (b"not-a-container-id\n", "docker run reported no container id"),
         (b"\xff\xfe\n", "docker printed output that is not UTF-8"),
     ],
 )
@@ -281,7 +281,7 @@ def test_the_throwaway_server_has_no_network_and_never_touches_live_data(edge_ba
     edge_backup("backup")
     edge_backup("restore", "--test")
 
-    start = machine.argv_of("Start der Wegwerf-Datenbank")
+    start = machine.argv_of(docker.SERVER_START_LABEL)
     assert start[start.index("--network") + 1] == "none"
     assert not any("--mount" in argv or "-v" in argv for argv in [start])
     # #107 T10: the server keeps no log and logs no error, so no row value reaches one.
@@ -298,7 +298,7 @@ def test_the_throwaway_server_has_no_network_and_never_touches_live_data(edge_ba
     ("failing_label", "exit_code", "phase", "backup_counts"),
     [
         ("pg_dump", 1, "dump", False),
-        ("Zählen der Dateien", 1, "manifest", False),
+        (docker.FILE_COUNT_LABEL, 1, "manifest", False),
         ("restic backup", 3, "backup", False),
         ("restic backup", 1, "backup", False),
         ("restic forget", 1, "forget", True),
@@ -629,7 +629,7 @@ def test_restore_test_fails_when_the_copy_is_not_what_was_backed_up(
 
 @pytest.mark.parametrize(
     "failing_label",
-    ["Zählen der Dateien", "Start der Wegwerf-Datenbank", "Entfernen der Wegwerf-Datenbank"],
+    [docker.FILE_COUNT_LABEL, docker.SERVER_START_LABEL, docker.SERVER_REMOVAL_LABEL],
 )
 def test_restore_test_counts_a_container_that_will_not_run_as_a_failed_command(
     edge_backup, machine, failing_label
@@ -649,7 +649,7 @@ def test_restore_test_without_a_snapshot_fails(edge_backup):
     outcome = edge_backup("restore", "--test")
 
     assert outcome.exit_code == 3
-    assert "kein erfolgreiches Backup von songmaker aufgezeichnet" in outcome.out
+    assert "no successful backup of songmaker recorded" in outcome.out
     assert outcome.status["failing_phase"] == "restore"
 
 
@@ -878,7 +878,7 @@ def test_an_unreadable_status_file_is_never_overwritten(
 
     assert outcome.exit_code == 3
     [line, *_] = outcome.err.splitlines()
-    assert "Statusdatei ist unlesbar" in line
+    assert "status file is unreadable" in line
     assert _identity_of(machine.status_file) == before
     assert machine.calls == []
 
@@ -951,7 +951,7 @@ def test_restore_refuses_a_target_in_the_directory_runs_sweep(edge_backup, machi
     outcome = edge_backup("restore", "songmaker", "--target", str(work_dir / target))
 
     assert outcome.exit_code == 3
-    assert "Arbeitsverzeichnis" in outcome.err
+    assert "work directory" in outcome.err
     assert list(work_dir.iterdir()) == []
 
 
@@ -1014,7 +1014,7 @@ def test_apps_toml_refuses_audio_that_is_not_declared_whole(dropped):
         if not any(line.startswith(f"{key} =") for key in dropped)
     )
 
-    with pytest.raises(AppsError, match="Audio braucht volume und audio_reference_table"):
+    with pytest.raises(AppsError, match="audio needs volume and audio_reference_table"):
         parse_apps(text)
 
 
@@ -1023,7 +1023,7 @@ def test_apps_toml_refuses_a_postgres_major_without_a_restore_image(major):
     """#107 rule 2: a major that is no pinned plain integer is refused at load."""
     text = cli.DEFAULT_APPS.read_text().replace("postgres_major = 17", f"postgres_major = {major}")
 
-    with pytest.raises(AppsError, match="postgres_major muss einer von"):
+    with pytest.raises(AppsError, match="postgres_major must be one of"):
         parse_apps(text)
 
 
@@ -1066,7 +1066,7 @@ def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
     outcome = edge_backup(*shipped, "restore", "--test")
 
     assert outcome.exit_code == 0, outcome.err
-    servers = [argv[-5] for label, argv in machine.calls if label == "Start der Wegwerf-Datenbank"]
+    servers = [argv[-5] for label, argv in machine.calls if label == docker.SERVER_START_LABEL]
     assert servers == [RESTORE_IMAGES[major] for major in PostgresMajor]
     asked = [argv[argv.index("--command") + 1] for label, argv in machine.calls if label == "psql"]
     assert asked[-1] == 'SELECT count(*) FROM "realm"'
@@ -1102,7 +1102,7 @@ def test_apps_toml_refuses_require_rows_that_is_not_a_boolean():
     """#107 rule 3: require_rows is a declared yes or no."""
     text = cli.DEFAULT_APPS.read_text().replace("require_rows = true", 'require_rows = "yes"')
 
-    with pytest.raises(AppsError, match="require_rows muss true oder false sein"):
+    with pytest.raises(AppsError, match="require_rows must be true or false"):
         parse_apps(text)
 
 
@@ -1130,7 +1130,7 @@ def test_an_app_never_backed_up_is_named_so_by_restore_and_restore_test(edge_bac
     restored = edge_backup(*shipped, "restore", "keycloak", "--target", str(home / "restored"))
     tested = edge_backup(*shipped, "restore", "--test")
 
-    expected = "kein erfolgreiches Backup von keycloak aufgezeichnet"
+    expected = "no successful backup of keycloak recorded"
     assert expected in restored.err
     assert expected in tested.out
     assert not (home / "restored").exists()
@@ -1176,10 +1176,10 @@ def test_no_output_or_status_holds_the_dump(edge_backup, machine):
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        (("dump", '"sh -c pg_dump"'), "dump muss einer von"),
-        (("volume", '"audio files"'), "volume muss"),
-        (("hook", '"rm -rf /"'), "unbekannter Schlüssel ['hook']"),
-        (("db_name", '"x; DROP TABLE songs"'), "db_name muss"),
+        (("dump", '"sh -c pg_dump"'), "dump must be one of"),
+        (("volume", '"audio files"'), "volume must match"),
+        (("hook", '"rm -rf /"'), "unknown key ['hook']"),
+        (("db_name", '"x; DROP TABLE songs"'), "db_name must match"),
     ],
 )
 def test_apps_toml_accepts_only_validated_records(change, message):
@@ -1199,7 +1199,7 @@ def test_apps_toml_accepts_only_validated_records(change, message):
 def test_apps_toml_rejects_an_unsafe_sql_identifier():
     text = cli.DEFAULT_APPS.read_text().replace('"songs"', '"songs\\"; --"')
 
-    with pytest.raises(AppsError, match="count_table muss"):
+    with pytest.raises(AppsError, match="count_table must match"):
         parse_apps(text)
 
 

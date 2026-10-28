@@ -23,6 +23,12 @@ from edge_backup_support import (
 
 from edge_backup import sqlite_copy
 from edge_backup.apps import AppsError, SqliteDatabase, parse_apps
+from edge_backup.docker import (
+    SERVER_START_LABEL,
+    SQLITE_CHECK_LABEL,
+    SQLITE_COPY_LABEL,
+    SQLITE_OWNER_LABEL,
+)
 from edge_backup.settings import SQLITE_IMAGE
 from edge_backup.verify import Manifest, VerificationError
 
@@ -298,7 +304,7 @@ def test_the_copy_runs_hardened_as_the_database_owner_with_exactly_the_one_volum
     machine.other_volumes["presentator"] = ["presentator_database"]
     edge_backup("backup", *_sqlite_apps(home))
 
-    argv = machine.argv_of("Kopie der SQLite-Datenbank")
+    argv = machine.argv_of(SQLITE_COPY_LABEL)
 
     assert argv[:2] == ["docker", "run"]
     assert SQLITE_IMAGE in argv
@@ -328,7 +334,7 @@ def test_the_owner_is_read_through_a_read_only_mount_as_the_operator(edge_backup
     machine.other_volumes["presentator"] = ["presentator_database"]
     edge_backup("backup", *_sqlite_apps(home))
 
-    argv = machine.argv_of("Lesen des SQLite-Besitzers")
+    argv = machine.argv_of(SQLITE_OWNER_LABEL)
 
     assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
     assert next(m for m in _mounts(argv) if "target=/data" in m).endswith(",readonly")
@@ -345,7 +351,7 @@ def test_an_owner_that_is_root_or_unreadable_is_refused_before_any_copy(
     outcome = edge_backup("backup", *declare_apps(home, SQLITE_TOML + SONGMAKER_TOML))
 
     assert outcome.exit_code == 3
-    assert "Kopie der SQLite-Datenbank" not in machine.labels()
+    assert SQLITE_COPY_LABEL not in machine.labels()
     assert [s["app"] for s in machine.snapshots] == ["songmaker"]
     assert (outcome.status["failing_app"], outcome.status["exit_category"]) == (
         "presentator",
@@ -366,7 +372,7 @@ def test_zero_or_two_matching_volumes_fail_that_app_and_the_others_still_back_up
     assert [s["app"] for s in machine.snapshots] == ["songmaker"]
     assert outcome.status["failing_app"] == "presentator"
     assert outcome.status["exit_category"] == "configuration"
-    assert "Kopie der SQLite-Datenbank" not in machine.labels()
+    assert SQLITE_COPY_LABEL not in machine.labels()
 
 
 def test_a_missing_database_file_fails_that_app_and_the_others_still_back_up(
@@ -445,12 +451,12 @@ def test_the_restore_test_mounts_no_volume_and_the_restored_directory_read_only(
     """#461 A6 M12: the restore test mounts no volume."""
     edge_backup("restore", "--test", *backed_up)
 
-    argv = machine.argv_of("Prüfung der SQLite-Kopie")
+    argv = machine.argv_of(SQLITE_CHECK_LABEL)
 
     assert not [a for a in argv if a.startswith("type=volume")]
     assert next(m for m in _mounts(argv) if "target=/data" in m).endswith(",readonly")
     assert argv[argv.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
-    assert "Start der Wegwerf-Datenbank" not in machine.labels()
+    assert SERVER_START_LABEL not in machine.labels()
 
 
 def _change_snapshot(machine: Machine, **replacements: bytes) -> None:
@@ -498,7 +504,7 @@ def test_a_container_that_will_not_run_is_a_failed_command_not_a_verification(
     edge_backup, machine, backed_up, exit_code
 ):
     """#461 M11: only the script's verdict exit is a verification failure, not a crash."""
-    machine.failing["Prüfung der SQLite-Kopie"] = exit_code
+    machine.failing[SQLITE_CHECK_LABEL] = exit_code
 
     outcome = edge_backup("restore", "--test", *backed_up)
 

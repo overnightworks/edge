@@ -18,8 +18,8 @@ def _answering(stdout: str, stderr: str, code: int):
     ("stderr", "cause"),
     [
         (
-            "error: hal backup: fehlgeschlagen: kein Passwort\nnext: hal backup --help\n",
-            "hal backup: fehlgeschlagen: kein Passwort",
+            "error: hal backup: failed: no password\nnext: hal backup --help\n",
+            "hal backup: failed: no password",
         ),
         (
             "error: --pre-apply needs the name of an app\nnext: hal backup --help\n",
