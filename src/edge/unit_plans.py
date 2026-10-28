@@ -268,7 +268,8 @@ def plan_recreates(
             if service not in changed:
                 continue
             if swapped := _swapped_image(service, config, live, image_id):
-                moved.append(swapped)
+                if swapped not in moved:
+                    moved.append(swapped)
             else:
                 recreates.append(Recreate(unit.key, service))
     return RecreatePlans(recreates, moved)

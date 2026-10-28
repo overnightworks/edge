@@ -8,6 +8,7 @@ import pytest
 import test_edge_apply as base
 import yaml
 from test_edge_apply import (
+    ENABLED,
     LABELLED_IMAGE_ID,
     OLD_IMAGE,
     RECREATE_TRAEFIK,
@@ -157,6 +158,25 @@ def test_a_rebuilt_tag_names_the_reference_never_an_id(running, switch, scripted
     assert LABELLED_IMAGE_ID not in out
     assert REBUILT_ID not in out
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
+
+
+def test_a_rebuilt_tag_of_a_service_two_enabled_profiles_share_gives_one_old_image_row(
+    step_ca_applied, switch, scripted, repository
+):
+    """Decision 4: each kept image prints as exactly one row."""
+    service = scripted.config["services"]["step-ca"]
+    service["image"] = "step-ca:local"
+    service["profiles"].append("echo")
+    scripted.config["services"]["echo"] = {"profiles": ["echo"]}
+    write_fleet(repository, ENABLED + "  echo:\n    run: {enabled: true}\n")
+    assert switch()[0] == 0
+    scripted.images["step-ca"] = "step-ca:local"
+    scripted.image_ids["step-ca:local"] = REBUILT_ID
+    scripted.change_definition("step-ca")
+
+    _, out, _ = switch()
+
+    assert out.count(OLD_IMAGE) == 1
 
 
 def test_a_bump_beside_a_definition_change_gives_the_bump_line_once(running, switch, scripted):
