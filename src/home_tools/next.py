@@ -18,8 +18,7 @@ from typing import TYPE_CHECKING
 
 from hal_output import Row
 from home_tools import hook_check, secrets_setup, secrets_view, setup
-from home_tools.secrets_view import FindingRule, SecretEntry, SecretFinding
-from home_tools.config import Config
+from home_tools.secrets_view import FindingRule, Presence, SecretEntry, SecretFinding, Verification
 from home_tools.layout import Layout
 from home_tools.report import ClosedBy, Tally
 
@@ -95,7 +94,7 @@ def _missing_secret_steps(missing: list[SecretEntry]) -> Iterator[OperatorStep]:
         where = OWN_TERMINAL if secrets_setup.SETUP_NEEDS_A_TERMINAL else ANY_TERMINAL
         yield OperatorStep("home secrets --setup", where, "; ".join(said))
     for entry in by_hand:
-        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} vorhanden")
+        yield OperatorStep(_as_command(entry.recreate), f"von Hand, für {entry.name}", f"home secrets zeigt {entry.name} {Presence.PRESENT.value}")
 
 
 def _cleared(finding: SecretFinding) -> str:
@@ -151,7 +150,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
     yield from _fix_steps(fixable)
     yield from _missing_secret_steps(entries_found_by(FindingRule.MISSING))
     for entry in entries_found_by(FindingRule.VERIFICATION_FAILED):
-        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} geprüft: gültig")
+        yield OperatorStep(_as_command(entry.recreate), ANY_TERMINAL, f"home secrets zeigt {entry.name} {Verification.PASSED.value}")
     for entry in entries_found_by(FindingRule.REVOCATION_UNCONFIRMED):
         yield OperatorStep(entry.revoke_url, f"Browser, {entry.name} widerrufen", "das Token steht dort nicht mehr")
     for findings in without_fix.values():
@@ -228,31 +227,31 @@ def render(plan: Plan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _next_from_args(_args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _next_from_args(_args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     sys.stdout.write(render(collect(layout, ports)))
     return 0
 
 
 NEXT_EXAMPLES = """\
-Beispiele:
-  home next    nummerierte Schritte nur für dich, der dringendste zuerst, je mit Befehl, Ort und Erwartung;
-               zuletzt eine Zeile, die zählt, was ein Agent einsortiert
+Examples:
+  home next    numbered steps only for you, most urgent first, each with command, place and expectation;
+               last a line that counts what an agent sorts out
 
-Liest nur und ändert nichts; braucht kein Terminal, Agenten dürfen es fahren.
-Exit-Code: immer 0, auch mit Schritten; 3 bei einem unerwarteten Fehler.
+Only reads and changes nothing; needs no terminal, agents may run it.
+Exit code: always 0, even with steps; 3 on an unexpected error.
 """
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "next",
-        help="was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl",
+        help="what you need to do now, each step with its exact command",
         description=(
-            "Zeigt die Schritte, die nur du tun kannst, aus hal setup, home secrets und der Hook-Prüfung,"
-            " und zählt in einer Zeile, was ein Agent einsortiert; ändert nichts."
+            "Shows the steps only you can do, from hal setup, home secrets and the hook check,"
+            " and counts in one line what an agent sorts out; changes nothing."
         ),
         epilog=NEXT_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     # It reads the secrets view, so an unexpected error is shown without its message, as `home secrets` does.
-    parser.set_defaults(handler=_next_from_args, error_may_quote_a_secret=True, reads_config_as_a_source=True)
+    parser.set_defaults(handler=_next_from_args, error_may_quote_a_secret=True)

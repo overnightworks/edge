@@ -11,8 +11,6 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from datetime import date
 
-from hal_output import printable
-
 # ASCII digits only (`re.ASCII`) and `fullmatch`, not `$`: a trailing newline is no release.
 _RELEASE = re.compile(r"v(\d{4})\.(\d{2})\.(\d{2})\.([1-9]\d*)", re.ASCII)
 GRAMMAR = "vYYYY.MM.DD.N"
@@ -29,11 +27,17 @@ class Release:
 
 
 @dataclass(frozen=True)
+class SkippedTag:
+    tag: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class Choice:
-    """The newest release on the branch, if any, and one line per skipped tag."""
+    """The newest release on the branch, if any, and each skipped tag with its reason."""
 
     newest: Release | None
-    skipped: tuple[str, ...]
+    skipped: tuple[SkippedTag, ...]
 
 
 def parse(tag: str) -> Release | None:
@@ -51,14 +55,13 @@ def choose(tags: Iterable[str], on_branch: Collection[str], branch: str) -> Choi
     """The newest release among `tags` that is in `on_branch`; every other tag is skipped and
     named, in tag order."""
     eligible: list[Release] = []
-    skipped: list[str] = []
+    skipped: list[SkippedTag] = []
     for tag in sorted(set(tags)):
         release = parse(tag)
-        shown = printable(tag)
         if release is None:
-            skipped.append(f"skipped tag {shown}: not {GRAMMAR}")
+            skipped.append(SkippedTag(tag, f"not {GRAMMAR}"))
         elif tag not in on_branch:
-            skipped.append(f"skipped tag {shown}: not on origin {printable(branch)}")
+            skipped.append(SkippedTag(tag, f"not on origin {branch}"))
         else:
             eligible.append(release)
     return Choice(max(eligible, default=None), tuple(skipped))

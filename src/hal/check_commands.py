@@ -11,12 +11,12 @@ from pathlib import Path
 from edge.external import cli as external
 from edge.external import host_check
 from edge_check import inspection
+from hal import config as hal_config
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
 from home_tools import check as daily_check
 from home_tools import secrets_view
 from home_tools.cli import build_layout_and_ports
-from home_tools.config import load_config
 
 EXPOSURE = "exposure"
 HOSTS = "hosts"
@@ -25,6 +25,7 @@ HOSTS = "hosts"
 HELP = f"""\
 hal check             the daily check: services, backup, commit hook, secrets, server logs; it
                       writes the report and mails and pops up what is new, as the timer's run does
+                      settings: ~/.config/hal/config.toml, table [check] (docs/home.md)
 hal check {EXPOSURE}    what reaches beyond loopback on this PC
 hal check {HOSTS}       what Cloudflare holds against the hosts fleet.yaml declares
 """
@@ -63,15 +64,12 @@ def _run_hosts(as_json: bool) -> ExitCode:
 def _run_daily() -> ExitCode:
     layout, ports = build_layout_and_ports()
     try:
-        config = load_config(layout)
-    except (ValueError, OSError) as error:  # tomllib.TOMLDecodeError is a ValueError subclass
-        message = str(error)
-        write_error(
-            message if str(layout.config_file) in message else f"{layout.config_file}: {message}"
-        )
+        settings = hal_config.load(layout.home)
+    except hal_config.ConfigInvalid as error:
+        write_error(f"{error.path}: {error.reason}")
         return ExitCode.USAGE  # exit 2 is "configuration or manifest invalid" for the daily check
     context = daily_check.CheckContext(
-        layout, config, ports.run, ports.probe, ports.now, ports.disk_space
+        layout, settings.check, ports.run, ports.probe, ports.now, ports.disk_space
     )
     try:
         return ExitCode(daily_check.check(context))

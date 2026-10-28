@@ -4218,7 +4218,7 @@ def test_a_running_unit_whose_image_changed_is_named_and_nothing_changes(
     assert runs[0] == runs[1]
     exit_code, out, _ = runs[0]
     assert exit_code == 0
-    assert f"{apply.COMMAND}: {STEP_CA_KEPT}\n{apply.COMMAND}: nothing to change" in out
+    assert f"  {STEP_CA_KEPT}\n{apply.COMMAND}: nothing to change" in out
     assert "Type" not in out
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids

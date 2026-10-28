@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from hal_output import Glyph, Noun, Row, Verdict, counted, write_error, write_row, write_verdict
 from home_tools import secrets_setup
+from home_tools.secrets_setup import WalkEnd
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
 from home_tools.system_step import (
     AGENT_USER,
@@ -30,7 +31,6 @@ from home_tools.system_step import (
     SystemStep,
     UnresolvableRunningUser,
 )
-from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UnitsApplied, UserUnits
 
@@ -47,7 +47,6 @@ HOOK_MODE = 0o755
 HOOK_WHY = "without the hook no commit is checked for secrets"
 UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
-SECRETS_LEFT_OPEN = "not every secret is set up; the lines above say which one is open"
 SYSTEM_WHY = (
     "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
 )
@@ -121,8 +120,12 @@ class SecretsStillOpen(StepFailed):
     """The wizard walked every secret and some are still open; `names` are their row names, from disk."""
 
     def __init__(self, names: tuple[str, ...]) -> None:
-        super().__init__(SECRETS_LEFT_OPEN)
+        super().__init__()
         self.names = names
+
+
+class WalkTold(StepFailed):
+    """The wizard stopped and already wrote the error pair that ends the run; setup adds no row and no second pair."""
 
 
 class StillOpenSecret(Noun):
@@ -283,13 +286,13 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
     def apply() -> Applied:
         if is_verified():
             return Applied.UNCHANGED
-        exit_code = secrets_setup.run_setup(layout, boundaries, ports.now)
-        if exit_code == secrets_setup.ABORTED_EXIT:
+        end = secrets_setup.run_setup(layout, boundaries, ports.now)
+        if end is WalkEnd.ABORTED:
             raise KeyboardInterrupt  # the wizard has said so; the caller's own handling gives the exit code
-        if exit_code == secrets_setup.STILL_OPEN_EXIT:
+        if end is WalkEnd.STILL_OPEN:
             raise SecretsStillOpen(_open_names(open_secrets()))
-        if exit_code != 0:
-            raise StepFailed(SECRETS_LEFT_OPEN)
+        if end.wrote_its_pair:
+            raise WalkTold
         return Applied.CHANGED
 
     def open_names() -> str:
@@ -306,7 +309,7 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
         check,
         apply,
         SECRETS_WHY,
-        SECRETS_LEFT_OPEN,
+        "not every secret is set up",
         open_fact=open_names,
         before_apply=announce_missing,
         events=SECRETS_EVENTS,
@@ -535,17 +538,8 @@ def _failure_sentence(step: Step, error: OSError | StepFailed) -> str:
     return f"{step.failure}: {error.strerror or type(error).__name__}"
 
 
-def _stopped(row: SetupRow, step: Step, event: SetupEvent, apply: bool, error: OSError | StepFailed) -> None:
-    """The error pair after a failed row: what stopped, what /etc is left as or how many secrets are open, and the command that goes on."""
-    leaves = (
-        "/etc may be partial"
-        if step.may_leave_system_partial and apply and event is SetupEvent.FAILED
-        else "/etc unchanged"
-    )
-    if isinstance(error, SecretsStillOpen):
-        detail = f" · {counted(len(error.names), StillOpenSecret.SECRET)}"
-    else:
-        detail = f" · {leaves}" if row is SetupRow.SYSTEM else ""
+def _stopped(row: SetupRow, step: Step, detail: str) -> None:
+    """The error pair after a failed row: what stopped, what it left behind, and the command that goes on."""
     write_error(f"setup stopped at {row}{detail}", step.next_step)
 
 
@@ -572,17 +566,23 @@ def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply:
 
 
 def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, apply: bool) -> None:
-    error = stopped.error
-    if isinstance(error, SecretsStillOpen):
-        event = SetupEvent.OPEN
-        outcome = Outcome(event, ", ".join(error.names), count=len(error.names))
-    else:
-        event = SetupEvent.NOT_STARTED if isinstance(error, StepRefused) else SetupEvent.FAILED
-        outcome = Outcome(event, _failure_sentence(stopped.step, error))
+    step = stopped.step
+    match stopped.error:
+        case WalkTold():
+            return
+        case SecretsStillOpen(names=names):
+            outcome = Outcome(SetupEvent.OPEN, ", ".join(names), count=len(names))
+            detail = f" · {counted(len(names), StillOpenSecret.SECRET)}"
+        case error:
+            event = SetupEvent.NOT_STARTED if isinstance(error, StepRefused) else SetupEvent.FAILED
+            outcome = Outcome(event, _failure_sentence(step, error))
+            partial = step.may_leave_system_partial and apply and event is SetupEvent.FAILED
+            leaves = "/etc may be partial" if partial else "/etc unchanged"
+            detail = f" · {leaves}" if rows[position] is SetupRow.SYSTEM else ""
     write_row(outcome.row(rows[position]))
     for later in rows[position + 1 :]:
         write_row(Outcome(SetupEvent.NOT_RUN).row(later))
-    _stopped(rows[position], stopped.step, event, apply, error)
+    _stopped(rows[position], step, detail)
 
 
 def setup(layout: Layout, ports: Ports, apply: bool) -> int:
@@ -609,12 +609,12 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     return 0
 
 
-def _setup_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _setup_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     try:
         return setup(layout, ports, args.apply)
     except KeyboardInterrupt:
         # A Ctrl-C in any step ends with 130; only the wizard prints its abort line.
-        return secrets_setup.ABORTED_EXIT
+        return WalkEnd.ABORTED.exit_code
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:

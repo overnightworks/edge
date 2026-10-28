@@ -68,6 +68,7 @@ from edge.apps import AppError, AppRuntime, plan_apps, retry_advice
 from edge.legal_section import LegalError
 from edge.legal_step import RECORD_FILE, plan_legal
 from edge.plan import Plan
+from edge.plan_rows import plan_groups
 from edge.realm import reconcile
 from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
@@ -83,6 +84,7 @@ from edge.unit_plans import (
     unobserved,
 )
 from edge.waiting import Waiting, fetched
+from hal_output import write_groups
 
 EnsureEnvironment = Callable[[Path], str | None]
 COMMAND = "edge apply --closed"
@@ -324,8 +326,7 @@ def _plan_and_apply(
         print(f"{COMMAND}: cannot plan, {error}", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
     if planned.changes_nothing:
-        for line in planned.describe():
-            print(f"{COMMAND}: {line}")
+        _write_plan(planned)
         print(f"{COMMAND}: nothing to change")
         return ApplyExit.APPLIED_OR_NOTHING
     return _confirm_and_switch(
@@ -686,6 +687,13 @@ def _say_interrupted(progress: Progress, interruption: KeyboardInterrupt) -> Non
         _say(note)
 
 
+def _write_plan(planned: Plan) -> None:
+    """The plan as it stands: the strings of the parts not yet rows, then the rows."""
+    for line in planned.describe():
+        print(f"  {line}")
+    write_groups(plan_groups(planned))
+
+
 def _confirm_and_switch(
     engine: compose.Compose,
     planned: Plan,
@@ -695,8 +703,7 @@ def _confirm_and_switch(
     realm_backup: reconcile.Backup,
 ) -> int:
     _show("the plan")
-    for line in planned.describe():
-        print(f"  {line}")
+    _write_plan(planned)
     if not terminal.confirmed("apply exactly this plan"):
         _say_aborted(completed_setups)
         return ApplyExit.REFUSED

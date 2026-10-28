@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import io
+import getpass
 import re
 import stat
-import sys
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -16,13 +15,14 @@ from test_secrets_setup import FakeDisk, FakeTerminal
 from test_secrets_view import findings_of
 from test_setup import run_hal_setup
 
+from terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
 from home_tools import cli as home_cli
 from home_tools import secrets_setup, secrets_view
 from home_tools.cli import main
-from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Terminal, Verdict
+from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Terminal, TokenVerifier, Verdict
 from home_tools.setup import RERUN
-from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
+from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
 
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
 HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"
@@ -138,6 +138,14 @@ def test_home_next_lists_the_step_that_generates_the_missing_session_secret(
 
 def test_the_packaged_manifest_holds_no_value_of_hopins_session_secret() -> None:
     assert not re.search(r"[A-Za-z0-9_-]{43,}", PACKAGED_MANIFEST.read_text())
+
+
+def test_the_packaged_manifest_names_its_readers_in_english() -> None:
+    reader_names = [name for entry in load_manifest(PACKAGED_MANIFEST) for name in entry.read_by]
+
+    assert all(name.isascii() for name in reader_names)
+    assert {"cloudflared tunnel (management)", "agent-runtime#115, measurement runs 0b2/0e"} <= set(reader_names)
+    assert any(name.startswith("cloudflared tunnel run (by hand;") for name in reader_names)
 
 
 # --- HopIn's TURN key: asked hidden, stored unverified (O6) ---------------------------------------------------------
@@ -280,7 +288,7 @@ def test_the_view_shows_the_stored_turn_values_as_not_verified(packaged_home: Sa
 
     rows = {line for line in capsys.readouterr().out.splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
     assert len(rows) == 2
-    assert all("Token, ungeprüft" in row and "nicht geprüft" in row for row in rows)
+    assert all("token, unverified" in row and "not checked" in row for row in rows)
 
 
 def test_home_next_says_the_missing_turn_values_are_stored_not_verified(
@@ -551,16 +559,65 @@ def test_hal_setup_apply_counts_two_open_entries_in_the_row_and_the_error(
     )
 
 
-def test_hal_setup_apply_keeps_the_failed_row_when_the_wizard_exits_for_another_reason(
-    hal_secrets: Callable[..., tuple[int, list[str], str]],
-) -> None:
-    code, lines, error = hal_secrets(secret_entry("first"), "--apply", at_a_terminal=False)
+GUIDED_TOKEN = secret_entry(
+    "github/read",
+    kind="token",
+    extra='purpose = "liest GitHub"\nprovider = "github"\nresource = "example-org"\nscope = ["metadata:read"]\nexpires_in_days = 366',
+)
 
-    assert (code, lines[-1], error.splitlines()[-2]) == (
-        ExitCode.FAILURE,
-        "  ✗ secrets         failed         not every secret is set up; the lines above say which one is open",
-        "error: setup stopped at secrets",
+
+def guided_boundaries(ask_hidden: Callable[[str], str], verify: TokenVerifier) -> Boundaries:
+    terminal = Terminal(lambda: True, lambda _prompt: "", ask_hidden, lambda _page: True)
+    return Boundaries(terminal, verify, lambda _descriptor: None)
+
+
+def fail_to_verify(_source: TokenSource, _value: str) -> None:
+    raise RuntimeError("the value stays out of the line")
+
+
+@pytest.mark.parametrize(
+    ("boundaries", "expected_error"),
+    [
+        pytest.param(
+            None,
+            [
+                "error: secrets setup needs your own terminal window · nothing changed",
+                "next: hal setup --apply in your own terminal window",
+            ],
+            id="no terminal",
+        ),
+        pytest.param(
+            guided_boundaries(getpass.fallback_getpass, fail_to_verify),
+            [
+                "error: this terminal cannot hide what you type · nothing read",
+                "next: hal setup --apply in another terminal window",
+            ],
+            id="cannot hide input",
+        ),
+        pytest.param(
+            guided_boundaries(lambda _prompt: "pastedvalue", fail_to_verify),
+            [
+                "error: stopped at github/read · unexpected RuntimeError · github/read is not stored",
+                "next: hal setup --apply",
+            ],
+            id="entry failed",
+        ),
+    ],
+)
+def test_hal_setup_apply_ends_a_stop_the_wizard_told_with_the_wizards_pair_alone(
+    hal_secrets: Callable[..., tuple[int, list[str], str]],
+    boundaries: Boundaries | None,
+    expected_error: list[str],
+) -> None:
+    code, lines, error = hal_secrets(
+        GUIDED_TOKEN, "--apply", at_a_terminal=False, boundaries=boundaries
     )
+
+    assert (code, error.splitlines()[-2:]) == (ExitCode.FAILURE, expected_error)
+    assert not [line for line in lines if "secrets" in line and "✗" in line]
+    assert "setup stopped" not in error
+    assert "pastedvalue" not in error
+    assert not [line for line in lines if "pastedvalue" in line]
 
 
 def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
@@ -648,7 +705,7 @@ def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_interrupted_line_an
     )
     error = capsys.readouterr().err
 
-    assert code == secrets_setup.ABORTED_EXIT
+    assert code == secrets_setup.WalkEnd.ABORTED.exit_code
     assert "error: interrupted at live · no file half written" in error
     assert "Traceback" not in error
 
@@ -662,11 +719,6 @@ def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_re
     assert lines[-1].startswith("  ✗ secrets         failed")
     assert error.splitlines()[0] == "error: setup stopped at secrets"
     assert "unexpected error" not in error
-
-
-class TerminalOutput(io.StringIO):
-    def isatty(self) -> bool:
-        return True
 
 
 def test_on_a_terminal_the_walk_shows_an_opened_page_dim_and_short(
@@ -699,10 +751,7 @@ def test_on_a_terminal_the_walk_shows_a_page_nobody_opened_yellow_and_whole(
 def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, browser_opens: bool) -> list[str]:
     """The setup walk of the GitHub token and both TURN values with stdout on a terminal, nothing pasted."""
     (sandbox.home / ".secrets/github/fleet-read").unlink()
-    monkeypatch.delenv("NO_COLOR", raising=False)
-    monkeypatch.setenv("TERM", "xterm-256color")
-    stdout = TerminalOutput()
-    monkeypatch.setattr(sys, "stdout", stdout)
+    stdout = put_stdout_on_a_terminal(monkeypatch)
     boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeDisk().sync)
 
     main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)

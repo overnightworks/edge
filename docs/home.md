@@ -1,14 +1,14 @@
 # home-tools
 
 Ein Befehl, `home`, zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.
-Jeder Unterbefehl erklärt sich mit `home <befehl> --help` samt Beispielen;
+Jeder Unterbefehl erklärt sich mit `home <command> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
 Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
 es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
-`SuccessExitStatus=1` dafür), `2` wenn die Konfigurationsdatei oder das
-Geheimnis-Manifest ungültig ist, `3` wenn ein Lauf an einem unerwarteten Fehler
-zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
+`SuccessExitStatus=1` dafür), `2` wenn das
+Geheimnis-Manifest ungültig ist (`hal check` kennt zusätzlich die Konfigurationsdatei, siehe „Konfiguration“), `3` wenn ein Lauf an einem unerwarteten Fehler
+zerbrach; dann steht eine `error:`-Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
 
 ## home next
@@ -24,10 +24,10 @@ Schlusszeile:
 
 ```
 1. home secrets --setup (eigenes Terminalfenster) — erwartet: cloudflare/fleet-read verified ~/.secrets/cloudflare/fleet-read (600); github/fleet-read verified ~/.secrets/github/fleet-read (600); opentofu/state-passphrase generated ~/.secrets/opentofu/state-passphrase (600) · never shown; then hal apply
-2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token vorhanden
+2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token present
 3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
    warum: without the hook no commit is checked for secrets; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
-Außerdem zum Einsortieren: 4 unbekannte Dateien in ~/.secrets. Das macht ein Agent: sag „räum home auf“.
+Außerdem zum Einsortieren: 4 unknown files in ~/.secrets. Das macht ein Agent: sag „räum home auf“.
 ```
 
 Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
@@ -50,13 +50,13 @@ beiseite legt). Dann fehlende Geheimnisse aus der Ansicht von `home secrets`
 (der Assistent für die, die er anlegen kann, die Seite aus `recreate` für die
 übrigen), ein fehlgeschlagener Login, ein unbestätigter Widerruf und jeder
 übrige Fund von `home secrets`, den nur du klären kannst, mit Ort und Empfehlung
-von Hand (etwa „~/.ssh/id_ed25519: Rechte des Elternordners prüfen“). Dann
+von Hand (etwa „~/.ssh/id_ed25519: check the parent folder's permissions“). Dann
 offene Schritte von `hal setup` (dann `hal setup --apply`) und die Korrekturen
 der Hook-Prüfung.
 Jeder Befehl steht nur einmal da.
 
 Die Schlusszeile zählt die Buchhaltung je Art, in fester Reihenfolge und ohne
-Pfad: unbekannte Dateien in `~/.secrets`. Die sortiert ein Agent ein; jede
+Pfad: unknown files in `~/.secrets`. Die sortiert ein Agent ein; jede
 Löschentscheidung kommt als eine Liste zu dir. Die einzelnen Funde zeigen
 `hal check` und `home secrets`.
 
@@ -64,7 +64,7 @@ Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
 „Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
 Quelle nicht lesen (etwa ein ungültiges Manifest), steht ganz oben ein Schritt
 „1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die
-Schritte der anderen Quellen folgen. Die Konfigurationsdatei liest `home next` nicht.
+Schritte der anderen Quellen folgen.
 Es ändert nichts, fragt nach keinem Passwort und liest keinen
 Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
 Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
@@ -80,7 +80,7 @@ hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benac
 `home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung und die Plattform-Prüfung — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
-Ein nacktes `hal check` ist derselbe Lauf, im selben Prozess: dieselben Zeilen, derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde. Von Hand getippt liefert es also auch Neuigkeiten aus; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
+Von Hand getippt liefert ein nacktes `hal check` Neuigkeiten aus wie der Timer: derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
 
 Auf dem Terminal steht davon eine englische Zeile je Bereich in der Reihenfolge der Mail (`ok`, `N action(s)`,
 `N note(s)` mit dem Satz des ersten Funds und `+N more`, oder `not checked`) und ein Urteil, das sagt, ob eine Mail
@@ -156,7 +156,7 @@ graphical-session.target`, nur geprüft, wenn es etwas zu melden gibt), die Mail
 eingerichtete Kanal wird versucht; scheitert einer, steht eine Zeile auf stderr, der Exit-Code bleibt, und die gemeldete
 Fundmenge rückt nicht vor, sodass der nächste Lauf erneut meldet. Sie rückt vor, wenn jeder eingerichtete Kanal
 geliefert hat: ein Lauf ohne Sitzung (Linger, 09:00) mit gelieferter Mail genügt. Ohne einen einzigen eingerichteten Kanal
-bleibt sie stehen, ohne Ausgabe. `[notify] enabled = false` schaltet beide ab.
+bleibt sie stehen, ohne Ausgabe. `[check] notify = false` schaltet beide ab.
 
 Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `home` nicht
 lesen darf), steht an ihrer Stelle eine Zeile „check secrets failed
@@ -279,43 +279,43 @@ Beispiel (gekürzt):
 ```
 # home secrets 15.10.2026 09:00 | 2 findings
 
-| Name | Art | Datei | Prüfung | Ablauf | Ort | Neu anlegen |
+| Name | Kind | File | Check | Expiry | Place | Recreate |
 |---|---|---|---|---|---|---|
-| gitlab | Token | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/gitlab | https://code.siemens.com/-/user_settings/personal_access_tokens |
-| gh | Tool-Login | vorhanden | geprüft: gültig | Ablauf unbekannt | ~/.config/gh | `gh auth login --web` |
-| secrets/README | Dokumentation | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/README | ~/.secrets/README anlegen: je Datei eine Zeile, was sie ist (kein Geheimnis) |
-| cloudflared | Tool-Login | vorhanden | nicht geprüft | Ablauf unbekannt | ~/.secrets/cloudflared/cert.pem; Tunnel-Config und Zugangsdatei des laufenden Tunnels: /etc/cloudflared (root) | `cloudflared tunnel login` im Browser |
-| ssh/id_ed25519.ppk | abgeleitete Kopie | fehlt (optional) | nicht geprüft | Ablauf unbekannt | ~/.ssh/id_ed25519.ppk | `puttygen ~/.ssh/id_ed25519 -o ~/.ssh/id_ed25519.ppk` |
-| github/token | Token | zurückgezogen | Widerruf bestätigt 15.10.2026 | Ablauf unbekannt | ~/.secrets/github/token | Widerruf: https://github.com/settings/tokens |
+| gitlab | token | present | not checked | expiry unknown | ~/.secrets/gitlab | https://code.siemens.com/-/user_settings/personal_access_tokens |
+| gh | tool login | present | checked: valid | expiry unknown | ~/.config/gh | `gh auth login --web` |
+| secrets/README | documentation | present | not checked | expiry unknown | ~/.secrets/README | ~/.secrets/README anlegen: je Datei eine Zeile, was sie ist (kein Geheimnis) |
+| cloudflared | tool login | present | not checked | expiry unknown | ~/.secrets/cloudflared/cert.pem; Tunnel-Config und Zugangsdatei des laufenden Tunnels: /etc/cloudflared (root) | `cloudflared tunnel login` im Browser |
+| ssh/id_ed25519.ppk | derived copy | missing (optional) | not checked | expiry unknown | ~/.ssh/id_ed25519.ppk | `puttygen ~/.ssh/id_ed25519 -o ~/.ssh/id_ed25519.ppk` |
+| github/token | token | retired | revocation confirmed 15.10.2026 | expiry unknown | ~/.secrets/github/token | revoke: https://github.com/settings/tokens |
 
-## Funde
+## Findings
 
-| Regel | Gegenstand | Befund | Empfehlung |
+| Rule | Subject | Finding | Fix |
 |---|---|---|---|
-| unknown-file | ~/.secrets/cloudflared/old.json | - | ~/.secrets/cloudflared/old.json ins Manifest eintragen oder löschen |
-| loose-mode | ~/.secrets/gmail-cleanup | hat Rechte 775, höchstens 700 | `chmod 700 ~/.secrets/gmail-cleanup` |
+| unknown-file | ~/.secrets/cloudflared/old.json | - | add ~/.secrets/cloudflared/old.json to the manifest or delete it |
+| loose-mode | ~/.secrets/gmail-cleanup | has mode 775; at most 700 allowed | `chmod 700 ~/.secrets/gmail-cleanup` |
 
-Keine Werte: home secrets liest Geheimnisdateien nur per stat und öffnet sie nie.
+No values: home secrets reads secret files by stat only and never opens them.
 ```
 
 So liest sich die Tabelle:
 
 | Spalte | Werte |
 |---|---|
-| Art | Passwort (Mensch), Tool-Login, Token, Dienstpasswort, „Token, ungeprüft“, abgeleitete Kopie — genau eine je Eintrag; Konfiguration und Dokumentation für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
-| Datei | `vorhanden`, `fehlt`, `unbekannt` (das Dateisystem verweigert die Auskunft), `zurückgezogen`; ein optionaler Eintrag trägt `(optional)` |
-| Prüfung | bei einem zurückgezogenen Eintrag `Widerruf unbestätigt` oder `Widerruf bestätigt <Datum>` |
-| Ort | die Pfade im Home; liegen Kopien woanders (etwa `/etc/cloudflared`, root), nennt sie die Zelle dahinter, gelesen werden sie nie |
-| Prüfung | nur `gh` wird geprüft (`geprüft: gültig`, `geprüft: ungültig`, `Prüfung nicht möglich` bei Zeitüberschreitung oder fehlendem `gh`); alle anderen `nicht geprüft` |
-| Ablauf | heute immer `Ablauf unbekannt`: ein Datum erscheint erst mit Herkunft (Antwort des Anbieters oder ein vom Assistenten geschriebenes `rotated_on`); das Dateialter zählt nie |
+| Kind | human password, tool login, token, service password, „token, unverified“, derived copy — genau eine je Eintrag; `configuration` und `documentation` für bekannte Dateien unter `~/.secrets`, die kein Geheimnis sind |
+| File | `present`, `missing`, `unknown` (das Dateisystem verweigert die Auskunft), `retired`; ein optionaler Eintrag trägt `(optional)` |
+| Check | bei einem zurückgezogenen Eintrag `revocation unconfirmed` oder `revocation confirmed <Datum>` |
+| Place | die Pfade im Home; liegen Kopien woanders (etwa `/etc/cloudflared`, root), nennt sie die Zelle dahinter, gelesen werden sie nie |
+| Check | nur `gh` wird geprüft (`checked: valid`, `checked: invalid`, `check not possible` bei Zeitüberschreitung oder fehlendem `gh`); alle anderen `not checked` |
+| Expiry | heute immer `expiry unknown`: ein Datum erscheint erst mit Herkunft (Antwort des Anbieters oder ein vom Assistenten geschriebenes `rotated_on`); das Dateialter zählt nie |
 
 Funde sind: ein fehlender Eintrag (außer einem optionalen) oder ein unbekannter, ein zurückgezogenes
 Geheimnis, dessen Widerruf unbestätigt ist, eine fehlgeschlagene oder nicht
 mögliche Prüfung, eine Datei oder ein Ordner unter `~/.secrets`, den kein
-Eintrag nennt („unbekannt“; bleibt unangetastet), und Rechte lockerer als
+Eintrag nennt („unknown“; bleibt unangetastet), und Rechte lockerer als
 `600` für Dateien oder `700` für Ordner unter `~/.secrets`, ein Ordner dort,
 den sein Besitzer nicht lesen, betreten oder beschreiben kann („closed-folder“;
-was darin liegt, ist „unbekannt“), ein Symlink
+was darin liegt, ist „unknown“), ein Symlink
 auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn durch
 den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
@@ -349,7 +349,7 @@ Mensch, alles andere der Assistent. Je Token:
 1. Er sagt, was kommt: eine Zeile `›` mit dem Eintrag und `new token`, darunter `why:` (wofür) und die
    Checkliste der Rechte. Ein erzeugter oder von Hand anzulegender Eintrag druckt nur seine Ergebniszeile.
    Vorher prüft er die Ordner auf dem Weg: Ist einer lockerer als `700`, für
-   seinen Besitzer verschlossen, ein Symlink („ist ein Symlink“) oder kein
+   seinen Besitzer verschlossen, ein Symlink („is a symlink“) oder kein
    Ordner, nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
    damit kein frisch angelegtes Token verloren geht.
 2. Nach Enter öffnet er die Seite. GitHubs Formular ist über die dokumentierten
@@ -372,10 +372,10 @@ Mensch, alles andere der Assistent. Je Token:
 
 Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
 Key-ID und API-Token des TURN-Keys, den nur HopIn nutzt (`cloudflare/turn-hopin/key-id` und
-`…/api-token`, Art „Token, ungeprüft“), nimmt er ebenso unsichtbar entgegen, nennt vorher, wo
+`…/api-token`, Art „token, unverified“), nimmt er ebenso unsichtbar entgegen, nennt vorher, wo
 der Key entsteht (Cloudflare › Realtime › TURN, beide Werte zeigt Cloudflare nur einmal), und
 bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter (`stored`, `not verified`), denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `home secrets`
-zeigt beide als `nicht geprüft`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
+zeigt beide als `not checked`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
 `recreate` genannt (`by hand`), ein optionaler, der fehlt, übersprungen (`skipped`, `optional`). Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
@@ -421,7 +421,7 @@ vorher gespeicherte Einträge bleiben.
 
 `--by-service` dreht `read_by` des Manifests um: je Dienst die Geheimnisse,
 die er laut Manifest liest, dazu die abgeleiteten Kopien und ihre Quelle. Die
-Überschrift sagt „deklarierte Abhängigkeiten“: Das ist, was das Manifest
+Überschrift sagt „declared dependencies“: Das ist, was das Manifest
 behauptet, kein Beweis vollständiger Wirkung.
 
 ### Einen Eintrag hinzufügen
@@ -444,7 +444,7 @@ recreate = "wird beim Einrichten erzeugt"
 `mirror_of`. `optional = true` heißt: Fehlen ist kein Fund, `--setup`
 überspringt den Eintrag; so stehen auch die bekannten Dateien ohne Geheimnis
 (`~/.secrets/README`, `claudebot-runtime.env`) im Manifest. `elsewhere` nennt Kopien außerhalb des Homes für die
-Spalte „Ort“. `purpose` sagt in einem Satz, wofür es da ist. `loosest_mode`
+Spalte „Place“. `purpose` sagt in einem Satz, wofür es da ist. `loosest_mode`
 (ein TOML-Oktalwert wie `0o644`) erlaubt den Dateien eines Eintrags ein lockereres
 Höchstmaß als 0600, weil ein Container-Nutzer sie lesen muss; `loosest_mode_reason`
 sagt in einer Zeile, wer sie liest, und gehört dazu. Mehr als 0644 lehnt das
@@ -534,7 +534,7 @@ a minute, `1h02m` from an hour) and stands after the counts and before the hint;
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
 system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit keeps the `failed` row. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
+sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish. The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; another wizard exit ends with the wizard's own error pair; setup prints no secrets row and no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before Ansible asks for the password; it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
 `--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
@@ -726,25 +726,26 @@ Die Zusage ist enger als „jeder Commit“:
 
 ## Konfiguration
 
-Eine Datei für alle Befehle: `~/.config/home/config.toml`, eine Tabelle je
-Befehl mit Einstellungen. Ohne die Datei gelten die Defaults. Eine unbekannte
-Tabelle, ein unbekannter Schlüssel oder ein falscher Werttyp ist ein
-Konfigurationsfehler: `home` meldet ihn auf stderr und beendet sich mit
-Exit-Code 2, statt mit falschen Einstellungen weiterzulaufen. Eine Tabelle
-`[tidy]` wird nicht mehr gelesen und beim Namen abgelehnt: sie ist aus der Datei
-zu löschen.
+`hal` liest seine Einstellungen aus `~/.config/hal/config.toml`, eine Tabelle je
+Timer-Job mit Einstellungen; `hal` schreibt, verschiebt und löscht die Datei nie.
+Ohne die Datei gelten die Defaults. Eine unbekannte Tabelle, ein unbekannter
+Schlüssel, ein falscher Werttyp, Inhalt, der kein TOML ist, oder eine nicht
+lesbare Datei ist ein Konfigurationsfehler: `hal check` meldet ihn auf stderr
+und beendet sich mit Exit-Code 2, statt mit falschen Einstellungen
+weiterzulaufen. Die Datei enthält kein Geheimnis; das SMTP-Konto bleibt unter
+`~/.secrets/smtp/`.
 
-### `[notify]`
+### `[check]`
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
+| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
 
 Beispiel:
 
 ```toml
-[notify]
-enabled = true
+[check]
+notify = true
 ```
 
 ## Installation

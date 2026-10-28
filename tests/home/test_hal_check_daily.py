@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
-from conftest import FakeDisk, FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, message_of, restarting_containers
+from conftest import FakeProbe, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, restarting_containers, write_hal_config
 
-from hal import check_commands
 from hal import cli as hal_cli
-from home_tools import cli as home_cli
+from hal import config as hal_config
 from home_tools.layout import Layout
 
 
@@ -30,13 +30,11 @@ def runner() -> RunnerWithCleanLogs:
 
 
 @pytest.fixture
-def hal_check(clean_home, runner, monkeypatch, capsys) -> Callable[..., tuple[int, str, str]]:
+def hal_check(clean_home, runner, capsys) -> Callable[..., tuple[int, str, str]]:
     """`hal check` through `hal.cli.main`, over the clean home and the fake runner instead of this machine."""
 
     def run(*arguments: str, probe: FakeProbe | None = None) -> tuple[int, str, str]:
-        ports = lambda: home_cli.build_layout_and_ports(home=clean_home, run=runner, probe=probe or FakeProbe(), disk_space=FakeDisk())  # noqa: E731
-        monkeypatch.setattr(check_commands, "build_layout_and_ports", ports)
-        exit_code = hal_cli.main(["check", *arguments])
+        exit_code = home_check(clean_home, runner, probe, arguments=arguments)
         captured = capsys.readouterr()
         return exit_code, captured.out, captured.err
 
@@ -95,13 +93,25 @@ def test_a_bare_hal_check_with_an_invalid_manifest_keeps_the_rows_and_names_the_
     assert err.count("\n") == 1
 
 
-@pytest.mark.parametrize("config_text", ["this is not toml\n", "bogus = 1\n"], ids=["syntax error", "unknown key"])
+@pytest.mark.parametrize(
+    "config_text",
+    [
+        "this is not toml\n",
+        "bogus = 1\n",
+        "[check]\nnot_a_real_key = 1\n",
+        "[check]\nnotify = [\n",
+        "[other]\nnotify = true\n",
+        "[notify]\nenabled = false\n",
+        "[tidy]\ntrash_days = 5\n",
+        '[check]\nnotify = "yes"\n',
+        "check = 1\n",
+    ],
+    ids=["syntax error", "unknown key", "unknown check key", "unclosed array", "unknown table", "old notify table", "tidy table", "wrong type", "table is a number"],
+)
 def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_nothing(
     hal_check, clean_home, config_text
 ) -> None:
-    config_file = Layout(clean_home).config_file
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    config_file.write_text(config_text)
+    config_file = write_hal_config(clean_home, config_text)
 
     exit_code, out, err = hal_check()
 
@@ -109,6 +119,69 @@ def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_
     assert err.startswith("error: ")
     assert err.count(str(config_file)) == 1
     assert err.count("\n") == 1
+
+
+def test_a_bare_hal_check_with_a_config_that_is_not_utf8_names_the_file_once(hal_check, clean_home) -> None:
+    config_file = write_hal_config(clean_home, "")
+    config_file.write_bytes(b"\xff")
+
+    exit_code, out, err = hal_check()
+
+    assert (exit_code, out) == (2, "")
+    assert err.startswith("error: ")
+    assert err.count(str(config_file)) == 1
+    assert err.count("\n") == 1
+
+
+def test_an_unknown_table_is_named_in_the_error(hal_check, clean_home) -> None:
+    config_file = write_hal_config(clean_home, "[notify]\nenabled = false\n")
+
+    _, _, err = hal_check()
+
+    assert err == f"error: {config_file}: unknown key(s) or table(s): notify\n"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permission bits")
+def test_a_bare_hal_check_with_an_unreadable_config_exits_2(hal_check, clean_home) -> None:
+    config_file = write_hal_config(clean_home, "[check]\nnotify = true\n")
+    config_file.chmod(0)
+    try:
+        exit_code, _, err = hal_check()
+    finally:
+        config_file.chmod(0o600)
+
+    assert exit_code == 2
+    assert err.startswith("error: ")
+    assert err.count(str(config_file)) == 1
+
+
+def test_a_directory_at_the_config_path_exits_2(hal_check, clean_home) -> None:
+    config_file = hal_config.config_path(clean_home)
+    config_file.mkdir(parents=True)
+
+    exit_code, out, err = hal_check()
+
+    assert (exit_code, out) == (2, "")
+    assert err.count(str(config_file)) == 1
+
+
+def test_a_bare_hal_check_without_a_config_file_creates_none(hal_check, clean_home) -> None:
+    exit_code, _, _ = hal_check()
+
+    assert exit_code == 0
+    assert not hal_config.config_path(clean_home).parent.exists()
+
+
+def test_a_stray_file_under_the_old_config_directory_has_no_effect(clean_home, runner, mail_stub) -> None:
+    stray = clean_home / ".config" / "home" / "config.toml"
+    stray.parent.mkdir(parents=True)
+    stray.write_text("[notify]\nenabled = false\n")
+    restarting_containers(runner)
+
+    home_check(clean_home, runner)
+
+    assert len(mail_stub.sent) == 1
+    assert stray.read_text() == "[notify]\nenabled = false\n"
 
 
 def test_a_bare_hal_check_is_not_a_json_command(hal_check, runner) -> None:
@@ -129,6 +202,13 @@ def test_ctrl_c_in_a_bare_hal_check_exits_130_without_an_unexpected_error(hal_ch
 
     assert exit_code == 130
     assert "unexpected error" not in err
+
+
+def test_hal_check_help_names_the_settings_file(capsys) -> None:
+    with pytest.raises(SystemExit):
+        hal_cli.main(["check", "--help"])
+
+    assert "settings: ~/.config/hal/config.toml, table [check] (docs/home.md)" in capsys.readouterr().out
 
 
 def test_hal_check_help_names_the_daily_check_before_the_areas(capsys) -> None:

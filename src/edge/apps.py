@@ -2,7 +2,7 @@
 
 An app is switched on at the newest release of its repository: a `vYYYY.MM.DD.N` tag on origin's
 default branch (`releases.py`), checked out in `~/srv/<key>` (`deploy_checkout.py`) and run by
-Compose as project `<key>` (`app_compose.py`). The plan shows tag and full sha and waits for the
+Compose as project `<key>` (`app_compose.py`). The plan shows the tag and waits for the
 operator's `yes`, which is the gate: whoever can put a tag on a merged commit offers code to run
 here (E1). Nothing of an app is read, created or printed that is a secret, and no output of
 Compose is printed (E7).
@@ -28,8 +28,7 @@ started. The health wait runs outside the lock, so a stop never waits for it.
 
 An app the catalog disables while containers of its project exist is switched off: file-free
 `stop` and `rm -f` of project `<key>`, which reaches every container, whatever the checkout's
-compose file says. The plan names the named volumes that stay; they, the checkout and the record
-are never touched (E4).
+compose file says. The named volumes, the checkout and the record are never touched (E4).
 """
 
 import json
@@ -51,7 +50,7 @@ from edge import (
     releases,
     switches,
 )
-from edge.unit_plans import Fleet, Progress, stays_stopped_line
+from edge.unit_plans import Fleet, Progress
 
 HEALTH_SECONDS = 300.0
 HEALTH_POLL_SECONDS = 2.0
@@ -137,30 +136,6 @@ class AppPlan:
     kind: AppKind
     recorded_tag: str | None  # None on the first deployment
     unfinished: str | None  # the tag or head an update did not reach, None when none
-    replaces_running: bool  # running containers are replaced on the first deployment
-    containers: tuple[str, ...]  # as `ps` shows them
-
-    @property
-    def line(self) -> str:
-        key, tag = self.app.key, self.release.tag
-        now = "; now: " + (", ".join(self.containers) or "no container")
-        if self.kind is AppKind.ON:
-            replacing = (
-                ", replacing the running containers; named volumes kept"
-                if self.replaces_running
-                else ""
-            )
-            return (
-                f"{key}: on at {tag} ({self.sha}) from origin {self.app.default_branch}, "
-                f"into ~/srv/{key}{replacing}"
-            )
-        if self.kind is AppKind.START_AGAIN:
-            return f"{key}: start again at {tag} ({self.sha}, recorded){now}"
-        unfinished = f"; the update to {self.unfinished} did not finish" if self.unfinished else ""
-        return (
-            f"{key}: update to {tag} ({self.sha}); "
-            f"last successful deployment {self.recorded_tag}{unfinished}{now}"
-        )
 
 
 @dataclass(frozen=True)
@@ -168,15 +143,6 @@ class OffPlan:
     """An app the catalog disables while containers of its project exist."""
 
     app: catalog.App
-    containers: tuple[str, ...]  # as `ps` shows them
-    volumes: tuple[str, ...]  # each named volume once, with its count when several share it
-
-    @property
-    def line(self) -> str:
-        shown = ", ".join(self.containers)
-        volumes = ", ".join(self.volumes) or "none"
-        key = self.app.key
-        return f"{key}: off (containers {shown}; named volumes {volumes} stay; ~/srv/{key} stays)"
 
 
 @dataclass(frozen=True)
@@ -184,19 +150,11 @@ class StaysStoppedNote:
     key: str
     since: str | None  # None when only the barrier stands
 
-    @property
-    def line(self) -> str:
-        return stays_stopped_line(self.key, self.since)
-
 
 @dataclass(frozen=True)
 class SkippedNote:
     key: str
-    text: str
-
-    @property
-    def line(self) -> str:
-        return f"{self.key}: {self.text}"
+    skipped: releases.SkippedTag
 
 
 @dataclass(frozen=True)
@@ -211,13 +169,6 @@ class AppsPlan:
     @property
     def changes_nothing(self) -> bool:
         return not self.plans and not self.offs
-
-    @property
-    def notes(self) -> tuple[str, ...]:
-        return tuple(note.line for note in self.kept)
-
-    def describe(self) -> list[str]:
-        return [*self.notes, *(off.line for off in self.offs), *(plan.line for plan in self.plans)]
 
     def run(
         self, marks: switches.Switches, progress: Progress
@@ -258,7 +209,7 @@ def plan_apps(
                 )
             continue
         planned, skipped = _plan_one(app, organisation, runtime, ingress)
-        notes += [SkippedNote(app.key, text) for text in skipped]
+        notes += [SkippedNote(app.key, one) for one in skipped]
         if planned:
             plans.append(planned)
     return AppsPlan(runtime, tuple(plans), tuple(notes), tuple(offs), every, tuple(still_running))
@@ -287,25 +238,17 @@ def _runs(app: catalog.App, runtime: AppRuntime) -> bool:
     return any(compose.is_live(container.state) for container in engine.containers())
 
 
-def _counted(keys: Sequence[str]) -> list[str]:
-    """Each key once, with the count when several volumes share it."""
-    return [f"{key} ({count})" if count > 1 else key for key, count in Counter(keys).items()]
-
-
 def _plan_off(app: catalog.App, runtime: AppRuntime) -> OffPlan | None:
-    """None when no container of the project exists. The line names the containers as `ps` shows
-    them (service and state, never a container name that Compose interpolated) and the named
-    volumes that stay."""
+    """None when no container of the project exists."""
     engine = app_compose.AppCompose(app.key, runtime.srv / app.key, runtime.docker)
-    if not (containers := engine.containers()):
+    if not engine.containers():
         return None
-    shown = tuple(container.describe() for container in containers)
-    return OffPlan(app, shown, tuple(_counted(engine.volumes())))
+    return OffPlan(app)
 
 
 def _plan_one(
     app: catalog.App, organisation: str, runtime: AppRuntime, ingress: barrier.Barrier
-) -> tuple[AppPlan | None, tuple[str, ...]]:
+) -> tuple[AppPlan | None, tuple[releases.SkippedTag, ...]]:
     url = f"https://github.com/{organisation}/{app.key}.git"
     app_checkout = deploy_checkout.AppCheckout(
         checkout.Git(runtime.srv / app.key, runtime.git), url, app.default_branch
@@ -347,8 +290,6 @@ def _plan_one(
         kind=_kind_of(recorded, sha),
         recorded_tag=recorded.tag if recorded else None,
         unfinished=_unfinished_update(recorded, sha, release.tag, head),
-        replaces_running=recorded is None and bool(containers),
-        containers=tuple(container.describe() for container in containers),
     )
     return plan, choice.skipped
 

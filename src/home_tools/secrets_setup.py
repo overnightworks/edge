@@ -55,15 +55,10 @@ from home_tools.secrets_view import (
     stat_matches,
     unfit_folder,
 )
-from home_tools.config import Config
 from home_tools.layout import Layout
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
-
-NO_TERMINAL_EXIT = 2
-ENTRY_FAILED_EXIT = 2
-ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
 OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
 PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
@@ -603,11 +598,26 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
-STILL_OPEN_EXIT = 1
+class WalkEnd(Enum):
+    """How the wizard's walk ended: the exit code the command returns, and whether the walk already wrote its own error pair."""
+
+    DONE = (0, False)
+    STILL_OPEN = (1, False)
+    NO_TERMINAL = (2, True)
+    CANNOT_HIDE_INPUT = (2, True)
+    ENTRY_FAILED = (2, True)
+    ABORTED = (130, True)  # the shell's code for a run ended by Ctrl-C
+
+    def __new__(cls, exit_code: int, wrote_its_pair: bool) -> WalkEnd:
+        member = object.__new__(cls)
+        member._value_ = len(cls.__members__)  # equal pairs stay distinct members
+        member.exit_code = exit_code
+        member.wrote_its_pair = wrote_its_pair
+        return member
 
 
-def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
-    """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
+def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
+    """Every live entry in manifest order; the end says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
     by_hand: list[SecretEntry] = []
     for entry in live_entries():
@@ -616,19 +626,19 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    return STILL_OPEN_EXIT if still_open or by_hand else 0
+    return WalkEnd.STILL_OPEN if still_open or by_hand else WalkEnd.DONE
 
 
 SETUP_NEXT_STEP = "hal setup --apply"
 
 
-def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
+def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
         write_error(
             "secrets setup needs your own terminal window · nothing changed",
             "hal setup --apply in your own terminal window",
         )
-        return NO_TERMINAL_EXIT
+        return WalkEnd.NO_TERMINAL
     try:
         return _walk(layout, boundaries, now)
     except EntryInterrupted as interrupted:
@@ -637,49 +647,49 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             SETUP_NEXT_STEP,
             fresh_line=True,
         )
-        return ABORTED_EXIT
+        return WalkEnd.ABORTED
     except getpass.GetPassWarning:
         write_error(
             "this terminal cannot hide what you type · nothing read",
             "hal setup --apply in another terminal window",
         )
-        return NO_TERMINAL_EXIT
+        return WalkEnd.CANNOT_HIDE_INPUT
     except EntryFailed as failed:
         write_error(failed.report(), SETUP_NEXT_STEP)
-        return ENTRY_FAILED_EXIT
+        return WalkEnd.ENTRY_FAILED
 
 
 # --- the `home secrets` command --------------------------------------------
 
 SECRETS_EXAMPLES = """\
-Beispiele:
-  home secrets                zeigt jedes Geheimnis des Manifests: Datei, Prüfung, Ablauf
-  home secrets --by-service   welcher Dienst welches Geheimnis liest (deklariert)
-  home secrets --setup        führt durch jedes fehlende Geheimnis: Seite, einfügen, prüfen, speichern
+Examples:
+  home secrets                shows every secret of the manifest: file, check, expiry
+  home secrets --by-service   which service reads which secret (declared)
+  home secrets --setup        walks through every missing secret: page, paste, check, save
 
-Ohne --setup zeigt es nie einen Wert und ändert nichts außer dem Bericht
-~/.local/state/home/secrets-report.md. Braucht kein Terminal, Agenten dürfen es fahren.
---setup läuft nur am eigenen Terminal; Agenten fahren es nie.
-Exit-Code: 0 sauber, 1 Funde (mit --setup: noch etwas fehlt), 2 Manifest ungültig, kein Terminal oder
-unerwarteter Fehler bei einem Geheimnis, 3 sonst unerwarteter Fehler, 130 abgebrochen.
+Without --setup it never shows a value and changes nothing except the report
+~/.local/state/home/secrets-report.md. It needs no terminal; agents may run it.
+--setup runs only at your own terminal; agents never run it.
+Exit code: 0 clean, 1 findings (with --setup: something is still missing), 2 invalid manifest, no terminal or
+an unexpected error at one secret, 3 any other unexpected error, 130 interrupted.
 """
 
 
-def _secrets_from_args(args: argparse.Namespace, layout: Layout, _config: Config, ports: Ports) -> int:
+def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     if args.setup:
-        return run_setup(layout, ports.secrets_setup, ports.now)
+        return run_setup(layout, ports.secrets_setup, ports.now).exit_code
     return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "secrets",
-        help="Geheimnisse zeigen und fehlende einrichten; nie ein Wert",
-        description="Zeigt jedes Geheimnis aus dem Manifest, liest Dateien nur per stat und ändert nichts; --setup richtet fehlende ein.",
+        help="show secrets and set up missing ones; never a value",
+        description="Shows every secret of the manifest, reads files by stat only and changes nothing; --setup sets up missing ones.",
         epilog=SECRETS_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--by-service", action="store_true", help="gruppiert nach Dienst: deklarierte Abhängigkeiten")
-    mode.add_argument("--setup", action="store_true", help="führt am Terminal durch jedes fehlende Geheimnis, eins nach dem anderen")
+    mode.add_argument("--by-service", action="store_true", help="grouped by service: declared dependencies")
+    mode.add_argument("--setup", action="store_true", help="walks you through every missing secret at a terminal, one after the other")
     parser.set_defaults(handler=_secrets_from_args, error_may_quote_a_secret=True)

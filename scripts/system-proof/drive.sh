@@ -6,6 +6,7 @@ set -uo pipefail
 
 EVIDENCE=/proof/evidence
 HOME_BIN=/home/tester/.local/bin/home
+HAL_BIN=/home/tester/.local/bin/hal
 UNIT_DIR=/etc/systemd/system
 SYSTEM_FILES=(
     "$UNIT_DIR/cloudflared.service"
@@ -954,7 +955,7 @@ cell_a1_9() {  # after a reboot
     return
 }
 
-# The mail cells (D3-D8): `home check` as the operator, with no graphical session, against a sink that speaks SMTP with a
+# The mail cells (D3-D8): `hal check` as the operator, with no graphical session, against a sink that speaks SMTP with a
 # test CA the system trust store knows (or does not). The sink and the CA are made here; the password is a canary that must
 # reach the sink only as the AUTH of a verified TLS session.
 MAIL_HOST=mail.proof.test
@@ -1090,10 +1091,10 @@ set_up_mail_account() {  # set_up_mail_account <port>: the operator's two files,
     return
 }
 
-mail_run() {  # mail_run <log>: one `home check` with news that has never been delivered, as the operator without a session
+mail_run() {  # mail_run <log>: one `hal check` with news that has never been delivered, as the operator without a session
     local log=$1
     rm -f "$MAIL_STATE/check-findings.txt"
-    run_as tester "$log" "$HOME_BIN" check
+    run_as tester "$log" "$HAL_BIN" check
     return 0
 }
 
@@ -1126,7 +1127,7 @@ SHIM
     mail_run cell-d3
     mail_run_has_set
     advanced=$?
-    run_as tester cell-d3-rerun "$HOME_BIN" check
+    run_as tester cell-d3-rerun "$HAL_BIN" check
     stop_mail_sink
     verdict D3 "the sink saw STARTTLS, then AUTH with the account and the canary, then MAIL FROM, RCPT TO and the subject" \
         '[ "$(sink_events sink-d3 | grep -x -e STARTTLS -e AUTH | tr "\n" " ")" = "STARTTLS AUTH " ] &&

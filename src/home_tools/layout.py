@@ -19,10 +19,6 @@ class Layout:
         return self.home / "git"
 
     @property
-    def config_file(self) -> Path:
-        return self.home / ".config" / "home" / "config.toml"
-
-    @property
     def local_dir(self) -> Path:
         return self.home / ".local"
 
