@@ -23,11 +23,6 @@ from types import ModuleType
 from edge.unit_plans import Progress
 
 DISTRIBUTION = "overnightworks-appkit"
-ASSETS_DIRECTORY = "legal/assets"
-THEME_RESOURCES = (
-    "keycloak/themes/hallucinai/login/resources",
-    "keycloak/themes/hallucinai/account/resources",
-)
 APPKIT_UNIT = "appkit"
 _DIRECTORY_PREFIX = "appkit-"
 _TEMPORARY_PREFIX = ".appkit-"
@@ -35,6 +30,25 @@ _DIRECTORY_MODE = 0o755  # nginx-unprivileged must read what a 0700 mkdtemp dire
 _FILE_MODE = 0o644
 
 type Rename = Callable[[Path, Path], object]
+
+
+@dataclass(frozen=True)
+class AppkitTarget:
+    """One place the appkit files are served from: the directory holding `appkit-<version>/`,
+    relative to the repository, and how a row names it."""
+
+    directory: str
+    label: str
+
+    def served(self, repository: Path, version: str) -> Path:
+        return repository / self.directory / f"{_DIRECTORY_PREFIX}{version}"
+
+
+TARGETS = (
+    AppkitTarget("legal/assets", "legal assets"),
+    AppkitTarget("keycloak/themes/hallucinai/login/resources", "login theme"),
+    AppkitTarget("keycloak/themes/hallucinai/account/resources", "account theme"),
+)
 
 
 class AppkitError(Exception):
@@ -47,22 +61,21 @@ class AppkitPlan:
     source: Path
     repository: Path
     changed: tuple[Path, ...]  # the targets that are missing or differ from the installed files
-    stale: tuple[str, ...]  # this step's other `appkit-*` directories, relative to the repository
+    stale: tuple[Path, ...]  # this step's other `appkit-*` directories, relative to the repository
     rename: Rename = os.rename
-
-    @property
-    def new(self) -> bool:
-        return bool(self.changed)
 
     @property
     def changes_nothing(self) -> bool:
         return not (self.changed or self.stale)
 
-    def describe(self) -> list[str]:
-        line = f"appkit {self.version}: {'new' if self.new else 'unchanged'}"
-        if self.stale:
-            line += f", removes {', '.join(self.stale)}"
-        return [line]
+    @property
+    def changed_labels(self) -> tuple[str, ...]:
+        """The labels of the targets in `changed`, in the order of `TARGETS`."""
+        return tuple(
+            target.label
+            for target in TARGETS
+            if target.served(self.repository, self.version) in self.changed
+        )
 
     def write(self, progress: Progress) -> str | None:
         """Write the directory and remove the stale ones; the failure line, or None. The progress
@@ -96,7 +109,7 @@ def plan_appkit(
             raise AppkitError(f"{parent} is missing, the checkout is broken")
     stale = tuple(
         sorted(
-            str(path.relative_to(repository))
+            path.relative_to(repository)
             for target in targets
             for path in target.parent.glob(f"{_DIRECTORY_PREFIX}*")
             if path.is_dir() and path != target
@@ -116,8 +129,8 @@ def installed_static(find_package: Callable[[str], ModuleType] = import_module) 
 
 
 def served_directories(repository: Path) -> tuple[Path, ...]:
-    name = f"{_DIRECTORY_PREFIX}{metadata.version(DISTRIBUTION)}"
-    return tuple(repository / parent / name for parent in (ASSETS_DIRECTORY, *THEME_RESOURCES))
+    version = metadata.version(DISTRIBUTION)
+    return tuple(target.served(repository, version) for target in TARGETS)
 
 
 def _bytes_of(directory: Path) -> dict[str, bytes]:
