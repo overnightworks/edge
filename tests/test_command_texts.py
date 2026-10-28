@@ -1,8 +1,10 @@
 """The program name has one owner: no operator-facing text in `src/` types a command by hand."""
 
+import argparse
 import ast
 import re
 import tomllib
+from pathlib import Path
 
 import pytest
 from git_support import SOURCE
@@ -83,19 +85,29 @@ def test_a_command_joins_the_program_its_verb_and_its_arguments():
     assert command(Verb.SETUP, "--apply") == "hal setup --apply"
 
 
-def test_no_text_in_src_types_a_command_by_hand():
-    sites = [
-        f"{path.relative_to(SOURCE.parent)}:{line}"
-        for path in sorted(SOURCE.rglob("*.py"))
-        if path != OWNER
+def hand_written_command_sites(root: Path, owner: Path) -> list[str]:
+    return [
+        f"{path.relative_to(root)}:{line}"
+        for path in sorted(root.rglob("*.py"))
+        if path != owner
         for line in hand_written_command_lines(path.read_text())
     ]
 
-    assert sites == []
+
+def test_no_text_in_src_types_a_command_by_hand():
+    assert hand_written_command_sites(SOURCE, OWNER) == []
+
+
+def test_the_owner_module_is_exempt_from_the_scan(tmp_path):
+    owner = tmp_path / "owner.py"
+    owner.write_text('TEXT = "hal apply"\n')
+    (tmp_path / "sibling.py").write_text('TEXT = "hal apply"\n')
+
+    assert hand_written_command_sites(tmp_path, owner) == ["sibling.py:1"]
 
 
 def test_the_registry_holds_exactly_the_verbs():
-    assert sorted(command.name for command in cli.COMMANDS) == sorted(Verb)
+    assert sorted(registered.name for registered in cli.COMMANDS) == sorted(Verb)
 
 
 def test_the_parser_and_the_console_script_carry_the_program_name():
@@ -103,3 +115,13 @@ def test_the_parser_and_the_console_script_carry_the_program_name():
 
     assert cli.build_parser(cli.COMMANDS).prog == PROGRAM
     assert PROGRAM in scripts
+
+
+def test_argparse_only_sees_plain_text_command_names():
+    registry = next(
+        action
+        for action in cli.build_parser(cli.COMMANDS)._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+
+    assert {type(name) for name in registry.choices} == {str}
