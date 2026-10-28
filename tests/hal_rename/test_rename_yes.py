@@ -2,7 +2,7 @@
 once more after the yes, and the rows of the run. The person at the prompt is `Typist`."""
 
 import pytest
-from rename_support import SSH, make_clone, origin_of, tree_state
+from rename_support import SSH, make_clone, origin_of, tree_state, worktree_registrations
 
 from hal import cli
 from hal.grammar import ExitCode
@@ -61,16 +61,27 @@ def test_a_finding_is_shown_once_and_does_not_count_as_a_change(home, repository
     assert PROMPT + "5 changes: " in out
 
 
-def test_nothing_moves_before_the_yes(home, repository, through_cli):
+def test_nothing_moves_before_the_yes(home, everything, repository, through_cli, fakes):
+    deploy_checkout = home / "old-live"
     seen = []
 
-    def look():
-        seen.append((tree_state(home), origin_of(repository)))
+    def snapshot():
+        return (
+            tree_state(home),
+            origin_of(repository),
+            origin_of(deploy_checkout),
+            worktree_registrations(repository),
+            list(fakes.uv_calls),
+        )
 
-    before = (tree_state(home), origin_of(repository))
+    def look():
+        seen.append(snapshot())
+
+    before = snapshot()
 
     through_cli("old", "fresh", while_waiting=look)
 
+    assert before[3]
     assert seen == [before]
 
 

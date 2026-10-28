@@ -74,3 +74,11 @@ def tree_state(home: Path) -> list[str]:
     return sorted(
         str(path.relative_to(home)) for path in home.rglob("*") if ".git/" not in str(path)
     )
+
+
+def worktree_registrations(clone: Path) -> dict[str, str]:
+    """The files `git worktree repair` rewrites: the gitdir link of each registered worktree and
+    the `.git` pointer file in each linked worktree, with their contents."""
+    links = [*(clone / ".git" / "worktrees").glob("*/gitdir")]
+    pointers = [*(clone.parent / f"{clone.name}-worktrees").glob("*/.git")]
+    return {str(path): path.read_text() for path in (*links, *pointers)}
