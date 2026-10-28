@@ -5,6 +5,7 @@ A missing file means defaults. hal only reads it; nothing here writes, moves or 
 from __future__ import annotations
 
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -12,8 +13,8 @@ from home_tools.check import CheckSettings
 
 CONFIG_PATH_IN_HOME = Path(".config") / "hal" / "config.toml"
 CHECK_TABLE = "check"
-KNOWN_CHECK_KEYS = frozenset({"notify"})
-BOOLEAN_CHECK_KEYS = KNOWN_CHECK_KEYS
+CHECK_KEY_TYPES: Mapping[str, type] = {"notify": bool}
+KNOWN_CHECK_KEYS = frozenset(CHECK_KEY_TYPES)
 
 
 class ConfigInvalid(Exception):
@@ -54,8 +55,8 @@ def _check_settings(path: Path, table: object) -> CheckSettings:
     if not isinstance(table, dict):
         raise ConfigInvalid(path, f"[{CHECK_TABLE}] must be a table")
     _refuse_unknown(path, set(table), KNOWN_CHECK_KEYS)
-    for key in BOOLEAN_CHECK_KEYS & set(table):
-        if not isinstance(table[key], bool):
+    for key in set(table):
+        if not isinstance(table[key], CHECK_KEY_TYPES[key]):
             raise ConfigInvalid(path, f"{key} must be true or false, got {table[key]!r}")
     return CheckSettings(**table)
 
