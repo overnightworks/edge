@@ -1955,7 +1955,7 @@ def test_a_catalog_key_without_a_compose_profile_fails_the_drift_check():
         catalog.units(document, profiles, REPOSITORY)
 
 
-# --- the emergency switch (#60): marker, hal stop, hal start, apply's precedence ---------------
+# --- the emergency switch (#60): marker, hal stop, hal start, apply's precedence ----------------
 
 
 def put_unit_in(situation: str, scripted, repository, state) -> None:

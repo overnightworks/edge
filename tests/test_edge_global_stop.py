@@ -173,7 +173,7 @@ def hosts_asked(ingress: Ingress, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return asked
 
 
-# --- hal offline -----------------------------------------------------------------------
+# --- hal offline ---------------------------------------------------------------------------
 
 
 def test_stop_all_records_the_switch_stops_the_tunnel_and_says_so(stop_all, marks, systemd):
@@ -417,7 +417,7 @@ def test_an_unrelated_drop_in_does_not_certify_the_reboot_protection(stop_all, s
     assert "incomplete: a reboot would reopen the tunnel" in output
 
 
-# --- hal online ----------------------------------------------------------------------
+# --- hal online ----------------------------------------------------------------------------
 
 
 @pytest.fixture
