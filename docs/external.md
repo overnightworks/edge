@@ -2,7 +2,7 @@
 
 Referenz fuer den Betreiber und fuer Entwickler von `external/` und `src/edge/external/`. Sie nennt die
 Befehle und was sie garantieren; `hal apply --help` und der Code halten den Rest. Wo diese Schicht in
-der Plattform liegt: [architecture.md](architecture.md). Der lokale Teil von `edge apply` und die
+der Plattform liegt: [architecture.md](architecture.md). Der lokale Teil von `hal apply` und die
 Publish-Phase: [stack.md](stack.md).
 
 Cloudflare wird mit OpenTofu als Code verwaltet (`external/`; GitHub folgt mit edge#30 X2/X3). Der State
@@ -103,9 +103,9 @@ nichts; die Preload-Liste der Browser kennt die Domain erst nach dem Absenden de
 umkehrbar fuer Monate). Reihenfolge:
 
 0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens das Recht (`fleet-read`:
-   `Zone › Zone Settings › Read`; `fleet-write`: `Zone › Zone Settings › Edit`), vor `edge apply`. Der
+   `Zone › Zone Settings › Read`; `fleet-write`: `Zone › Zone Settings › Edit`), vor `hal apply`. Der
    Wert des Tokens bleibt dabei erhalten, an den Dateien aendert sich nichts.
-1. `edge apply`; die Publish-Phase wendet die Einstellung an; ein zweites `hal apply` meldet fuer die
+1. `hal apply`; die Publish-Phase wendet die Einstellung an; ein zweites `hal apply` meldet fuer die
    Publish-Phase `No changes` und fragt nichts.
 2. Der Header `strict-transport-security` erscheint genau einmal auf Apex, `www` und `auth`. Sind es
    zwei, verwerfen zuerst die Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
@@ -121,7 +121,7 @@ halten; Browser, die den Header sahen, behalten ihn bis zum Ablauf seines max-ag
 **Network Error Logging aus** (`cloudflare_zone_setting.nel`, `nel`): Ist es an, haengt Cloudflare an
 jede Antwort der Zone `nel` und `report-to`, und der Browser des Besuchers meldet seine Netzfehler an
 `a.nel.cloudflare.com`, eine Anfrage an Dritte, die keine unserer Seiten verlangt hat. Die Einstellung
-schaltet es fuer die ganze Zone ab; nach `edge apply` tragen Antworten von Apex, `www`, `auth` und
+schaltet es fuer die ganze Zone ab; nach `hal apply` tragen Antworten von Apex, `www`, `auth` und
 songmaker weder `nel` noch `report-to` noch `reporting-endpoints`.
 Browser, die Cloudflares NEL-Richtlinie schon halten, melden weiter, bis ihr `max_age` ablaeuft: eine
 Antwort ohne den Header loescht eine gemerkte Richtlinie nicht (W3C NEL, 4.2). Zuruecknehmen: `enabled =

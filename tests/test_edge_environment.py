@@ -1,4 +1,4 @@
-"""The `.env` step of `edge apply --closed` (#136): derive, compare, write atomically."""
+"""The `.env` step of `hal apply --local` (#136): derive, compare, write atomically."""
 
 import os
 import stat

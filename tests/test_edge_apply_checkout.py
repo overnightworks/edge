@@ -1,4 +1,4 @@
-"""`edge apply --closed` prints the live checkout against origin's `main` as one row (#612), in a
+"""`hal apply --local` prints the live checkout against origin's `main` as one row (#612), in a
 real git repository on the scripted boundaries of `test_edge_apply`."""
 
 import pytest

@@ -1,5 +1,5 @@
 """`hal version`: which code runs. The commit and branch of the checkout this code lives in, whether
-its tree is clean (as `edge apply` means it), and how it stands to the `origin/main` the last fetch
+its tree is clean (as `hal apply` means it), and how it stands to the `origin/main` the last fetch
 left. It never fetches, so it answers offline and changes nothing in the checkout."""
 
 import argparse

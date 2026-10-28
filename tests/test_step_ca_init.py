@@ -714,7 +714,7 @@ def test_the_probe_fails_loud_when_the_exposure_check_cannot_run(
         scratch_probe.exposure_findings()
 
 
-# --- step-ca/init --check: the setup contract of `edge apply` (#52 rule 8) ----------------------
+# --- step-ca/init --check: the setup contract of `hal apply` (#52 rule 8) ----------------------
 
 
 def host_snapshot(docker: DockerHost, secrets_dir: Path) -> tuple[dict, dict, set]:

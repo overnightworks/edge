@@ -1,11 +1,11 @@
 """The emergency switch: one marker file per switched-off unit, and the lock that orders stops.
 
 `~/.local/state/edge/stopped/<unit>` holds the switch time (ISO 8601 with offset). The file is
-the record (P7): every start path of `edge` reads it, and only `edge start` clears it. A unit key
+the record (P7): every start path of the stack reads it, and only `hal start` clears it. A unit key
 reaches this module only after the catalog resolved it, so no path is built from unchecked text.
 The state directory is an argument; only the CLI entry resolves the real one.
 
-`~/.local/state/edge/global-stop` is the global switch (`edge stop --all`), a fact of its own
+`~/.local/state/edge/global-stop` is the global switch (`hal offline`), a fact of its own
 beside `stopped/`, so no unit name can fake it. It is read, written and cleared the same way and
 under the same lock.
 """

@@ -32,7 +32,7 @@ jobs:
       - name: edge-check installs from the lock file
         run: uv sync --locked --no-build --no-install-project
 
-      # The compose file interpolates the domain: the zone fleet.yaml names, as `edge apply` writes it to .env.
+      # The compose file interpolates the domain: the zone fleet.yaml names, as `hal apply` writes it to .env.
       - name: EDGE_DOMAIN is fleet.yaml's cloudflare.zone
         run: |
           PYTHONPATH=src uv run --no-sync python -c 'from pathlib import Path; from edge import catalog; print("EDGE_DOMAIN=" + catalog.zone(catalog.read(Path("fleet.yaml"))))' >> "$GITHUB_ENV"

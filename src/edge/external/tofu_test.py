@@ -1,7 +1,7 @@
 """edge's one way to run the OpenTofu tests: pinned tofu, exact environment, mocked providers.
 
 `python -m edge.external.tofu_test` runs `tofu test` in `external/` with the tofu on PATH, which
-must be the pinned version. It is a build helper, not an `edge` subcommand. The tests may never act
+must be the pinned version. It is a build helper, not a `hal` command. The tests may never act
 on the live accounts, so it refuses a test that does not mock the provider or names a live
 object, and it gives tofu no token.
 """

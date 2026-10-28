@@ -1,4 +1,4 @@
-"""The ingress barrier of `edge stop`: a flat file under `dynamic/` that makes Traefik answer 404.
+"""The ingress barrier of `hal stop`: a flat file under `dynamic/` that makes Traefik answer 404.
 
 Traefik's file provider watches `dynamic/` but not its subdirectories, so the barrier is
 `dynamic/switch-<unit>.yml`, written through a `.tmp` name the provider never reads. One router per

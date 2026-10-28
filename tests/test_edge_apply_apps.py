@@ -1,4 +1,4 @@
-"""`edge apply --closed` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
+"""`hal apply --local` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
 step after the units and the realm, on the scripted boundaries of `test_edge_apply` and the real
 origin and scripted Docker of `app_support`."""
 

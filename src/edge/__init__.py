@@ -1,1 +1,2 @@
-"""`edge`: the one command line of the edge repository; its subcommands live in subpackages."""
+"""`edge`: the stack code behind the hal commands; the publish phase and the realm step
+live in subpackages."""

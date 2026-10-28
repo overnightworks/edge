@@ -1,6 +1,6 @@
 """The live checkout: `~/git/edge` on `main` is the tree the live stack runs from (P6).
 
-`edge apply` binds the compose project `edge` to the tree its code runs from, so it runs only
+`hal apply` binds the compose project `edge` to the tree its code runs from, so it runs only
 from the live checkout (#79 rule 1). Whether a tree is that checkout is read from paths alone,
 without git: it is `$HOME/git/edge` once both are resolved, and it is a main worktree, whose `.git`
 is a directory where a linked worktree has a `.git` file.
@@ -157,7 +157,7 @@ def standing_of(ahead: int, behind: int) -> Standing:
 
 @dataclass(frozen=True)
 class Git:
-    """The questions `edge apply` asks of a checkout; only the fetch writes, and only to `.git`."""
+    """The questions `hal apply` asks of a checkout; only the fetch writes, and only to `.git`."""
 
     tree: Path
     run: Runner = run_git
