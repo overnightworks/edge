@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status
+from conftest import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status, write_hal_config
 
 from home_tools import check, mail
 from home_tools.layout import Layout, run_command
@@ -188,9 +188,7 @@ def test_an_action_that_returns_after_a_clean_run_notifies_again(clean_home, run
 
 
 def test_switched_off_notifications_stay_silent(clean_home, runner) -> None:
-    config_file = Layout(clean_home).config_file
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("[notify]\nenabled = false\n")
+    write_hal_config(clean_home, "[check]\nnotify = false\n")
     restarting_containers(runner)
 
     code = home_check(clean_home, runner)
@@ -576,10 +574,8 @@ def test_an_invalid_account_sends_nothing_names_the_problem_and_keeps_the_news_f
 
 
 def test_switched_off_notifications_send_no_mail_and_no_popup_and_advance(clean_home, runner, mail_stub) -> None:
-    """#390 C7, F1: enabled = false sends no mail and no popup, and the set advances."""
-    config_file = Layout(clean_home).config_file
-    config_file.parent.mkdir(parents=True)
-    config_file.write_text("[notify]\nenabled = false\n")
+    """notify = false sends no mail and no popup, and the set advances."""
+    write_hal_config(clean_home, "[check]\nnotify = false\n")
     restarting_containers(runner)
 
     home_check(clean_home, runner)

@@ -119,7 +119,6 @@
 "tests/test_edge_tunnel_files.py" = 3
 
 [config-directory]
-"docs/home.md" = 1
 
 [state-directory]
 "docs/home.md" = 2

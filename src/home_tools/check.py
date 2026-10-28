@@ -28,16 +28,20 @@ from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE, DiskSpaceReader
 from home_tools.report import Level, findings_count, read_state_file, write_state_file
 from home_tools.secrets_view import ExitCodeProbe, FindingRule, SecretKind
-from home_tools.config import Config
 from home_tools.layout import CommandRunner, Layout
 
 MINIMUM_FREE_PERCENT = round(MINIMUM_FREE_SHARE * 100)
 
 
 @dataclass(frozen=True)
+class CheckSettings:
+    notify: bool = True
+
+
+@dataclass(frozen=True)
 class CheckContext:
     layout: Layout
-    config: Config
+    settings: CheckSettings
     run: CommandRunner
     probe: ExitCodeProbe
     now: datetime
@@ -567,7 +571,7 @@ def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozen
 
 
 def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
-    if not ctx.config.notify_enabled:
+    if not ctx.settings.notify:
         return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True)
     if not _is_news(current, previous):
         return NewsOutcome(Delivery.NOTHING_NEW, True)

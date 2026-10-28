@@ -156,7 +156,7 @@ graphical-session.target`, nur geprüft, wenn es etwas zu melden gibt), die Mail
 eingerichtete Kanal wird versucht; scheitert einer, steht eine Zeile auf stderr, der Exit-Code bleibt, und die gemeldete
 Fundmenge rückt nicht vor, sodass der nächste Lauf erneut meldet. Sie rückt vor, wenn jeder eingerichtete Kanal
 geliefert hat: ein Lauf ohne Sitzung (Linger, 09:00) mit gelieferter Mail genügt. Ohne einen einzigen eingerichteten Kanal
-bleibt sie stehen, ohne Ausgabe. `[notify] enabled = false` schaltet beide ab.
+bleibt sie stehen, ohne Ausgabe. `[check] notify = false` schaltet beide ab.
 
 Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `home` nicht
 lesen darf), steht an ihrer Stelle eine Zeile „check secrets failed
@@ -726,25 +726,26 @@ Die Zusage ist enger als „jeder Commit“:
 
 ## Konfiguration
 
-Nur `hal check` liest `~/.config/home/config.toml`, eine Tabelle je
-Prüfung mit Einstellungen; kein `home`-Befehl liest sie. Ohne die Datei gelten die Defaults. Eine unbekannte
-Tabelle, ein unbekannter Schlüssel oder ein falscher Werttyp ist ein
-Konfigurationsfehler: `hal check` meldet ihn auf stderr und beendet sich mit
-Exit-Code 2, statt mit falschen Einstellungen weiterzulaufen. Eine Tabelle
-`[tidy]` wird nicht mehr gelesen und beim Namen abgelehnt: sie ist aus der Datei
-zu löschen.
+`hal` liest seine Einstellungen aus `~/.config/hal/config.toml`, eine Tabelle je
+Timer-Job mit Einstellungen; `hal` schreibt, verschiebt und löscht die Datei nie.
+Ohne die Datei gelten die Defaults. Eine unbekannte Tabelle, ein unbekannter
+Schlüssel, ein falscher Werttyp, Inhalt, der kein TOML ist, oder eine nicht
+lesbare Datei ist ein Konfigurationsfehler: `hal check` meldet ihn auf stderr
+und beendet sich mit Exit-Code 2, statt mit falschen Einstellungen
+weiterzulaufen. Die Datei enthält kein Geheimnis; das SMTP-Konto bleibt unter
+`~/.secrets/smtp/`.
 
-### `[notify]`
+### `[check]`
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `enabled` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
+| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
 
 Beispiel:
 
 ```toml
-[notify]
-enabled = true
+[check]
+notify = true
 ```
 
 ## Installation

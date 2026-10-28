@@ -16,6 +16,7 @@ import pytest
 
 from hal import check_commands
 from hal import cli as hal_cli
+from hal import config as hal_config
 from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
@@ -491,6 +492,14 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
     write_backup_status(clean_home)
     assert cli.main(["setup", "--apply"], home=clean_home) == 0
+
+
+def write_hal_config(home: Path, text: str) -> Path:
+    """Write hal's settings file under `home`, at the path `hal.config` reads."""
+    config_file = hal_config.config_path(home)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(text)
+    return config_file
 
 
 def home_check(
