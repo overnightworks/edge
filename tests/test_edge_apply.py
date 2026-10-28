@@ -42,7 +42,6 @@ from edge import (
     barrier,
     catalog,
     checkout,
-    cli,
     compose,
     core,
     emergency,
@@ -618,7 +617,7 @@ def switch(
         if not at_a_terminal:
             monkeypatch.setattr(sys, "stdin", io.StringIO(f"{answer}\n"))
         tree = tree or repository
-        exit_code = apply.apply_closed(
+        exit_code = apply.apply_local(
             state,
             compose.Compose(scripted.run, tree),
             tree,
@@ -1364,7 +1363,7 @@ def test_without_a_terminal_it_refuses_before_anything_else(
     monkeypatch.setattr(sys, "stdin", io.StringIO("yes\n"))
     environment_file = (any_tree / ".env").stat()
 
-    exit_code = apply.apply_closed(
+    exit_code = apply.apply_local(
         state, compose.Compose(scripted.run, any_tree), any_tree, missing_setup, setup_run, home,
         git=scripted_git,
     )  # fmt: skip
@@ -1851,16 +1850,6 @@ def test_only_the_exact_yes_applies(switch, scripted, answer):
     assert exit_code == 1
     assert "aborted, nothing changed" in err
     assert scripted.changing_verbs() == []
-
-
-def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_nothing(capsys):
-    """#171 D2: the local part's refusal is the exit of plain `edge apply`."""
-    exit_code = cli.main(["apply"])
-
-    assert exit_code == 1
-    err = capsys.readouterr().err
-    assert "error: refused, stdin and stdout must be a terminal" in err
-    assert "hal apply: nothing published" in err
 
 
 @pytest.mark.parametrize(

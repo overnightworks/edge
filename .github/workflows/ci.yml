@@ -77,6 +77,7 @@ jobs:
           export HOME="$scratch/home" PATH="$scratch/bin:$PATH"
           hal --help
           [ ! -e "$scratch/bin/home" ]
+          [ ! -e "$scratch/bin/edge" ]
           hal secrets --help
           hal secrets --by-service | grep -F "declared dependencies"
           version=$(hal version)

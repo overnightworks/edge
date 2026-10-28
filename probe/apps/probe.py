@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Probe of deploy by tag (#255 P1, matrix block A): `hal apply --closed` of a copy of the
+"""Probe of deploy by tag (#255 P1, matrix block A): `hal apply --local` of a copy of the
 repository switches on an app of a throwaway bare origin at its newest `vYYYY.MM.DD.N` tag, updates
 it, and refuses or ends partial where block A says so.
 
@@ -348,7 +348,7 @@ class Probe:
         edge_copy.publish(self.copy, f"probe: {self.key} enabled {wanted}")
 
     def apply(self, typed: bytes = b"yes\n", exit_code: int = HAL_OK) -> str:
-        return self.hal("apply", "--closed", typed=typed, exit_code=exit_code)
+        return self.hal("apply", "--local", typed=typed, exit_code=exit_code)
 
     # --- what a client of the probe's Traefik sees -------------------------------------------
 

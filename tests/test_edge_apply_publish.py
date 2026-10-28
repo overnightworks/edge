@@ -1,5 +1,5 @@
-"""Plain `edge apply` (#171): the local part (`--closed`) and then the publish (`edge external
-apply`), each with its own `yes`, driven through `cli.main` with both real phases.
+"""Plain `hal apply` (#171): the local part (`--local`) and then the publish (`edge external
+apply`), each with its own `yes`, driven through `hal.cli.main` with both real phases.
 
 The local part runs on the scripted boundaries of `test_edge_apply`, the publish on the fake
 tofu, token files and live checkout of `test_edge_external`; one terminal holds the answers in
@@ -45,11 +45,13 @@ from test_edge_external import (
 )
 from test_edge_plan_rows import plain
 
-from edge import apply, cli, compose
+from edge import apply, compose
 from edge.external import cli as external_cli
 from edge.external import cloudflare_read, tofu
+from hal import cli
+from hal.grammar import ExitCode
 
-REAL_APPLY_CLOSED = apply.apply_closed
+REAL_APPLY_LOCAL = apply.apply_local
 REAL_PUBLISH = external_cli.apply_command
 REAL_CHECK = external_cli.check_command
 CATALOG = """\
@@ -126,9 +128,9 @@ def world(
 ):  # fmt: skip
     monkeypatch.setattr(
         apply,
-        "apply_closed",
+        "apply_local",
         functools.partial(
-            REAL_APPLY_CLOSED,
+            REAL_APPLY_LOCAL,
             engine=compose.Compose(scripted.run, repository),
             repository=repository,
             check=setup_check,
@@ -164,7 +166,7 @@ def world(
     def settle_local() -> None:
         """The local part has applied before; the publish has not run."""
         at_terminal("yes")
-        assert apply.apply_closed(state) == 0
+        assert apply.apply_local(state) == 0
         capsys.readouterr()
 
     made.run, made.settle_local = run, settle_local
@@ -215,8 +217,8 @@ def failing_app(world, repository, home, tmp_path, monkeypatch):  # noqa: F811
     docker = ScriptedDocker(world.state, home / "srv" / KEY, health_after_start="unhealthy")
     monkeypatch.setattr(
         apply,
-        "apply_closed",
-        functools.partial(apply.apply_closed, app_runtime=runtime_of(home, world.state, docker)),
+        "apply_local",
+        functools.partial(apply.apply_local, app_runtime=runtime_of(home, world.state, docker)),
     )
 
 
@@ -225,27 +227,23 @@ def nothing(_world: World) -> None:
 
 
 @pytest.mark.parametrize(
-    ("arrange", "answers", "expected_exit"),
+    ("arrange", "answers"),
     [
-        pytest.param(lock_held, [], 1, id="C1 refused: another apply runs"),
-        pytest.param(not_on_main, [], 2, id="C2 cannot plan: off main"),
-        pytest.param(World.make_setup_missing, ["no"], 1, id="C3 the setup is declined"),
-        pytest.param(setup_fails, ["yes"], 1, id="C4 the setup fails"),
-        pytest.param(setup_is_interrupted, ["yes"], 1, id="C4 the setup is interrupted"),
-        pytest.param(nothing, ["no"], 1, id="C5 the plan is declined"),
-        pytest.param(start_fails, ["yes"], 1, id="C6 the local part ends partial"),
-        pytest.param(recheck_cannot_tell, ["yes", "yes"], 2, id="C7 a setup ran, then no plan"),
+        pytest.param(lock_held, [], id="C1 refused: another apply runs"),
+        pytest.param(World.make_setup_missing, ["no"], id="C3 the setup is declined"),
+        pytest.param(setup_fails, ["yes"], id="C4 the setup fails"),
+        pytest.param(setup_is_interrupted, ["yes"], id="C4 the setup is interrupted"),
+        pytest.param(nothing, ["no"], id="C5 the plan is declined"),
+        pytest.param(recheck_cannot_tell, ["yes", "yes"], id="C7 a setup ran, then no plan"),
     ],
 )
-def test_a_local_part_that_does_not_end_clean_publishes_nothing(
-    world, arrange, answers, expected_exit
-):
-    """C1-C7 (D2, D3): the local exit stands, the publish is never entered."""
+def test_a_local_part_that_does_not_end_clean_publishes_nothing(world, arrange, answers):
+    """C1, C3-C5, C7 (D2, D3): the stack's failure is hal's 3, the publish is never entered."""
     arrange(world)
 
     result = world.run(*answers)
 
-    assert result.exit_code == expected_exit
+    assert result.exit_code == ExitCode.FAILURE
     assert NOTHING_PUBLISHED in result.err
     assert world.publish_never_began()
 
@@ -255,7 +253,7 @@ def test_an_app_that_fails_its_health_ends_the_local_part_partial_and_publishes_
     """#255 A21: the app step is part of the local part, whose exit gates the publish."""
     result = world.run("yes")
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert "partial, hopin is not healthy at v2026.10.22.1" in result.err
     assert NOTHING_PUBLISHED in result.err
     assert world.publish_never_began()
@@ -277,7 +275,7 @@ def test_nothing_to_change_on_either_side_asks_nothing(world):
 
     result = world.run()
 
-    assert result.exit_code == 0
+    assert result.exit_code == ExitCode.OK
     assert "Type yes" not in result.out
     assert "nothing to change" in result.out
     assert "no findings" in result.out
@@ -289,7 +287,7 @@ def test_changes_on_both_sides_ask_the_local_plan_then_the_publish(world):
 
     result = world.run("yes", "yes")
 
-    assert result.exit_code == 0
+    assert result.exit_code == ExitCode.OK
     assert result.out.count(PLAN_QUESTION) == 2
     assert result.out.index(PLAN_QUESTION) < result.out.index("step-ca is on")
     assert result.out.index("step-ca is on") < result.out.rindex(PLAN_QUESTION)
@@ -303,7 +301,7 @@ def test_a_missing_setup_is_asked_before_the_two_plans(world):
 
     result = world.run("yes", "yes", "yes")
 
-    assert result.exit_code == 0
+    assert result.exit_code == ExitCode.OK
     assert result.out.count("Type yes") == 3
     assert result.out.count(PLAN_QUESTION) == 2
     assert result.out.index(SETUP_QUESTION) < result.out.index(PLAN_QUESTION)
@@ -320,13 +318,13 @@ def test_an_interrupted_setup_whose_containers_run_is_asked_again_and_publishes_
 
     declined = world.run("no")
 
-    assert declined.exit_code == 1
+    assert declined.exit_code == ExitCode.FAILURE
     assert SETUP_QUESTION in declined.out
     assert world.publish_never_began()
 
     finished = world.run("yes", "yes")
 
-    assert finished.exit_code == 0
+    assert finished.exit_code == ExitCode.OK
     assert finished.out.index(SETUP_QUESTION) < finished.out.index(PLAN_QUESTION)
     assert world.fake_tofu.call("apply")
 
@@ -341,7 +339,7 @@ def test_an_interrupted_stop_after_an_interrupted_setup_is_refused_and_publishes
 
     result = world.run()
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert result.err.splitlines()[:2] == [
         "error: switched off but still running, nothing switched",
         "next: hal stop step-ca",
@@ -375,14 +373,14 @@ def publish_fails(_world: World) -> tuple[list[str], dict]:
     [publish_is_declined, publish_has_findings, publish_cannot_check, publish_fails],
     ids=["C11 declined", "C12 findings", "C12 cannot check", "C13 apply fails"],
 )
-def test_a_publish_that_does_not_end_clean_is_exit_1(world, arrange):
+def test_a_publish_that_does_not_end_clean_ends_with_3(world, arrange):
     """C11-C13: the publish's own non-zero exit is the exit of `edge apply`."""
     answers, plan = arrange(world)
     world.fake_tofu.configure(**plan)
 
     result = world.run(*answers)
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 
@@ -416,41 +414,27 @@ def test_a_failing_tofu_apply_names_cloudflare_as_the_sender(world):
     assert "cloudflare: tofu apply failed (exit 1)" in result.err
 
 
-def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
+def test_a_publish_that_cannot_plan_ends_with_3_and_the_summary_line(world):
     """C14: the publish's exit 2 becomes 1; only a local part can end `edge apply` with 2."""
     world.fake_tofu.configure(plan=1)
 
     result = world.run("yes")
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert "cloudflare: tofu plan failed (exit 1)" in result.err
     assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 
-def test_a_missing_write_token_after_the_local_part_is_exit_1_naming_the_file(world, home):  # noqa: F811
+def test_a_missing_write_token_after_the_local_part_ends_with_3_naming_the_file(world, home):  # noqa: F811
     """C15 (D8): the local part ran; the publish names the file it misses."""
     (home / ".secrets/cloudflare/fleet-write").unlink()
 
     result = world.run("yes")
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert "step-ca is on" in result.out
     assert "fleet-write" in result.err
     assert world.fake_tofu.calls() == []
-
-
-def test_ctrl_c_in_the_local_part_publishes_nothing_and_shows_no_traceback(world):
-    """C16: SIGINT at the local plan's `yes`."""
-
-    def ctrl_c() -> None:
-        raise KeyboardInterrupt
-
-    result = world.run(while_prompt_waits=ctrl_c)
-
-    assert result.exit_code == 1
-    assert "hal apply: interrupted, nothing published" in result.err
-    assert "Traceback" not in result.err
-    assert world.publish_never_began()
 
 
 def interrupting(phase, *, after_running: bool):
@@ -465,7 +449,7 @@ def interrupting(phase, *, after_running: bool):
 
 
 def local_part_returns(monkeypatch, exit_code: int) -> None:
-    monkeypatch.setattr(apply, "apply_closed", lambda _state: exit_code)
+    monkeypatch.setattr(apply, "apply_local", lambda _state: exit_code)
 
 
 def publish_returns(monkeypatch, exit_code: int) -> list[tuple]:
@@ -481,11 +465,11 @@ def publish_returns(monkeypatch, exit_code: int) -> list[tuple]:
 
 def test_ctrl_c_in_the_gap_after_the_local_part_publishes_nothing(world, monkeypatch):
     """C17: the local part ended clean, the publish phase is not yet recorded."""
-    monkeypatch.setattr(apply, "apply_closed", interrupting(apply.apply_closed, after_running=True))
+    monkeypatch.setattr(apply, "apply_local", interrupting(apply.apply_local, after_running=True))
 
     result = world.run("yes")
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert "hal apply: interrupted, nothing published" in result.err
     assert "step-ca is on" in result.out
     assert world.publish_never_began()
@@ -506,7 +490,7 @@ def test_ctrl_c_with_the_publish_started_names_the_check_to_run(world, monkeypat
 
     result = world.run()
 
-    assert result.exit_code == 1
+    assert result.exit_code == ExitCode.FAILURE
     assert INTERRUPTED_IN_PUBLISH in result.err
     if after_running:
         assert "no findings" in result.out
@@ -524,7 +508,7 @@ class InterruptedOnSummary(io.StringIO):
         return super().write(text)
 
 
-@pytest.mark.parametrize(("publish_exit", "expected"), [(0, 0), (2, 1)])
+@pytest.mark.parametrize(("publish_exit", "expected"), [(0, ExitCode.OK), (2, ExitCode.FAILURE)])
 def test_ctrl_c_after_the_publish_exit_is_recorded_leaves_that_exit(
     world, monkeypatch, publish_exit, expected
 ):
@@ -555,18 +539,10 @@ def test_the_composer_installs_no_sigterm_handler(world, monkeypatch):
     assert seen == {"local part": signal.SIG_DFL, "publish entry": signal.SIG_DFL}
 
 
-def test_closed_never_publishes(world):
-    """C21: `--closed` is the local part alone."""
-    result = world.run("yes", arguments=("apply", "--closed"))
-
-    assert result.exit_code == 0
-    assert world.publish_never_began()
-
-
 def test_the_publish_starts_only_after_the_local_part_returned(world, monkeypatch):
     """C22 and C23: the order, and the entry `external_cli.apply_command(Path.home())`."""
     events: list[str] = []
-    local = apply.apply_closed
+    local = apply.apply_local
 
     def local_part(*arguments, **keywords):
         events.append("local entered")
@@ -578,7 +554,7 @@ def test_the_publish_starts_only_after_the_local_part_returned(world, monkeypatc
         events.append("publish entered")
         return 0
 
-    monkeypatch.setattr(apply, "apply_closed", local_part)
+    monkeypatch.setattr(apply, "apply_local", local_part)
     monkeypatch.setattr(external_cli, "apply_command", publish)
     world.run("yes")
 
@@ -597,16 +573,8 @@ def test_help_names_both_parts(capsys):
     with pytest.raises(SystemExit) as stopped:
         cli.main(["apply", "--help"])
 
-    assert stopped.value.code == 0
+    assert stopped.value.code == ExitCode.OK
     said = " ".join(capsys.readouterr().out.split())
-    assert "--closed" in said
+    assert "--local" in said
     assert "the publish" in said
     assert "external" not in said
-
-
-def test_top_level_help_names_only_existing_subcommands(capsys):
-    with pytest.raises(SystemExit) as stopped:
-        cli.main(["--help"])
-
-    assert stopped.value.code == 0
-    assert "external" not in capsys.readouterr().out

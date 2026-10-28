@@ -1,4 +1,4 @@
-"""`edge apply --closed`: switches the units of this repository on or off from `fleet.yaml` and its
+"""`hal apply --local`: switches the units of this repository on or off from `fleet.yaml` and its
 apps on at their newest release (`apps.py`).
 
 Exit 0 applied and observed, or nothing to change; 1 refused, aborted, failed or partial;
@@ -194,7 +194,7 @@ def _plan(
     )
 
 
-def apply_closed(
+def apply_local(
     state_directory: Path,
     engine: compose.Compose | None = None,
     repository: Path = compose.REPOSITORY,

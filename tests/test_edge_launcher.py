@@ -1,4 +1,4 @@
-"""bin/edge runs its own checkout's edge with that checkout's locked dependencies, from anywhere."""
+"""bin/hal runs its own checkout's hal with that checkout's locked dependencies, from anywhere."""
 
 import os
 import shutil
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-LAUNCHER = Path(__file__).resolve().parents[1] / "bin/edge"
+LAUNCHER = Path(__file__).resolve().parents[1] / "bin/hal"
 
 FAKE_UV = """#!/bin/sh
 printf '%s\\0' "$@" > "$FAKE_LOG/uv.args"
@@ -19,11 +19,11 @@ if [ -n "${FAKE_UV_FAILS-}" ]; then
 fi
 """
 
-FAKE_EDGE = """#!/bin/sh
-printf '%s\\0' "$@" > "$FAKE_LOG/edge.args"
-printf '%s' "${VIRTUAL_ENV-unset} ${UV_PROJECT_ENVIRONMENT-unset}" > "$FAKE_LOG/edge.env"
-printf '%s' "$PPID" > "$FAKE_LOG/edge.ppid"
-exit "${FAKE_EDGE_EXIT-0}"
+FAKE_HAL = """#!/bin/sh
+printf '%s\\0' "$@" > "$FAKE_LOG/hal.args"
+printf '%s' "${VIRTUAL_ENV-unset} ${UV_PROJECT_ENVIRONMENT-unset}" > "$FAKE_LOG/hal.env"
+printf '%s' "$PPID" > "$FAKE_LOG/hal.ppid"
+exit "${FAKE_HAL_EXIT-0}"
 """
 
 
@@ -45,7 +45,7 @@ class Machine:
         self, *args: str, launcher: Path | None = None, **env: str
     ) -> subprocess.CompletedProcess:
         return subprocess.run(
-            [str(launcher or self.checkout / "bin/edge"), *args],
+            [str(launcher or self.checkout / "bin/hal"), *args],
             cwd=self.elsewhere,
             env={"PATH": self.path, "FAKE_LOG": str(self.log), **env},
             capture_output=True,
@@ -64,8 +64,8 @@ class Machine:
 def machine(tmp_path) -> Machine:
     checkout = tmp_path / "checkout"
     (checkout / "bin").mkdir(parents=True)
-    shutil.copy2(LAUNCHER, checkout / "bin/edge")
-    _executable(checkout / ".venv/bin/edge", FAKE_EDGE)
+    shutil.copy2(LAUNCHER, checkout / "bin/hal")
+    _executable(checkout / ".venv/bin/hal", FAKE_HAL)
     fake_bin = tmp_path / "fake-bin"
     _executable(fake_bin / "uv", FAKE_UV)
     (tmp_path / "log").mkdir()
@@ -78,8 +78,8 @@ def machine(tmp_path) -> Machine:
     )
 
 
-def test_syncs_the_checkout_locked_and_hands_edge_its_arguments_verbatim(machine):
-    """#102 rule 1, cell L1: the checkout syncs locked; edge gets every argument unchanged."""
+def test_syncs_the_checkout_locked_and_hands_hal_its_arguments_verbatim(machine):
+    """#102 rule 1, cell L1: the checkout syncs locked; hal gets every argument unchanged."""
     arguments = ["external", "plan", "two words", "", "--flag=$HOME"]
 
     result = machine.run(*arguments)
@@ -94,66 +94,52 @@ def test_syncs_the_checkout_locked_and_hands_edge_its_arguments_verbatim(machine
         "--project",
         str(machine.checkout),
     ]
-    assert machine.logged_args("edge.args") == arguments
+    assert machine.logged_args("hal.args") == arguments
 
 
-def test_exits_with_edge_exit_code(machine):
-    """#102 rule 1, cell L2: the launcher exits with edge's own exit code."""
-    assert machine.run("external", "apply", FAKE_EDGE_EXIT="3").returncode == 3
+def test_exits_with_hal_exit_code(machine):
+    """#102 rule 1, cell L2: the launcher exits with hal's own exit code."""
+    assert machine.run("external", "apply", FAKE_HAL_EXIT="3").returncode == 3
 
 
-def test_failed_sync_exits_2_with_one_line_and_never_runs_edge(machine):
-    """#102 rule 2, cell L3: a failed sync exits 2 with one closing line, and edge never runs."""
+def test_failed_sync_exits_3_with_error_and_next_and_never_runs_hal(machine):
+    """#102 rule 2, cell L3: a failed sync ends in hal's error form with exit 3; hal never runs."""
     result = machine.run("--help", FAKE_UV_FAILS="1")
 
-    assert result.returncode == 2
+    assert result.returncode == 3
     assert "uv: lock file is out of date" in result.stderr
-    assert result.stderr.splitlines()[-1] == (
-        "edge: cannot sync the live checkout's dependencies; "
-        f"run `uv sync --locked` in {machine.checkout}"
-    )
-    assert not (machine.log / "edge.args").exists()
+    assert result.stderr.splitlines()[-2:] == [
+        "error: cannot sync the live checkout's dependencies",
+        f"next: uv sync --locked --project {machine.checkout}",
+    ]
+    assert not (machine.log / "hal.args").exists()
 
 
-def test_edge_replaces_the_launcher_instead_of_running_under_a_shell(machine):
-    """#102 rule 1, cell L4: edge replaces the launcher process instead of running under a shell."""
+def test_hal_replaces_the_launcher_instead_of_running_under_a_shell(machine):
+    """#102 rule 1, cell L4: hal replaces the launcher process instead of running under a shell."""
     machine.run("--help")
 
-    assert machine.logged("edge.ppid") == str(os.getpid())
+    assert machine.logged("hal.ppid") == str(os.getpid())
 
 
-def test_another_projects_environment_reaches_neither_uv_nor_edge(machine, tmp_path):
-    """#102 rule 1, cell L5: another project's virtualenv reaches neither uv nor edge."""
+def test_another_projects_environment_reaches_neither_uv_nor_hal(machine, tmp_path):
+    """#102 rule 1, cell L5: another project's virtualenv reaches neither uv nor hal."""
     other = str(tmp_path / "other-project/.venv")
 
     machine.run("--help", VIRTUAL_ENV=other, UV_PROJECT_ENVIRONMENT=other)
 
     assert machine.logged("uv.env") == "unset unset"
-    assert machine.logged("edge.env") == "unset unset"
+    assert machine.logged("hal.env") == "unset unset"
 
 
 def test_finds_its_checkout_through_a_symlink_in_another_directory(machine, tmp_path):
     """#102 rule 1, cell L6: a symlink elsewhere still finds its own checkout."""
-    link = tmp_path / "home/.local/bin/edge"
+    link = tmp_path / "home/.local/bin/hal"
     link.parent.mkdir(parents=True)
-    link.symlink_to(machine.checkout / "bin/edge")
+    link.symlink_to(machine.checkout / "bin/hal")
 
     result = machine.run("--help", launcher=link)
 
     assert result.returncode == 0, result.stderr
     assert machine.logged_args("uv.args")[-1] == str(machine.checkout)
-    assert machine.logged_args("edge.args") == ["--help"]
-
-
-def test_runs_the_command_it_is_called_by_through_a_symlink_named_hal(machine, tmp_path):
-    """#142 rule 5, cell L8: a symlink named hal starts the checkout's hal, not its edge."""
-    (machine.checkout / ".venv/bin/edge").unlink()
-    _executable(machine.checkout / ".venv/bin/hal", FAKE_EDGE)
-    link = tmp_path / "tools/hal"
-    link.parent.mkdir()
-    link.symlink_to(machine.checkout / "bin/edge")
-
-    result = machine.run("tidy", launcher=link)
-
-    assert result.returncode == 0, result.stderr
-    assert machine.logged_args("edge.args") == ["tidy"]
+    assert machine.logged_args("hal.args") == ["--help"]

@@ -15,7 +15,7 @@ calls resolve only the project's networks (edge_copy.py, P26).
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
 --scratch directory. Proof 9 waits for a renewal, 10 runs three applies, 11 drives the emergency
-switch, 12 runs the setup from `edge apply`, 13 lets traefik-mcp follow its file and definition
+switch, 12 runs the setup from `hal apply`, 13 lets traefik-mcp follow its file and definition
 through about ten applies, and 14 drives songmaker's route (#346 P13-P27, mcp_networks.py): about
 13 minutes, 10 of them proof 9's renewal wait, bounded by the 2400 s timeout above. Needs `uv`:
 proof 8 runs `hal check exposure` through it, proofs 10 to 13 `uv sync` in a copy of the repository.
@@ -50,10 +50,11 @@ import health  # noqa: E402
 from edge_copy import (  # noqa: E402
     DISCARD_OUTPUT,
     GUARDED_COMPOSE_VERBS,
+    HAL_FAILURE,
     ProbeFailed,
     expect,
     publish,
-    run_edge,
+    run_hal,
 )
 from edge_copy import repository_copy as copy_repository  # noqa: E402
 from mcp_networks import McpNetworks, print_verdict  # noqa: E402
@@ -602,7 +603,7 @@ class Probe(McpNetworks):
             f"the old one valid until {first['validity']['end']}, traefik-mcp not restarted"
         )
 
-    # --- edge apply --closed switches the unit and keeps its data (#52 rule 3) -----------------
+    # --- hal apply --local switches the unit and keeps its data (#52 rule 3) -----------------
 
     def repository_copy(self) -> Path:
         """The lane's files as the scratch HOME's live checkout; only its fleet.yaml is flipped."""
@@ -622,19 +623,20 @@ class Probe(McpNetworks):
         fleet.write_text(text)
         publish(copy, f"probe: step-ca enabled {enabled}")
 
-    def edge(
-        self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
+    def hal(
+        self, copy: Path, *arguments: str, terminal: bool, fails: bool = False,
         typed: bytes = b"yes\n",
     ) -> str:  # fmt: skip
         if arguments[0] in ("apply", "start"):
             self.guard.expect(edge_copy.copy_compose_command(copy), once=False)
-        return run_edge(
+        exit_code = HAL_FAILURE if fails else 0
+        return run_hal(
             copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code, typed=typed
         )
 
-    def edge_apply(self, copy: Path, enabled: bool) -> str:
+    def hal_apply(self, copy: Path, enabled: bool) -> str:
         self.set_enabled(copy, enabled)
-        return self.edge(copy, "apply", "--closed", terminal=True)
+        return self.hal(copy, "apply", "--local", terminal=True)
 
     def volume_names(self) -> list[str]:
         return [self.composed["volumes"][key]["name"] for key in ("step-ca", "traefik-mcp-acme")]
@@ -642,10 +644,10 @@ class Probe(McpNetworks):
     def proof_10_apply_cycle(self) -> None:
         copy = self.repository_copy()
         self.compose("up", "--detach", "--no-deps", "hello-mcp")  # the origin behind the gateway
-        self.edge_apply(copy, enabled=True)
+        self.hal_apply(copy, enabled=True)
         served_before = self.wait_until_served()
         before = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
-        self.edge_apply(copy, enabled=False)
+        self.hal_apply(copy, enabled=False)
         left = (
             self.compose("ps", "--all", "-q", "step-ca", "traefik-mcp", "traefik-mcp-acme-owner")
             .stdout.decode()
@@ -654,7 +656,7 @@ class Probe(McpNetworks):
         expect(not left, f"containers of the unit are left after off: {left}")
         for volume in self.volume_names():
             self.run(["docker", "volume", "inspect", volume])  # a missing volume exits 1
-        self.edge_apply(copy, enabled=True)
+        self.hal_apply(copy, enabled=True)
         self.wait_until_answering()
         served_after = self.wait_until_served()
         after = self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
@@ -666,10 +668,10 @@ class Probe(McpNetworks):
             == intermediate["extensions"]["subject_key_id"],
             "not served by the same intermediate",
         )
-        again = self.edge_apply(copy, enabled=True)
+        again = self.hal_apply(copy, enabled=True)
         expect(NOTHING_TO_CHANGE in again, f"a repeated apply said: {again[-120:]}")
         self.intermediate_fingerprint = after
-        print(f"proof 10 held: edge apply on/off/on keeps both volumes; same intermediate {after}")
+        print(f"proof 10 held: hal apply on/off/on keeps both volumes; same intermediate {after}")
 
     # --- the emergency switch survives apply and keeps the data (#60) --------------------------
 
@@ -686,47 +688,45 @@ class Probe(McpNetworks):
         marker = self.state_directory / "stopped" / "step-ca"
         self.set_enabled(copy, True)
 
-        self.edge(copy, "stop", "step-ca", terminal=False)  # 1. A x stop: R4, no terminal
+        self.hal(copy, "stop", "step-ca", terminal=False)  # 1. A x stop: R4, no terminal
         expect(marker.is_file(), "stop wrote no marker")
         expect(not self.containers_of_unit(running_only=True), "a container runs after stop")
         expect(len(self.containers_of_unit(running_only=False)) == 2, "stop removed a container")
         self.volume_names_exist()
         written = marker.read_text()
 
-        out = self.edge(copy, "stop", "step-ca", terminal=False)  # 2. B x stop
+        out = self.hal(copy, "stop", "step-ca", terminal=False)  # 2. B x stop
         expect("already off since" in out, f"a second stop said: {out[-120:]}")
         expect(marker.read_text() == written, "a second stop rewrote the marker")
 
-        out = self.edge(copy, "apply", "--closed", terminal=True)  # 3. B x apply, enabled
+        out = self.hal(copy, "apply", "--local", terminal=True)  # 3. B x apply, enabled
         expect("stays stopped" in out and NOTHING_TO_CHANGE in out, f"apply said: {out[-160:]}")
         expect("Type" not in out, "apply asked for `yes` with nothing to change")
         expect(not self.containers_of_unit(running_only=True), "apply started a switched-off unit")
 
-        self.edge(
-            copy, "start", "step-ca", terminal=False, exit_code=1
-        )  # 4. B x start, no terminal
+        self.hal(copy, "start", "step-ca", terminal=False, fails=True)  # 4. B x start, no terminal
         expect(marker.read_text() == written, "a refused start touched the marker")
 
         self.set_enabled(copy, False)  # 5. B x apply, disabled: to E, marker and volumes stay
-        out = self.edge(copy, "apply", "--closed", terminal=True)
+        out = self.hal(copy, "apply", "--local", terminal=True)
         expect("its switch since" in out, f"apply to E said: {out[-160:]}")
         expect(not self.containers_of_unit(running_only=False), "off left containers")
         expect(marker.read_text() == written, "apply to E cleared the marker")
         self.volume_names_exist()
 
-        out = self.edge(copy, "stop", "step-ca", terminal=False)  # 6. E x stop
+        out = self.hal(copy, "stop", "step-ca", terminal=False)  # 6. E x stop
         expect("nothing of it runs" in out, f"stop in E said: {out[-120:]}")
         expect(marker.read_text() == written, "stop in E touched the marker")
 
-        out = self.edge(copy, "start", "step-ca", terminal=True, exit_code=1)  # 7. E x start
+        out = self.hal(copy, "start", "step-ca", terminal=True, fails=True)  # 7. E x start
         expect("disabled in the catalog" in out, f"start in E said: {out[-120:]}")
 
         self.set_enabled(copy, True)  # 8. E x apply, enabled, marker present: to B
-        out = self.edge(copy, "apply", "--closed", terminal=True)
+        out = self.hal(copy, "apply", "--local", terminal=True)
         expect("stays stopped" in out, f"apply to B said: {out[-160:]}")
         expect(not self.containers_of_unit(running_only=False), "apply created a container")
 
-        self.edge(copy, "start", "step-ca", terminal=True)  # 9. B x start, yes: to A
+        self.hal(copy, "start", "step-ca", terminal=True)  # 9. B x start, yes: to A
         expect(not marker.exists(), "start left the marker")
         self.wait_until_answering()
         expect(len(self.containers_of_unit(running_only=True)) == 2, "start did not run both")
@@ -735,13 +735,13 @@ class Probe(McpNetworks):
         expect(after == self.intermediate_fingerprint, f"intermediate changed: {after}")
         expect(served["extensions"]["authority_key_id"], "nothing served after start")
 
-        out = self.edge(copy, "start", "step-ca", terminal=True)  # 10. A x start
+        out = self.hal(copy, "start", "step-ca", terminal=True)  # 10. A x start
         expect("no change" in out, f"start in A said: {out[-120:]}")
-        out = self.edge(copy, "apply", "--closed", terminal=True)  # 11. A x apply
+        out = self.hal(copy, "apply", "--local", terminal=True)  # 11. A x apply
         expect(NOTHING_TO_CHANGE in out, f"apply in A said: {out[-120:]}")
         print("proof 11 held: stop/start/apply cells A, B, E; switch kept across apply and off")
 
-    # --- edge apply asks for a missing setup and runs it in the terminal (#69) ------------------
+    # --- hal apply asks for a missing setup and runs it in the terminal (#69) ------------------
 
     def start_without_keys(self) -> Path:
         """No keys, no volumes, no containers; an enabled copy of the repository."""
@@ -763,20 +763,20 @@ class Probe(McpNetworks):
     def proof_12_apply_runs_the_setup(self) -> None:
         copy = self.start_without_keys()
 
-        out = self.edge(copy, "apply", "--closed", terminal=True, exit_code=1, typed=b"no\n")
+        out = self.hal(copy, "apply", "--local", terminal=True, fails=True, typed=b"no\n")
         expect("aborted, nothing changed" in out, f"a no said: {out[-160:]}")  # (i)
         expect(not self.secrets_dir.exists(), "keys exist after a no")
         expect(not self.volumes_that_exist(), "a volume exists after a no")
         expect(not self.containers_of_unit(running_only=False), "a container exists after a no")
 
-        out = self.edge(copy, "apply", "--closed", terminal=True, typed=b"yes\nyes\n")  # (ii)
+        out = self.hal(copy, "apply", "--local", terminal=True, typed=b"yes\nyes\n")  # (ii)
         expect("is not set up" in out and "the plan" in out, f"yes, yes said: {out[-200:]}")
         expect(out.index("is not set up") < out.index("the plan"), "the plan came first")
         expect((self.secrets_dir / "root_ca_key").is_file(), "the setup made no root key")
         self.run([str(REPO / "step-ca" / "init"), "--check"])
         self.wait_until_answering()
         expect(len(self.containers_of_unit(running_only=True)) == 2, "step-ca is not on")
-        again = self.edge(copy, "apply", "--closed", terminal=True)
+        again = self.hal(copy, "apply", "--local", terminal=True)
         expect(NOTHING_TO_CHANGE in again, f"a repeated apply said: {again[-120:]}")
         print("proof 12 held: no changes nothing; yes, yes runs step-ca/init, re-checks, plans, on")
 
@@ -805,7 +805,7 @@ class Probe(McpNetworks):
         return self.certificate_fingerprint(self.in_volume("cat", INTERMEDIATE_IN_VOLUME))
 
     def apply_says_nothing_to_change(self, copy: Path, cell: str) -> str:
-        out = self.edge(copy, "apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal(copy, "apply", "--local", terminal=True, typed=b"no\n")
         expect(NOTHING_TO_CHANGE in out, f"{cell}: apply said: {out[-200:]}")
         expect("Type" not in out, f"{cell}: apply asked for `yes` with nothing to change")
         return out
@@ -832,7 +832,7 @@ class Probe(McpNetworks):
         follower, step_ca = self.ids()
         intermediate, serial = self.intermediate_now(), self.wait_until_served()["serial_number"]
         self.edit_follower_file(copy)
-        out = self.edge(copy, "apply", "--closed", terminal=True)
+        out = self.hal(copy, "apply", "--local", terminal=True)
         expect("traefik-mcp recreate traefik-mcp.yml changed" in out, f"P13b: {out[-240:]}")
         expect("traefik-mcp is recreated and runs the checked-out traefik-mcp.yml" in out, out)
         expect(self.container_id(FOLLOWER) != follower, "P13b: traefik-mcp kept its container")
@@ -869,7 +869,7 @@ class Probe(McpNetworks):
             text = text.replace(anchor, anchor + PROBE_LABEL, 1)
         compose_file.write_text(text)
         publish(copy, "probe: a label on traefik-mcp")
-        out = self.edge(copy, "apply", "--closed", terminal=True)
+        out = self.hal(copy, "apply", "--local", terminal=True)
         expect("traefik-mcp recreate definition changed" in out, out[-240:])
         expect("step-ca recreate" not in out, f"P13d: step-ca was named: {out[-240:]}")
         expect(self.container_id(FOLLOWER) != follower, "P13d: traefik-mcp kept its container")
@@ -893,13 +893,13 @@ class Probe(McpNetworks):
             f"{bool(running)}"
         )
         # A missing owner leaves the unit not up: this apply makes it again, else changes nothing.
-        self.edge(copy, "apply", "--closed", terminal=True)
+        self.hal(copy, "apply", "--local", terminal=True)
         self.apply_says_nothing_to_change(copy, "P13 acme owner")
 
     def proof_13e_switched_off(self, copy: Path) -> None:
         marker = self.state_directory / "stopped" / "step-ca"
         recorded = (copy / FOLLOWER_FILE).read_text()
-        self.edge(copy, "stop", "step-ca", terminal=False)
+        self.hal(copy, "stop", "step-ca", terminal=False)
         written = marker.read_text()
         self.edit_follower_file(copy)
         out = self.apply_says_nothing_to_change(copy, "P13e")
@@ -911,7 +911,7 @@ class Probe(McpNetworks):
         self.volume_names_exist()
         (copy / FOLLOWER_FILE).write_text(recorded)
         publish(copy, f"probe: {FOLLOWER_FILE} as recorded")
-        self.edge(copy, "start", "step-ca", terminal=True)
+        self.hal(copy, "start", "step-ca", terminal=True)
         self.wait_until_answering()
         self.apply_says_nothing_to_change(copy, "P13e after start")
         print("P13e held: switched off, the held line, nothing to change, nothing running")
@@ -920,7 +920,7 @@ class Probe(McpNetworks):
         held = "traefik-mcp not started traefik-mcp.yml changed · step-ca is off"
         self.set_enabled(copy, False)
         self.edit_follower_file(copy)
-        out = self.edge(copy, "apply", "--closed", terminal=True)
+        out = self.hal(copy, "apply", "--local", terminal=True)
         expect(held in out and "step-ca switch off" in out, f"P13f: {out[-240:]}")
         expect(not self.containers_of_unit(running_only=False), "P13f: containers are left")
         out = self.apply_says_nothing_to_change(copy, "P13f")
@@ -930,7 +930,7 @@ class Probe(McpNetworks):
 
     def proof_13g_switch_on_record(self, copy: Path) -> None:
         self.set_enabled(copy, True)
-        out = self.edge(copy, "apply", "--closed", terminal=True)
+        out = self.hal(copy, "apply", "--local", terminal=True)
         expect("traefik-mcp starts later" in out and "with step-ca" in out, f"P13g: {out[-240:]}")
         expect("traefik-mcp recreate" not in out, f"P13g: {out[-240:]}")
         self.wait_until_answering()
