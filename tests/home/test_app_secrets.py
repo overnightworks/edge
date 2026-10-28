@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import getpass
 import re
 import stat
 from collections.abc import Callable, Iterator
@@ -19,9 +20,9 @@ from hal.grammar import ExitCode
 from home_tools import cli as home_cli
 from home_tools import secrets_setup, secrets_view
 from home_tools.cli import main
-from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Terminal, Verdict
+from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Terminal, TokenVerifier, Verdict
 from home_tools.setup import RERUN
-from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
+from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
 
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
 HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"
@@ -558,16 +559,65 @@ def test_hal_setup_apply_counts_two_open_entries_in_the_row_and_the_error(
     )
 
 
-def test_hal_setup_apply_keeps_the_failed_row_when_the_wizard_exits_for_another_reason(
-    hal_secrets: Callable[..., tuple[int, list[str], str]],
-) -> None:
-    code, lines, error = hal_secrets(secret_entry("first"), "--apply", at_a_terminal=False)
+GUIDED_TOKEN = secret_entry(
+    "github/read",
+    kind="token",
+    extra='purpose = "liest GitHub"\nprovider = "github"\nresource = "example-org"\nscope = ["metadata:read"]\nexpires_in_days = 366',
+)
 
-    assert (code, lines[-1], error.splitlines()[-2]) == (
-        ExitCode.FAILURE,
-        "  ✗ secrets         failed         not every secret is set up; the lines above say which one is open",
-        "error: setup stopped at secrets",
+
+def guided_boundaries(ask_hidden: Callable[[str], str], verify: TokenVerifier) -> Boundaries:
+    terminal = Terminal(lambda: True, lambda _prompt: "", ask_hidden, lambda _page: True)
+    return Boundaries(terminal, verify, lambda _descriptor: None)
+
+
+def fail_to_verify(_source: TokenSource, _value: str) -> None:
+    raise RuntimeError("the value stays out of the line")
+
+
+@pytest.mark.parametrize(
+    ("boundaries", "expected_error"),
+    [
+        pytest.param(
+            None,
+            [
+                "error: secrets setup needs your own terminal window · nothing changed",
+                "next: hal setup --apply in your own terminal window",
+            ],
+            id="no terminal",
+        ),
+        pytest.param(
+            guided_boundaries(getpass.fallback_getpass, fail_to_verify),
+            [
+                "error: this terminal cannot hide what you type · nothing read",
+                "next: hal setup --apply in another terminal window",
+            ],
+            id="cannot hide input",
+        ),
+        pytest.param(
+            guided_boundaries(lambda _prompt: "pastedvalue", fail_to_verify),
+            [
+                "error: stopped at github/read · unexpected RuntimeError · github/read is not stored",
+                "next: hal setup --apply",
+            ],
+            id="entry failed",
+        ),
+    ],
+)
+def test_hal_setup_apply_ends_a_stop_the_wizard_told_with_the_wizards_pair_alone(
+    hal_secrets: Callable[..., tuple[int, list[str], str]],
+    boundaries: Boundaries | None,
+    expected_error: list[str],
+) -> None:
+    code, lines, error = hal_secrets(
+        GUIDED_TOKEN, "--apply", at_a_terminal=False, boundaries=boundaries
     )
+
+    assert (code, error.splitlines()[-2:]) == (ExitCode.FAILURE, expected_error)
+    assert not [line for line in lines if "secrets" in line and "✗" in line]
+    assert "setup stopped" not in error
+    assert "pastedvalue" not in error
+    assert not [line for line in lines if "pastedvalue" in line]
 
 
 def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
@@ -655,7 +705,7 @@ def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_interrupted_line_an
     )
     error = capsys.readouterr().err
 
-    assert code == secrets_setup.ABORTED_EXIT
+    assert code == secrets_setup.WalkEnd.ABORTED.exit_code
     assert "error: interrupted at live · no file half written" in error
     assert "Traceback" not in error
 
