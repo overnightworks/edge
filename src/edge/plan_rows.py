@@ -41,7 +41,11 @@ def plan_groups(plan: Plan) -> tuple[Group, ...]:
 
 
 def _unit_rows(plan: Plan) -> tuple[Row, ...]:
-    return (*(_old_image_row(image) for image in plan.images), *_realm_rows(plan.realm))
+    realm_row = _realm_row(plan.realm)
+    return (
+        *(_old_image_row(image) for image in plan.images),
+        *(() if realm_row is None else (realm_row,)),
+    )
 
 
 def _old_image_row(image: KeptImage) -> Row:
@@ -56,21 +60,21 @@ def _image_text(image: ImageReference, shows_name: bool = True) -> str:
     return f"{image.name if shows_name else ''}{digest}"
 
 
-def _realm_rows(realm: RealmPlan) -> tuple[Row, ...]:
+def _realm_row(realm: RealmPlan) -> Row | None:
     match realm.action:
         case RealmAction.RUN:
             fact = f"keycloak/*.yaml{_SEPARATOR}{realm.why}"
-            return (Row(Glyph.CHANGE, REALM_UNIT, PlanEvent.REALM_APPLY, fact),)
+            return Row(Glyph.CHANGE, REALM_UNIT, PlanEvent.REALM_APPLY, fact)
         case RealmAction.HELD:
             fact = f"{realm.why}{_SEPARATOR}Keycloak is {realm.gate}"
-            return (Row(Glyph.UNCHANGED, REALM_UNIT, PlanEvent.REALM_HELD, fact),)
+            return Row(Glyph.UNCHANGED, REALM_UNIT, PlanEvent.REALM_HELD, fact)
         case RealmAction.NOT_CHECKED:
             fact = f"{realm.restart}{_SEPARATOR}next apply checks it"
-            return (Row(Glyph.UNCHANGED, REALM_UNIT, PlanEvent.REALM_LATER, fact),)
+            return Row(Glyph.UNCHANGED, REALM_UNIT, PlanEvent.REALM_LATER, fact)
         case RealmAction.UNREADABLE:
-            return (Row(Glyph.NEEDS_YOU, REALM_UNIT, PlanEvent.REALM_SKIPPED, realm.error),)
+            return Row(Glyph.NEEDS_YOU, REALM_UNIT, PlanEvent.REALM_SKIPPED, realm.error)
         case _:
-            return ()
+            return None
 
 
 def _app_rows(apps: AppsPlan) -> tuple[Row, ...]:
