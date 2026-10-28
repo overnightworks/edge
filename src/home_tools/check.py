@@ -242,6 +242,10 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("platform", "container-unhealthy"): _container_report("{subject} is running but reports being unwell.", "reports being unwell", "{subject} no longer reports being unwell."),
     ("platform", "container-exited"): _container_report("{subject} stopped with an error.", "stopped with an error", "{subject} no longer reports an error exit."),
     ("platform", "docker-unreadable"): RuleReport(ACTION, "The check cannot read Docker; whether the services run is unknown.", AGENT_STEP, resolved="The check can read Docker again.", hides_state=True),
+    ("platform", "job-failed"): RuleReport(
+        ACTION, "{subject} failed on its last run.", "Tell an agent: \"{subject} failed, please look\".", resolved="{subject} no longer reports a failure.",
+    ),
+    ("platform", "systemd-unreadable"): RuleReport(ACTION, "The check cannot read systemd; whether the jobs ran is unknown.", AGENT_STEP, resolved="The check can read systemd again.", hides_state=True),
     ("platform", "disk-low"): RuleReport(
         ACTION, f"The disk has less than {MINIMUM_FREE_PERCENT} % free.", "Tell an agent: \"The disk is nearly full, please look\".",
         resolved=f"The disk has at least {MINIMUM_FREE_PERCENT} % free again.", describes_shared_state=True,

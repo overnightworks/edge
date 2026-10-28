@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk
+from conftest import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk, unit_listing_matching
 
 from home_tools import platform_check
 
@@ -16,11 +16,12 @@ NOW = datetime(2026, 10, 23, 12, 0)
 
 
 class FakeDocker:
-    """Answers `docker ps` and `docker inspect`; an inspect with any format but the allowed one answers the canary line."""
+    """Answers `docker ps`, `docker inspect` and the failed-unit listing of systemctl; an inspect with any format but the allowed one answers the canary line."""
 
     def __init__(self) -> None:
         self.containers: list[tuple[str, str, str, int, str]] = []  # name, status, health, exit code, compose project (empty: none)
         self.unreadable = False
+        self.failed_units: str | None = ""  # what `systemctl --user list-units --state=failed` prints; None: systemctl fails
         self.removed_while_inspected: list[str] = []  # each inspect call takes one name: it fails and that container is gone
         self.inspect_calls: list[list[str]] = []
 
@@ -28,6 +29,8 @@ class FakeDocker:
         self.containers.append((name, status, health, exit_code, project))
 
     def __call__(self, argv: Sequence[str]) -> str | None:
+        if argv[0] == "systemctl":
+            return unit_listing_matching(self.failed_units, argv[-1])
         if self.unreadable:
             return None
         if argv[:2] == ["docker", "ps"]:
@@ -303,3 +306,52 @@ def test_a_missing_switch_directory_means_no_switch_and_the_report_has_no_switch
 
     assert switched_off == frozenset()
     assert "abgeschaltet" not in report
+
+
+FAILED_UNIT_LINE = "{name} loaded failed failed {description}\n"
+
+
+def failed_listing(*names: str, description: str = "A hal job") -> str:
+    return "".join(FAILED_UNIT_LINE.format(name=name, description=description) for name in names)
+
+
+@pytest.mark.parametrize("name", ["hal-backup.service", "hal-backup-restore-test.service", "hal-check.timer"])
+def test_a_failed_hal_unit_is_a_job_failed_finding_named_by_the_unit(docker, reboot_file, fake_disk, name) -> None:
+    docker.failed_units = failed_listing(name)
+
+    assert rules_found(docker, reboot_file, fake_disk) == {("job-failed", name)}
+
+
+def test_a_failed_unit_that_is_not_a_hal_unit_is_ignored(docker, reboot_file, fake_disk) -> None:
+    docker.failed_units = failed_listing("other-fail.service", "hal-x.service")
+
+    assert rules_found(docker, reboot_file, fake_disk) == {("job-failed", "hal-x.service")}
+
+
+def test_several_failed_hal_units_are_one_finding_each(docker, reboot_file, fake_disk) -> None:
+    docker.failed_units = failed_listing("hal-backup.service", "hal-check.service")
+
+    assert rules_found(docker, reboot_file, fake_disk) == {("job-failed", "hal-backup.service"), ("job-failed", "hal-check.service")}
+
+
+def test_systemd_that_cannot_be_read_is_a_finding_and_the_containers_are_still_judged(docker, reboot_file, fake_disk) -> None:
+    docker.failed_units = None
+    docker.add("edge-broken-1", "running", "unhealthy")
+
+    assert rules_found(docker, reboot_file, fake_disk) == {("systemd-unreadable", "systemd"), ("container-unhealthy", "edge")}
+
+
+@pytest.mark.parametrize("first_token", ["hal backup.service", "hal-Backup.service", "hal-backup.mount", "hal$(touch PWNED).service", "hal_x.service"])
+def test_a_first_column_that_breaks_the_naming_form_is_unreadable(docker, reboot_file, fake_disk, first_token) -> None:
+    docker.failed_units = f"{first_token} loaded failed failed x\n"
+
+    assert ("systemd-unreadable", "systemd") in rules_found(docker, reboot_file, fake_disk)
+
+
+def test_no_column_but_the_unit_name_reaches_the_findings_or_the_report(docker, reboot_file, fake_disk) -> None:
+    docker.failed_units = failed_listing("hal-backup.service", description="CANARY-DESC")
+
+    findings, report = platform_check.inspect(docker, NOW, reboot_file, fake_disk, frozenset())
+
+    assert "CANARY" not in report + repr(findings)
+    assert "hal-backup.service" in report
