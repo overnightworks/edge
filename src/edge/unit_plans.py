@@ -95,7 +95,6 @@ def plan_switches(
 
 
 DIGEST_SEPARATOR = "@"
-KEPT_IMAGE_OWNER = "the upgrade is yours (block 6; Keycloak with a dump first, K11b)"
 
 
 def unit_gates(
@@ -129,20 +128,30 @@ def switched_off_units(
 
 
 @dataclass(frozen=True)
+class ImageReference:
+    """An image as the plan names it: its name and tag, and the digest hex that tells two
+    builds of one tag apart when it is known."""
+
+    name: str
+    digest: str | None
+
+    @classmethod
+    def parse(cls, reference: str) -> "ImageReference":
+        name, separator, digest = reference.partition(DIGEST_SEPARATOR)
+        return cls(name, cls.digest_hex(digest) if separator else None)
+
+    @staticmethod
+    def digest_hex(digest: str) -> str:
+        return digest.rpartition(":")[2]
+
+
+@dataclass(frozen=True)
 class KeptImage:
     """A live service of a unit that runs another image than compose.yaml names now."""
 
-    unit: str
     service: str
-    running: str
-    configured: str
-
-    def describe(self) -> str:
-        return (
-            f"{self.unit}: {self.service} runs {self.running}, compose.yaml names "
-            f"{self.configured}; edge apply never swaps the image of a running unit it does not "
-            f"build, so it keeps running; {KEPT_IMAGE_OWNER}"
-        )
+    running: ImageReference
+    configured: ImageReference
 
 
 def plan_kept_images(
@@ -174,12 +183,12 @@ def plan_kept_images(
                 for service in profile_services[unit.key]
                 if service not in planned_elsewhere
             ]
-            kept.update(dict.fromkeys(_kept_images_of(unit.key, services, config, live)))
+            kept.update(dict.fromkeys(_kept_images_of(services, config, live)))
     return list(kept)
 
 
 def _kept_images_of(
-    unit: str, services: Sequence[str], config: Mapping[str, Any], live: Sequence[compose.Container]
+    services: Sequence[str], config: Mapping[str, Any], live: Sequence[compose.Container]
 ) -> Iterator[KeptImage]:
     for service in services:
         configured = config["services"][service].get("image")
@@ -187,7 +196,9 @@ def _kept_images_of(
             continue
         for running in _running_images(service, live):
             if running != configured:
-                yield KeptImage(unit, service, running, configured)
+                yield KeptImage(
+                    service, ImageReference.parse(running), ImageReference.parse(configured)
+                )
 
 
 def _running_images(service: str, live: Sequence[compose.Container]) -> list[str]:
@@ -256,15 +267,15 @@ def plan_recreates(
         for service in core.dependency_order(config, services):
             if service not in changed:
                 continue
-            if swapped := _swapped_image(unit.key, service, config, live, image_id):
-                moved.append(swapped)
-            else:
+            swapped = _swapped_image(service, config, live, image_id)
+            if swapped is None:
                 recreates.append(Recreate(unit.key, service))
+            elif swapped not in moved:
+                moved.append(swapped)
     return RecreatePlans(recreates, moved)
 
 
 def _swapped_image(
-    unit: str,
     service: str,
     config: Mapping[str, Any],
     live: Sequence[compose.Container],
@@ -286,7 +297,9 @@ def _swapped_image(
             )
         if container.image_id != current:
             return KeptImage(
-                unit, service, f"{reference} ({container.image_id})", f"{reference} ({current})"
+                service,
+                ImageReference(reference, ImageReference.digest_hex(container.image_id)),
+                ImageReference(reference, ImageReference.digest_hex(current)),
             )
     return None
 
