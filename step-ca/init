@@ -492,7 +492,12 @@ class StepCaInit:
             self.report_failure(failure)
             return Exit.REFUSED
         except Exception as unexpected:
-            self.say_failure(f"unexpected answer at {self.current} ({type(unexpected).__name__})")
+            kind = type(unexpected).__name__
+            self.say_failure(
+                f"unexpected answer at {self.current} ({kind})"
+                if self.read_only
+                else f"unexpected answer ({kind})"
+            )
             return unclear
         except KeyboardInterrupt:
             self.say_failure("interrupted")
