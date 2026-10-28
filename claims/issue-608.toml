@@ -1,8 +1,0 @@
-claim_id = "02fa3da716f94279aea6c7485b58aae0"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "675d6e1b258b03738572480fe40756bf58d5d6e2"
-branch = "claude/issue-608-s5-5b-appkit-rows"
-scope = ["docs/design/hal-output.html", "src/edge/appkit_step.py", "src/edge/apply.py", "src/edge/plan.py", "src/edge/plan_rows.py", "tests/test_appkit_step.py", "tests/test_edge_apply_apps.py", "tests/test_edge_plan_legal_rows.py", "tests/test_edge_plan_rows.py"]
-opened_commit = "03c939e2d10d45ce05462d6580d38a7839eb72e3"
-whole_reason = "One deletion: Plan.describe and the describe loop go together with the rows that replace them, the typed targets they need and the pins that read the old line."
