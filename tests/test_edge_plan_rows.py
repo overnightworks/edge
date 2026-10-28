@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from edge import releases
+from edge import checkout, releases
 from edge.appkit_step import AppkitPlan
 from edge.apps import (
     AppKind,
@@ -33,7 +33,7 @@ from edge.core import (
 )
 from edge.legal_step import LegalPlan
 from edge.plan import Plan
-from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
+from edge.plan_rows import CHECKOUT, CheckoutEvent, PlanEvent, PlanGroup, checkout_row, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
 from hal_output import DETAIL_INDENT, Glyph, Group, Row
@@ -609,3 +609,27 @@ def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_
 
     assert [group.heading for group in (core, units, apps)] == list(PlanGroup)
     assert [row.subject for row in core.rows] == ["socket-proxy", "traefik-mcp"]
+
+
+def origin_main(behind: int) -> checkout.Origin:
+    return checkout.Origin("file:///origin.git", "f" * 40, "ffffff0", "c280a80", 0, behind)
+
+
+def test_a_current_checkout_is_one_done_row_naming_the_pinned_main() -> None:
+    assert checkout_row(origin_main(0)) == Row(
+        Glyph.DONE, CHECKOUT, CheckoutEvent.CURRENT, "ffffff0 · origin/main"
+    )
+
+
+@pytest.mark.parametrize("behind", [1, 3])
+def test_a_checkout_behind_is_one_needs_you_row_with_the_merge_command_under_it(
+    behind: int,
+) -> None:
+    assert checkout_row(origin_main(behind)) == Row(
+        Glyph.NEEDS_YOU,
+        CHECKOUT,
+        CheckoutEvent.BEHIND,
+        "plan applies c280a80 without them",
+        count=behind,
+        details=(f"git -C ~/git/edge merge --ff-only {'f' * 40}",),
+    )

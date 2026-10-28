@@ -38,9 +38,9 @@ The copy is a clean `main` with a bare remote: every edit above is published (co
 pushed) before the apply that follows it (#95 P1); the #95 cell P2, after P2, applies with one
 unpublished `traefik.yml` edit and requires exit 2 naming it, with traefik's container kept. The
 #98 cell P1 then pushes one commit to the remote from a work clone (appending to
-`dynamic/.gitkeep` and `README.md`): the copy's apply shows that commit and its files in their
-groups, the merge line and that the plan applies HEAD, and changes nothing, HEAD and every
-container kept; the copy then runs the shown `git merge --ff-only <sha>` and is current again.
+`dynamic/.gitkeep` and `README.md`): the copy's apply shows it as one behind row with the merge
+line and that the plan applies HEAD, and changes nothing, HEAD and every container kept; the
+copy then runs the shown `git merge --ff-only <sha>` and is current again.
 Every transcript line names its item. It never touches the live stack
 or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
@@ -333,8 +333,8 @@ class Probe:
         print(f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 2, traefik kept")
 
     def cell_98_p1_commits_waiting(self) -> None:
-        """#98 P1: a commit pushed from a work clone waits on origin; the copy's apply shows it and
-        its files by effect, plans HEAD and changes nothing; the shown merge line brings it in."""
+        """#98 P1: a commit pushed from a work clone waits on origin; the copy's apply shows it as
+        one behind row, plans HEAD and changes nothing; the shown merge line brings it in."""
         head = checkout.Git(self.copy).short()
         before = self.container_ids()
         waiting = edge_copy.advance_origin(
@@ -343,23 +343,15 @@ class Probe:
             {"dynamic/.gitkeep": WAITING_NOTE, "README.md": WAITING_NOTE},
         )
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
-        shown = (
-            printed("1 commit waits on origin main:", f"{waiting} {WAITING_SUBJECT}"),
-            printed("live once updated:", "M dynamic/.gitkeep"),
-            printed("other:", "M README.md"),
-            printed(f"the plan below applies HEAD {head}, without the waiting commits"),
-            NOTHING_TO_CHANGE,
-        )
-        expect(all(lines in out for lines in shown), f"apply behind origin said: {out[-400:]}")
+        shown = (f"! checkout 1 behind plan applies {head} without them", NOTHING_TO_CHANGE)
+        expect(all(line in out for line in shown), f"apply behind origin said: {out[-400:]}")
         expect(checkout.Git(self.copy).short() == head, "apply behind origin moved HEAD")
         expect(self.container_ids() == before, "apply behind origin replaced a container")
-        merge = out.split("to bring them: ")[1].split(f" {apply.COMMAND}:")[0].split()
-        expect(merge[:3] == ["git", "-C", checkout.LIVE_CHECKOUT], f"the merge line is {merge}")
-        edge_copy.git(self.copy, *merge[3:])
+        merge = out.split("git -C ")[1].split()[:4]
+        expect(merge[:3] == [checkout.LIVE_CHECKOUT, "merge", "--ff-only"], f"the merge is {merge}")
+        edge_copy.git(self.copy, *merge[1:])
         current = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
-        expect(
-            f"live checkout current ({waiting})" in current, f"after the merge: {current[-200:]}"
-        )
+        expect(f"✓ checkout current {waiting}" in current, f"after the merge: {current[-200:]}")
         print(f"#98 P1 held: {waiting} waits and is shown by effect, HEAD {head} planned and kept")
 
     def cell_p3_edited_traefik_yml(self) -> None:

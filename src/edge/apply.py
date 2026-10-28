@@ -47,10 +47,10 @@ is written when missing and otherwise named and left alone when it differs (exit
 
 Then it fetches origin's `main` through the operator's credential helper and pins its sha (#98): a
 failed fetch is exit 2 with git's last error line; a checkout ahead of or beside it is exit 2,
-nothing reset; an equal one says it is current. Behind, every waiting commit is shown, then its
-files by what an update does with them (from the binds of the resolved configuration), then how
-to bring them in by hand; the plan that follows applies HEAD, never the waiting commits. Nothing
-in the checkout changes: only `.git` gains the fetched objects, FETCH_HEAD and `origin/main`.
+nothing reset. The checkout then stands as one row, current or `N behind` with the way to bring the
+waiting commits in by hand under it; the plan that follows applies HEAD, never the waiting
+commits. Nothing in the checkout changes: only `.git` gains the fetched objects, FETCH_HEAD and
+`origin/main`.
 """
 
 import fcntl
@@ -68,7 +68,7 @@ from edge.apps import AppError, AppRuntime, plan_apps, retry_advice
 from edge.legal_section import LegalError
 from edge.legal_step import RECORD_FILE, plan_legal
 from edge.plan import Plan
-from edge.plan_rows import plan_groups
+from edge.plan_rows import checkout_row, plan_groups
 from edge.realm import reconcile
 from edge.service_recreate import ServiceRecreator
 from edge.unit_plans import (
@@ -83,8 +83,8 @@ from edge.unit_plans import (
     unit_gates,
     unobserved,
 )
-from edge.waiting import Waiting, fetched
-from hal_output import write_groups
+from edge.waiting import fetched
+from hal_output import write_groups, write_row
 
 EnsureEnvironment = Callable[[Path], str | None]
 COMMAND = "edge apply --closed"
@@ -213,8 +213,9 @@ def apply_closed(
         live = checkout.Git(repository, git)
         if not (_on_clean_main(live) and _environment_ready(repository, ensure_environment)):
             return ApplyExit.CANNOT_PLAN
-        if (waiting := fetched(live, _show, _say)) is None:
+        if (origin := fetched(live, _say)) is None:
             return ApplyExit.CANNOT_PLAN
+        write_row(checkout_row(origin))
         return _plan_and_apply(
             state_directory,
             engine,
@@ -223,7 +224,6 @@ def apply_closed(
             run_setup,
             verifier,
             watch,
-            waiting,
             realm_backup or reconcile.Backup.installed(repository, _tell),
             app_runtime or AppRuntime.of(home or Path.home(), state_directory),
             rename,
@@ -294,7 +294,6 @@ def _plan_and_apply(
     run_setup: setup.SetupRunner,
     verifier: barrier.Verifier,
     watch: compose.Watch,
-    waiting: Waiting,
     realm_backup: reconcile.Backup,
     app_runtime: AppRuntime,
     rename: Rename,
@@ -303,13 +302,6 @@ def _plan_and_apply(
     marks = switches.Switches(state_directory)
     record = core.Record(state_directory)
     try:
-        if waiting.commits:
-            fleet = read_fleet(engine, repository)
-            binds = core.checkout_binds(
-                fleet.config, repository, {unit.key for unit in fleet.units}
-            )
-            for line in waiting.describe(binds, reconcile.REALM_FILES):
-                print(f"{COMMAND}: {line}")
         completed: list[str] = []
         while True:  # the plan made after the setups ran is held to the same refusals
             planned = _plan(engine, marks, record, repository, app_runtime, rename)

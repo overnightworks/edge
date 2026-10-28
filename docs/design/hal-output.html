@@ -775,6 +775,13 @@ Type <span class="w">yes</span> to apply 8 changes: yes
 <span class="y">  !</span> keycloak        old image      <span class="d">quay.io/keycloak/keycloak:26.8.1@79c6… · compose.yaml @a78d…</span>
 <span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
       </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> drei Commits warten auf origin</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="y">  !</span> checkout        3 behind       <span class="d">plan applies c280a80 without them</span>
+<span class="d">      git -C ~/git/edge merge --ff-only 4f0e7b1c2d9a8e6b5c3d1f0a9b8c7d6e5f4a3b2c</span>
+<span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
+      </figure>
     </div>
   </div>
   <ul class="why">
@@ -783,8 +790,8 @@ Type <span class="w">yes</span> to apply 8 changes: yes
     <li><b>Was der Plan schon weiß, steht im Plan.</b> Keycloak antwortet nicht: heute erfährst du das erst nach dem yes als „partial“, neu steht es gelb vor dem yes.</li>
     <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
     <li><b>Rechtsseiten:</b> eine Zeile je Art; die Abschnitte geänderter Seiten stehen eingerückt darunter, die einer neuen zeigt <code>-v</code>.</li>
-    <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>.</li>
-    <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; die wartenden Commits, „the plan“ und die Ergebniszeilen bleiben Text.</li>
+    <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>; die Zeile wird einmal gleich nach dem Abruf gedruckt, auch wenn der Plan danach scheitert.</li>
+    <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; „the plan“ und die Ergebniszeilen bleiben Text.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
   </ul>
 </section>
