@@ -5,16 +5,19 @@ from enum import StrEnum
 
 from edge import switches
 from edge.apps import AppKind, AppPlan, AppsPlan, OffPlan, SkippedNote, StaysStoppedNote
+from edge.built_image import ENDS_RUNS, BuiltRecreate
 from edge.plan import Plan
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan
-from edge.unit_plans import ImageReference, KeptImage
+from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
 from hal_output import Glyph, Group, Row
 
 _SEPARATOR = " · "
 _DIGEST_SHOWN = 4
+_DEFINITION_CHANGED = "definition changed"
 
 
 class PlanEvent(StrEnum):
+    RECREATE = "recreate"
     SWITCH_ON = "switch on"
     START_AGAIN = "start again"
     UPDATE = "update"
@@ -43,9 +46,50 @@ def plan_groups(plan: Plan) -> tuple[Group, ...]:
 def _unit_rows(plan: Plan) -> tuple[Row, ...]:
     realm_row = _realm_row(plan.realm)
     return (
+        *(_built_row(built) for built in plan.built),
+        *(_recreate_row(recreate) for recreate in plan.recreates),
+        *(_unit_plan_row(unit_plan) for unit_plan in plan.plans),
         *(_old_image_row(image) for image in plan.images),
         *(() if realm_row is None else (realm_row,)),
     )
+
+
+def _built_row(built: BuiltRecreate) -> Row:
+    facts = (
+        *(
+            f"image {running} \N{RIGHTWARDS ARROW} {built.reference}"
+            for running in built.moved_from
+        ),
+        *((_DEFINITION_CHANGED,) if built.definition_changed else ()),
+        *((f"image {built.reference} rebuilt",) if built.rebuilt else ()),
+        ENDS_RUNS,
+    )
+    return Row(Glyph.CHANGE, built.service, PlanEvent.RECREATE, _SEPARATOR.join(facts))
+
+
+def _recreate_row(recreate: Recreate) -> Row:
+    return Row(Glyph.CHANGE, recreate.service, PlanEvent.RECREATE, _DEFINITION_CHANGED)
+
+
+def _unit_plan_row(plan: UnitPlan) -> Row:
+    key, services = plan.unit.key, ", ".join(plan.services)
+    match plan.action:
+        case Action.ON:
+            return Row(Glyph.ADD, key, PlanEvent.SWITCH_ON, services)
+        case Action.OFF:
+            facts = (
+                services,
+                *((f"volumes {', '.join(plan.volumes)} kept",) if plan.volumes else ()),
+                *(
+                    (f"its switch since {switches.describe_since(plan.switched_off_since)} stays",)
+                    if plan.switched_off_since
+                    else ()
+                ),
+            )
+            return Row(Glyph.REMOVE, key, PlanEvent.SWITCH_OFF, _SEPARATOR.join(facts))
+        case Action.STAYS_STOPPED:
+            fact = _stays_stopped_fact(plan.switched_off_since)
+            return Row(Glyph.UNCHANGED, key, PlanEvent.STAYS_STOPPED, fact)
 
 
 def _old_image_row(image: KeptImage) -> Row:
@@ -89,12 +133,13 @@ def _kept_row(note: StaysStoppedNote | SkippedNote) -> Row:
     if isinstance(note, SkippedNote):
         fact = f"{note.skipped.tag}{_SEPARATOR}{note.skipped.reason}"
         return Row(Glyph.UNCHANGED, note.key, PlanEvent.TAG_SKIPPED, fact)
-    fact = (
-        "barrier stands"
-        if note.since is None
-        else f"switched off since {switches.describe_since(note.since)}"
-    )
-    return Row(Glyph.UNCHANGED, note.key, PlanEvent.STAYS_STOPPED, fact)
+    return Row(Glyph.UNCHANGED, note.key, PlanEvent.STAYS_STOPPED, _stays_stopped_fact(note.since))
+
+
+def _stays_stopped_fact(since: str | None) -> str:
+    if since is None:
+        return "barrier stands"
+    return f"switched off since {switches.describe_since(since)}"
 
 
 def _off_row(off: OffPlan) -> Row:

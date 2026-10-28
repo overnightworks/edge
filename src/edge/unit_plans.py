@@ -15,14 +15,6 @@ class Action(StrEnum):
     STAYS_STOPPED = "stays stopped"
 
 
-def stays_stopped_line(key: str, since: str | None) -> str:
-    """A unit or app that its marker or its standing barrier keeps off; `since` is None when only
-    the barrier stands."""
-    if since is None:
-        return f"{key} stays stopped (its barrier stands; no switch recorded)"
-    return f"{key} stays stopped (switch since {switches.describe_since(since)})"
-
-
 @dataclass(frozen=True)
 class UnitPlan:
     unit: catalog.Unit
@@ -31,20 +23,6 @@ class UnitPlan:
     volumes: tuple[str, ...]
     switched_off_since: str | None = None
     running: bool = False
-
-    def describe(self) -> str:
-        touched = f"services {', '.join(self.services)}"
-        if self.action is Action.STAYS_STOPPED:
-            return stays_stopped_line(self.unit.key, self.switched_off_since)
-        if self.action is Action.OFF:
-            line = f"{self.unit.key}: off ({touched}; volumes {', '.join(self.volumes)} stay)"
-            if self.switched_off_since:
-                line += f"; its switch since {self._since()} stays"
-            return line
-        return f"{self.unit.key}: on ({touched})"
-
-    def _since(self) -> str:
-        return switches.describe_since(self.switched_off_since or "")
 
 
 @dataclass(frozen=True)
@@ -222,9 +200,6 @@ class Recreate:
 
     unit: str
     service: str
-
-    def describe(self) -> str:
-        return f"{self.unit}: recreate {self.service} ({core.DEFINITION_CHANGED})"
 
 
 class RecreatePlans(NamedTuple):

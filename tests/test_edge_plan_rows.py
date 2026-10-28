@@ -1,6 +1,7 @@
-"""The rows `hal apply` prints for its app plan: what each kind of app entry says, from typed
-fields (#296 S5-1)."""
+"""The rows `hal apply` prints for its app plan and its unit plan: what each kind of entry says,
+from typed fields, and the `find_row` helper the apply tests share."""
 
+import re
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -16,12 +17,13 @@ from edge.apps import (
     SkippedNote,
     StaysStoppedNote,
 )
-from edge.catalog import App
+from edge.built_image import ENDS_RUNS, BuiltRecreate
+from edge.catalog import App, Unit
 from edge.core import Gate
 from edge.plan import Plan
 from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
-from edge.unit_plans import ImageReference, KeptImage
+from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
 from hal_output import Glyph, Group, Row
 
 APP = App("hopin", True, "master")
@@ -47,10 +49,20 @@ NO_REALM = RealmPlan()
 
 
 def groups_of(
-    images: tuple[KeptImage, ...] = (), realm: RealmPlan = NO_REALM, **parts: object
+    images: tuple[KeptImage, ...] = (),
+    realm: RealmPlan = NO_REALM,
+    **parts: Any,
 ) -> tuple[Group, ...]:
+    units = {key: parts.pop(key) for key in ("built", "recreates", "unit_plans") if key in parts}
     apps = AppsPlan(cast(AppRuntime, None), **parts)  # type: ignore[arg-type]
-    plan = SimpleNamespace(app_plans=apps, images=list(images), realm=realm)
+    plan = SimpleNamespace(
+        app_plans=apps,
+        images=list(images),
+        realm=realm,
+        built=list(units.pop("built", ())),
+        recreates=list(units.pop("recreates", ())),
+        plans=list(units.pop("unit_plans", ())),
+    )
     return plan_groups(cast(Plan, plan))
 
 
@@ -62,6 +74,12 @@ def rows_of(**parts: object) -> tuple[Row, ...]:
 
 def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
     return groups_of(**plan)[0].rows
+
+
+def find_row(out: str, subject: str, event: PlanEvent, fact: str = "") -> re.Match[str] | None:
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+    pattern = rf"^  \S {re.escape(subject)} +{re.escape(str(event))}\b.*{re.escape(fact)}"
+    return re.search(pattern, plain, re.MULTILINE)
 
 
 @pytest.mark.parametrize(
@@ -242,4 +260,151 @@ def test_the_kept_images_come_before_the_realm_row_and_the_units_before_the_apps
     units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
 
     assert [row.event for row in units.rows] == [PlanEvent.OLD_IMAGE, PlanEvent.REALM_APPLY]
+    assert apps.rows
+
+
+STEP_CA = Unit("step-ca", True, None)
+SERVICES = ("step-ca", "traefik-mcp")
+SINCE = "2026-10-17T22:10:00"
+
+
+def built(**overrides: Any) -> BuiltRecreate:
+    fields: dict[str, Any] = {
+        "unit": "agent-service",
+        "service": "agent-service",
+        "reference": "agent-service:local",
+        "moved_from": (),
+        "definition_changed": False,
+        "rebuilt": False,
+    }
+    return BuiltRecreate(**{**fields, **overrides})
+
+
+def unit_plan(action: Action, **overrides: Any) -> UnitPlan:
+    fields: dict[str, Any] = {"unit": STEP_CA, "services": SERVICES, "volumes": ("step-ca",)}
+    return UnitPlan(action=action, **{**fields, **overrides})
+
+
+@pytest.mark.parametrize(
+    ("parts", "row"),
+    [
+        pytest.param(
+            {"recreates": (Recreate("keycloak", "keycloak-db"),)},
+            Row(Glyph.CHANGE, "keycloak-db", PlanEvent.RECREATE, "definition changed"),
+            id="recreate",
+        ),
+        pytest.param(
+            {"built": (built(definition_changed=True),)},
+            Row(
+                Glyph.CHANGE,
+                "agent-service",
+                PlanEvent.RECREATE,
+                f"definition changed · {ENDS_RUNS}",
+            ),
+            id="built definition",
+        ),
+        pytest.param(
+            {"built": (built(moved_from=("agent-service:old", "agent-service:older")),)},
+            Row(
+                Glyph.CHANGE,
+                "agent-service",
+                PlanEvent.RECREATE,
+                "image agent-service:old → agent-service:local"
+                " · image agent-service:older → agent-service:local"
+                f" · {ENDS_RUNS}",
+            ),
+            id="built image moved",
+        ),
+        pytest.param(
+            {"built": (built(rebuilt=True),)},
+            Row(
+                Glyph.CHANGE,
+                "agent-service",
+                PlanEvent.RECREATE,
+                f"image agent-service:local rebuilt · {ENDS_RUNS}",
+            ),
+            id="built rebuilt",
+        ),
+        pytest.param(
+            {"built": (built(moved_from=("a:1",), definition_changed=True, rebuilt=True),)},
+            Row(
+                Glyph.CHANGE,
+                "agent-service",
+                PlanEvent.RECREATE,
+                "image a:1 → agent-service:local · definition changed"
+                f" · image agent-service:local rebuilt · {ENDS_RUNS}",
+            ),
+            id="built combination",
+        ),
+        pytest.param(
+            {"unit_plans": (unit_plan(Action.ON, volumes=()),)},
+            Row(Glyph.ADD, "step-ca", PlanEvent.SWITCH_ON, "step-ca, traefik-mcp"),
+            id="switch on",
+        ),
+        pytest.param(
+            {"unit_plans": (unit_plan(Action.OFF),)},
+            Row(
+                Glyph.REMOVE,
+                "step-ca",
+                PlanEvent.SWITCH_OFF,
+                "step-ca, traefik-mcp · volumes step-ca kept",
+            ),
+            id="switch off with volumes",
+        ),
+        pytest.param(
+            {"unit_plans": (unit_plan(Action.OFF, switched_off_since=SINCE),)},
+            Row(
+                Glyph.REMOVE,
+                "step-ca",
+                PlanEvent.SWITCH_OFF,
+                "step-ca, traefik-mcp · volumes step-ca kept · its switch since 17.10. 22:10 stays",
+            ),
+            id="switch off with a switch since",
+        ),
+        pytest.param(
+            {"unit_plans": (unit_plan(Action.OFF, volumes=()),)},
+            Row(Glyph.REMOVE, "step-ca", PlanEvent.SWITCH_OFF, "step-ca, traefik-mcp"),
+            id="switch off without volumes",
+        ),
+        pytest.param(
+            {"unit_plans": (unit_plan(Action.STAYS_STOPPED, switched_off_since=SINCE),)},
+            Row(
+                Glyph.UNCHANGED,
+                "step-ca",
+                PlanEvent.STAYS_STOPPED,
+                "switched off since 17.10. 22:10",
+            ),
+            id="stays stopped with a switch since",
+        ),
+        pytest.param(
+            {"unit_plans": (unit_plan(Action.STAYS_STOPPED),)},
+            Row(Glyph.UNCHANGED, "step-ca", PlanEvent.STAYS_STOPPED, "barrier stands"),
+            id="stays stopped with a barrier",
+        ),
+    ],
+)
+def test_a_unit_part_is_one_row_of_its_typed_fields(parts: dict[str, Any], row: Row) -> None:
+    assert unit_rows_of(**parts) == (row,)
+
+
+def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_the_realm() -> None:
+    image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
+
+    units, apps = groups_of(
+        built=(built(rebuilt=True),),
+        recreates=(Recreate("keycloak", "keycloak-db"),),
+        unit_plans=(unit_plan(Action.ON), unit_plan(Action.STAYS_STOPPED)),
+        images=(image,),
+        realm=RealmPlan(RealmAction.RUN, why="x"),
+        plans=(app_plan(AppKind.ON),),
+    )
+
+    assert [(row.subject, row.event) for row in units.rows] == [
+        ("agent-service", PlanEvent.RECREATE),
+        ("keycloak-db", PlanEvent.RECREATE),
+        ("step-ca", PlanEvent.SWITCH_ON),
+        ("step-ca", PlanEvent.STAYS_STOPPED),
+        ("keycloak", PlanEvent.OLD_IMAGE),
+        (REALM_UNIT, PlanEvent.REALM_APPLY),
+    ]
     assert apps.rows
