@@ -278,7 +278,7 @@ def test_colour_is_decided_per_stream(
 def test_a_fresh_line_error_starts_with_one_bare_newline_on_stderr(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """#296 S2g3b: a hidden prompt leaves the cursor mid-line, so the pair starts on a fresh one."""
+    """A hidden prompt leaves the cursor mid-line, so the pair starts on a fresh one."""
 
     write_error("interrupted", "run it", fresh_line=True)
 
