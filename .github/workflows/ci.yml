@@ -1,6 +1,6 @@
 # Static checks only: the edge runs on the operator's host, so CI never starts containers.
 # It proves the compose file renders and that the loopback-only, deny-by-default shape holds,
-# and it lints and tests edge-check against fixture outputs.
+# and it lints and tests overnightworks-hal against fixture outputs.
 name: ci
 
 on:
@@ -29,7 +29,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
 
-      - name: edge-check installs from the lock file
+      - name: overnightworks-hal installs from the lock file
         run: uv sync --locked --no-build --no-install-project
 
       # The compose file interpolates the domain: the zone fleet.yaml names, as `hal apply` writes it to .env.
@@ -37,12 +37,12 @@ jobs:
         run: |
           PYTHONPATH=src uv run --no-sync python -c 'from pathlib import Path; from edge import catalog; print("EDGE_DOMAIN=" + catalog.zone(catalog.read(Path("fleet.yaml"))))' >> "$GITHUB_ENV"
 
-      - name: edge-check lint
+      - name: overnightworks-hal lint
         run: |
           uv run --no-sync --no-build ruff check
           uv run --no-sync --no-build ruff format --check
 
-      - name: edge-check tests
+      - name: overnightworks-hal tests
         # pytest and pytest-cov come from the lock file, installed by the sync step above;
         # pyproject.toml's pythonpath makes src and scripts importable.
         run: uv run --no-sync --no-build pytest --cov=src --cov=scripts --cov=probe/agent-service --cov-report=xml:coverage.xml
@@ -62,17 +62,17 @@ jobs:
           path: coverage.xml
 
       # The wheel must ship every package, not only the one the editable install happens to find.
-      - name: The wheel installs edge-check and hal
+      - name: The wheel installs overnightworks-hal and hal
         run: |
           uv build --wheel --out-dir dist
           uv run --isolated --no-project --no-build --with dist/*.whl hal backup --help
           uv run --isolated --no-project --no-build --with dist/*.whl hal restore --help
           uv run --isolated --no-project --no-build --with dist/*.whl hal check --help
-          python3 -m zipfile -l dist/edge_check-*.whl | grep -F edge_check/allow-list.toml
-          python3 -m zipfile -l dist/edge_check-*.whl | grep -F home_tools/system/ansible.cfg
+          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F edge_check/allow-list.toml
+          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F home_tools/system/ansible.cfg
           scratch=$(mktemp -d)
           mkdir "$scratch/home" "$scratch/work"
-          UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/edge_check-*.whl
+          UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/overnightworks_hal-*.whl
           cd "$scratch/work"
           export HOME="$scratch/home" PATH="$scratch/bin:$PATH"
           hal --help
@@ -87,7 +87,7 @@ jobs:
           [ ! -s "$scratch/out" ]
           head -n 1 "$scratch/err" | grep -q '^error:'
           # docs/naming.md: `hal` must import from the tool's own environment, not from a stray package.
-          tool_dir="$scratch/tools/edge-check"
+          tool_dir="$scratch/tools/overnightworks-hal"
           for module in hal hal_output; do
             module_file=$("$tool_dir/bin/python" -I -c "import $module; print($module.__file__)")
             case $module_file in "$tool_dir/"*) ;; *) echo "$module imported from $module_file"; exit 1 ;; esac
