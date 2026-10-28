@@ -23,7 +23,8 @@ from types import MappingProxyType
 from enum import StrEnum
 
 from hal_output import Glyph, Noun, Row, Verdict, printable, write_error, write_row, write_verdict
-from home_tools import backup_check, hook_check, logs_check, mail, platform_check, secrets_view
+from home_tools import backup_check, exposure_check, hook_check, logs_check, mail, platform_check, secrets_view
+from home_tools.exposure_check import ExposureReader, ExposureRule
 from home_tools.logs_check import LOG_DIRECTORY
 from home_tools.platform_check import MINIMUM_FREE_SHARE, REBOOT_REQUIRED_FILE, DiskSpaceReader
 from home_tools.report import Level, findings_count, read_state_file, write_state_file
@@ -46,6 +47,7 @@ class CheckContext:
     probe: ExitCodeProbe
     now: datetime
     disk_space: DiskSpaceReader
+    read_exposure: ExposureReader
 
 
 @dataclass(frozen=True)
@@ -99,6 +101,11 @@ def _backup_check(ctx: CheckContext) -> CheckFindings:
     return report, frozenset(finding.identity for finding in findings)
 
 
+def _exposure_check(ctx: CheckContext) -> CheckFindings:
+    findings, report = exposure_check.inspect(ctx.read_exposure, ctx.now)
+    return report, frozenset(finding.identity for finding in findings)
+
+
 # The one place a check gets its name; the name prefixes every remembered finding identity.
 CHECKS: tuple[tuple[str, Callable[[CheckContext], CheckFindings]], ...] = (
     ("secrets", _secrets_check),
@@ -106,6 +113,7 @@ CHECKS: tuple[tuple[str, Callable[[CheckContext], CheckFindings]], ...] = (
     ("logs", _logs_check),
     ("backup", _backup_check),
     ("platform", _platform_check),
+    ("exposure", _exposure_check),
 )
 CHECK_FAILED_IDENTITY = "check-failed"
 
@@ -267,6 +275,14 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("logs", "journal-age"): RuleReport(ACTION, "There are logs older than 30 days.", SETUP_APPLY, resolved="There are no logs older than 30 days any more.", describes_shared_state=True),
     ("logs", "journal-unreadable"): LOGS_UNSEEN,
     ("logs", "docker-unreadable"): LOGS_UNSEEN,
+    ("exposure", ExposureRule.REACHABLE_BEYOND_LOOPBACK.value): RuleReport(
+        ACTION, "{subject} can be reached from beyond this PC.", 'Tell an agent: "{subject} can be reached from beyond this PC, please look".',
+        resolved="{subject} can no longer be reached from beyond this PC.",
+    ),
+    ("exposure", ExposureRule.ROUTING_NAME_UNUSABLE.value): RuleReport(
+        ACTION, "The routing name of {subject} cannot be used.", 'Tell an agent: "The routing name of {subject} cannot be used, please look".',
+        resolved="The routing name of {subject} can be used again.",
+    ),
 }
 BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", "Run `hal check`.", resolved="The {area} check runs again.")
 # The areas in the order the mail names them, by the check that owns each.
@@ -276,9 +292,10 @@ AREAS = (
     ("hook", "Commit protection"),
     ("secrets", "Secrets"),
     ("logs", "Server logs"),
+    ("exposure", "Exposure"),
 )
 AREA_LABELS = dict(AREAS)
-TERMINAL_LABELS = {"platform": "services", "backup": "backup", "hook": "commit hook", "secrets": "secrets", "logs": "server logs"}
+TERMINAL_LABELS = {"platform": "services", "backup": "backup", "hook": "commit hook", "secrets": "secrets", "logs": "server logs", "exposure": "exposure"}
 
 
 @dataclass(frozen=True)

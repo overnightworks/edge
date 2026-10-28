@@ -17,7 +17,9 @@ from git_support import elsewhere, hal_command, hal_environment, hal_program, ru
 from edge.external import cloudflare_read, host_probe, tofu
 from edge_check import inspection
 from edge_check.exposure import Finding, Problem
-from hal import cli
+from hal import check_commands, cli
+from home_tools import check
+from home_tools.exposure_check import ExposureRule
 from home_tools.layout import Layout
 
 CLEAN_LINE = "exposure: nothing reaches beyond loopback\n"
@@ -203,6 +205,13 @@ def test_a_bare_check_runs_the_daily_check_in_a_real_process_without_reading_std
     assert "services" in result.stdout
     assert any(call.startswith("systemd-run") for call in calls)
     assert (home / ".local/state/hal/check-report.md").is_file()
+
+
+def test_every_problem_the_scan_reports_has_an_exposure_rule_with_a_level():
+    """Every scan problem maps to a daily-check rule, and every rule has a level."""
+    assert set(check_commands.EXPOSURE_RULES) == set(Problem)
+    assert set(check_commands.EXPOSURE_RULES.values()) == set(ExposureRule)
+    assert {("exposure", rule.value) for rule in ExposureRule} <= set(check.RULE_REPORTS)
 
 
 @pytest.mark.parametrize("problem", list(Problem))

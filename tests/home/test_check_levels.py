@@ -9,6 +9,7 @@ from types import ModuleType
 import pytest
 
 from home_tools import backup_check, check, hook_check, logs_check, platform_check, secrets_view
+from home_tools.exposure_check import ExposureRule
 from home_tools.report import Level
 
 FINDING_CONSTRUCTORS = {"Finding", "HookFinding"}
@@ -28,6 +29,7 @@ CHECK_MODULES = {"platform": platform_check, "backup": backup_check, "hook": hoo
 RULES_BY_CHECK = {
     **{name: rules_named_in(module) for name, module in CHECK_MODULES.items()},
     "secrets": {rule.value for rule in secrets_view.FindingRule} | {check.MISSING_PASSWORD_RULE},
+    "exposure": {rule.value for rule in ExposureRule},
 }
 RULES_BY_CHECK["platform"] |= set(platform_check.BROKEN_STATES.values())
 RULES = [(name, rule) for name, rules in RULES_BY_CHECK.items() for rule in sorted(rules)]
@@ -55,7 +57,7 @@ def test_an_action_has_exactly_one_next_step_and_a_note_has_none(check_name: str
 def test_only_a_container_or_an_app_is_named_in_a_sentence(check_name: str, rule: str) -> None:
     """#415 Z6: no sentence of secrets, hook, logs takes the finding's subject, a path or a file name."""
     report = check.RULE_REPORTS[check_name, rule]
-    assert ("{subject}" in report.sentence + report.next_step) <= (check_name in {"platform", "backup"})
+    assert ("{subject}" in report.sentence + report.next_step) <= (check_name in {"platform", "backup", "exposure"})
 
 
 @pytest.mark.parametrize(
@@ -92,5 +94,5 @@ def test_the_level_of_a_missing_secret_follows_its_kind(identity: str, level: Le
 
 def test_the_english_labels_leave_every_stored_identity_unchanged() -> None:
     """#488 invariant 1: identities are built from code keys, so a label says nothing about what is remembered."""
-    assert [name for name, _ in check.AREAS] == ["platform", "backup", "hook", "secrets", "logs"]
+    assert [name for name, _ in check.AREAS] == ["platform", "backup", "hook", "secrets", "logs", "exposure"]
     assert (check.CHECK_FAILED_IDENTITY, check.MISSING_PASSWORD_RULE) == ("check-failed", "missing-password")

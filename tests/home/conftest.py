@@ -4,13 +4,13 @@ import email.message
 import email.policy
 import json
 import os
+import shlex
 import stat
 import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -502,12 +502,38 @@ def write_hal_config(home: Path, text: str) -> Path:
     return config_file
 
 
+def write_host_shims(directory: Path, listeners: str, docker_script: str) -> None:
+    """The `docker` and `ss` the exposure scan runs: no container and no listener unless a test says so."""
+    directory.mkdir(exist_ok=True)
+    for name, script in {
+        "docker": docker_script,
+        "ss": f"printf %s {shlex.quote(listeners)}",
+    }.items():
+        shim = directory / name
+        shim.write_text(f"#!/bin/sh\n{script}\n", encoding="utf-8")
+        shim.chmod(0o755)
+
+
 def home_check(
-    home: Path, runner, probe: FakeProbe | None = None, disk: FakeDisk | None = None, *, arguments: Sequence[str] = ()
+    home: Path,
+    runner,
+    probe: FakeProbe | None = None,
+    disk: FakeDisk | None = None,
+    *,
+    arguments: Sequence[str] = (),
+    listeners: str = "",
+    docker_script: str = "exit 0",
 ) -> int:
-    """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine."""
-    ports = lambda: cli.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())  # noqa: E731
-    with mock.patch.object(check_commands, "build_layout_and_ports", ports):
+    """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine; the exposure scan runs shimmed `docker` and `ss`."""
+
+    def ports():
+        return cli.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
+
+    shims = home.parent / "host-shims"
+    write_host_shims(shims, listeners, docker_script)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(check_commands, "build_layout_and_ports", ports)
+        patch.setenv("PATH", f"{shims}{os.pathsep}{os.environ['PATH']}")
         return hal_cli.main(["check", *arguments])
 
 
