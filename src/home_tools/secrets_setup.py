@@ -651,16 +651,16 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
 # --- the `home secrets` command --------------------------------------------
 
 SECRETS_EXAMPLES = """\
-Beispiele:
-  home secrets                zeigt jedes Geheimnis des Manifests: Datei, Prüfung, Ablauf
-  home secrets --by-service   welcher Dienst welches Geheimnis liest (deklariert)
-  home secrets --setup        führt durch jedes fehlende Geheimnis: Seite, einfügen, prüfen, speichern
+Examples:
+  home secrets                shows every secret of the manifest: file, check, expiry
+  home secrets --by-service   which service reads which secret (declared)
+  home secrets --setup        walks through every missing secret: page, paste, check, save
 
-Ohne --setup zeigt es nie einen Wert und ändert nichts außer dem Bericht
-~/.local/state/home/secrets-report.md. Braucht kein Terminal, Agenten dürfen es fahren.
---setup läuft nur am eigenen Terminal; Agenten fahren es nie.
-Exit-Code: 0 sauber, 1 Funde (mit --setup: noch etwas fehlt), 2 Manifest ungültig, kein Terminal oder
-unerwarteter Fehler bei einem Geheimnis, 3 sonst unerwarteter Fehler, 130 abgebrochen.
+Without --setup it never shows a value and changes nothing except the report
+~/.local/state/home/secrets-report.md. It needs no terminal; agents may run it.
+--setup runs only at your own terminal; agents never run it.
+Exit code: 0 clean, 1 findings (with --setup: something is still missing), 2 invalid manifest, no terminal or
+an unexpected error at one secret, 3 any other unexpected error, 130 interrupted.
 """
 
 
@@ -673,12 +673,12 @@ def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "secrets",
-        help="Geheimnisse zeigen und fehlende einrichten; nie ein Wert",
-        description="Zeigt jedes Geheimnis aus dem Manifest, liest Dateien nur per stat und ändert nichts; --setup richtet fehlende ein.",
+        help="show secrets and set up missing ones; never a value",
+        description="Shows every secret of the manifest, reads files by stat only and changes nothing; --setup sets up missing ones.",
         epilog=SECRETS_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--by-service", action="store_true", help="gruppiert nach Dienst: deklarierte Abhängigkeiten")
-    mode.add_argument("--setup", action="store_true", help="führt am Terminal durch jedes fehlende Geheimnis, eins nach dem anderen")
+    mode.add_argument("--by-service", action="store_true", help="grouped by service: declared dependencies")
+    mode.add_argument("--setup", action="store_true", help="walks you through every missing secret at a terminal, one after the other")
     parser.set_defaults(handler=_secrets_from_args, error_may_quote_a_secret=True)

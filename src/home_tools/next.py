@@ -233,22 +233,22 @@ def _next_from_args(_args: argparse.Namespace, layout: Layout, ports: Ports) -> 
 
 
 NEXT_EXAMPLES = """\
-Beispiele:
-  home next    nummerierte Schritte nur für dich, der dringendste zuerst, je mit Befehl, Ort und Erwartung;
-               zuletzt eine Zeile, die zählt, was ein Agent einsortiert
+Examples:
+  home next    numbered steps only for you, most urgent first, each with command, place and expectation;
+               last a line that counts what an agent sorts out
 
-Liest nur und ändert nichts; braucht kein Terminal, Agenten dürfen es fahren.
-Exit-Code: immer 0, auch mit Schritten; 3 bei einem unerwarteten Fehler.
+Only reads and changes nothing; needs no terminal, agents may run it.
+Exit code: always 0, even with steps; 3 on an unexpected error.
 """
 
 
 def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
     parser = add_parser(
         "next",
-        help="was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl",
+        help="what you need to do now, each step with its exact command",
         description=(
-            "Zeigt die Schritte, die nur du tun kannst, aus hal setup, home secrets und der Hook-Prüfung,"
-            " und zählt in einer Zeile, was ein Agent einsortiert; ändert nichts."
+            "Shows the steps only you can do, from hal setup, home secrets and the hook check,"
+            " and counts in one line what an agent sorts out; changes nothing."
         ),
         epilog=NEXT_EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,

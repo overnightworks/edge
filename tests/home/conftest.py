@@ -502,7 +502,7 @@ def home_check(
         return hal_cli.main(["check", *arguments])
 
 
-UNEXPECTED_ERROR_PREFIX = {"secrets": "home: unerwarteter Fehler (", "check": "error: unexpected error ("}
+UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("
 
 
 def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:

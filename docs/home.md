@@ -1,14 +1,14 @@
 # home-tools
 
 Ein Befehl, `home`, zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.
-Jeder Unterbefehl erklärt sich mit `home <befehl> --help` samt Beispielen;
+Jeder Unterbefehl erklärt sich mit `home <command> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
 Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
 es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
 `SuccessExitStatus=1` dafür), `2` wenn das
 Geheimnis-Manifest ungültig ist (`hal check` kennt zusätzlich die Konfigurationsdatei, siehe „Konfiguration“), `3` wenn ein Lauf an einem unerwarteten Fehler
-zerbrach; dann steht eine deutsche Zeile auf stderr. Bei `2` und `3` meldet der
+zerbrach; dann steht eine `error:`-Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
 
 ## home next
