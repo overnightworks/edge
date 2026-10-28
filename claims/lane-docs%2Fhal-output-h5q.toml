@@ -1,7 +1,0 @@
-claim_id = "9c890b566b1d46f1b2146f80856fcda6"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "40bbb5318e8acf1c6a514a1691787fbf5a0255df"
-branch = "docs/hal-output-h5q"
-scope = ["docs/design/hal-output.html"]
-opened_commit = "2637aa8b4d9d32449b81b5aacd6ebea518eb71f0"
