@@ -1525,7 +1525,7 @@ cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: c
     backups_before=$(backups_of_daemon_json)
     at_terminal "dk7-$state-$failure" "$HAL_BIN setup --apply"
     code=$?
-    verdict DK7 "$name: the apply exits 3 naming the rescue"'[ $code -eq 3 ] && in_log "dk7-$state-$failure" "was written back without"'
+    verdict DK7 "$name: the apply exits 3 naming the rescue" '[ $code -eq 3 ] && in_log "dk7-$state-$failure" "was written back without"'
     if [[ $failure = wrong-driver ]]; then
         verdict DK7 "$name: the apply saw Docker start and name json-file, not the journal" 'in_log "dk7-$state-$failure" "Docker reports json-file"'
     fi
