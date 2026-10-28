@@ -11,7 +11,7 @@ first: a second run changes nothing. The token is read without echo and exists o
     agent-service/setup --renew   the same, and always take a new token: written beside the old
                                   one as token.new and renamed over it
     agent-service/setup --check   change nothing: exit 0 set up, 1 not set up (one line says what),
-                                  2 cannot tell. It is the setup contract `edge apply` asks.
+                                  2 cannot tell. It is the setup contract `hal apply` asks.
     agent-service/setup --replace-signing-key
                                   a new signing key pair over the old one: terminal and typed yes
 
@@ -482,6 +482,10 @@ class AgentServiceSetup:
 
         return self.attempt(judge, read_only=True)
 
+    def say_failure(self, frame: str, fact: object, read_only: bool) -> None:
+        """Under `--check` the fact stands bare, so a caller can put it into its own sentence."""
+        self.tools.say(str(fact) if read_only else f"{frame} {fact}")
+
     def replace_signing_key(self) -> int:
         return self.attempt(self.signing.replace, read_only=False)
 
@@ -490,17 +494,16 @@ class AgentServiceSetup:
         try:
             action()
         except CannotTell as failure:
-            self.tools.say(f"agent-service/setup: cannot tell: {failure}")
+            self.say_failure("agent-service/setup: cannot tell:", failure, read_only)
             return Exit.CANNOT_TELL
         except StepFailure as failure:
-            prefix = "--check: not set up" if read_only else "FAILED"
-            self.tools.say(f"agent-service/setup {prefix}: {failure}")
+            self.say_failure("agent-service/setup FAILED:", failure, read_only)
             return Exit.REFUSED
         except OSError as error:
             # A host that cannot be read says nothing about the setup: only a check may say "2".
             where = f" ({error.filename})" if error.filename else ""
             if read_only:
-                self.tools.say(f"agent-service/setup: cannot tell: {error.strerror}{where}")
+                self.tools.say(f"{error.strerror}{where}")
                 return Exit.CANNOT_TELL
             self.tools.say(f"agent-service/setup FAILED: {error.strerror}{where}")
             return Exit.REFUSED

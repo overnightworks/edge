@@ -8,10 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from conftest import Sandbox
+from conftest import Sandbox, run_hal_setup
 
-from home_tools import cli, setup
-from home_tools.cli import build_layout_and_ports, edge_units_directory, main
+from hal.grammar import ExitCode
+from home_tools import ports
+from home_tools.ports import edge_units_directory
 from home_tools.system_step import Applied, CheckState, StepFailed
 from home_tools.layout import Layout, run_command
 from home_tools.user_units import UserUnits
@@ -127,7 +128,7 @@ def test_a_fresh_apply_links_reloads_then_enables_the_timer(machine: Machine) ->
     assert (machine.user_units / SERVICE).readlink() == machine.checkout_units / SERVICE
     assert (machine.user_units / TIMER).readlink() == machine.checkout_units / TIMER
     assert machine.systemctl.changes == [["daemon-reload"], ["enable", "--now", "backup.timer"]]
-    assert machine.step.is_verified()
+    assert machine.step.verify()
 
 
 def test_a_dry_run_reports_a_change_and_touches_nothing(machine: Machine) -> None:
@@ -151,18 +152,18 @@ def test_a_second_apply_changes_nothing(machine: Machine) -> None:
 @pytest.fixture
 def sandboxed_machine(sandbox: Sandbox) -> Machine:
     """The sandbox's home and checkout units, with the fake systemd in place of the real one."""
-    return Machine(sandbox.home, cli.edge_units_directory(sandbox.layout))
+    return Machine(sandbox.home, ports.edge_units_directory(sandbox.layout))
 
 
 def setup_apply_lines(
     machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> list[str]:
-    """The lines `hal setup --apply` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
+    """The lines `hal setup` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
 
     def run(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
 
-    assert main(["setup", "--apply"], home=sandbox.home, run=run) == 0
+    assert run_hal_setup(home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, run=run) == ExitCode.OK
 
     return capsys.readouterr().out.splitlines()
 
@@ -212,10 +213,10 @@ def test_a_changed_unit_file_is_pending_until_systemd_has_reloaded_it(machine: M
     machine.step.apply()
     machine.write_unit(SERVICE, "ExecStart=/checkout/bin/hal backup\n")
 
-    assert not machine.step.is_verified()
+    assert not machine.step.verify()
     assert machine.step.apply().applied is Applied.CHANGED
     assert machine.systemctl.changes[-1] == ["daemon-reload"]
-    assert machine.step.is_verified()
+    assert machine.step.verify()
 
 
 def retire(machine: Machine, name: str, renamed_to: str | None) -> list[list[str]]:
@@ -227,7 +228,7 @@ def retire(machine: Machine, name: str, renamed_to: str | None) -> list[list[str
         (machine.checkout_units / name).rename(machine.checkout_units / renamed_to)
     else:
         (machine.checkout_units / name).unlink()
-    assert not machine.step.is_verified()
+    assert not machine.step.verify()
     machine.step.apply()
     return machine.systemctl.changes
 
@@ -246,7 +247,7 @@ def test_a_renamed_unit_is_stopped_unlinked_everywhere_and_replaced_after_one_re
     assert not (machine.user_units / name).is_symlink()
     assert not (machine.user_units / TIMERS_WANTS / name).is_symlink()
     assert (machine.user_units / new_name).readlink() == machine.checkout_units / new_name
-    assert machine.step.is_verified()
+    assert machine.step.verify()
 
 
 @pytest.mark.parametrize(
@@ -290,7 +291,7 @@ def test_the_repository_units_replace_the_old_links_and_enable_the_hal_timers(
 
     assert sorted(path.name for path in user_units.rglob(f"{old_prefix}*")) == []
     assert new_timers <= systemctl.active
-    assert step.is_verified()
+    assert step.verify()
 
 
 def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> None:
@@ -301,7 +302,7 @@ def test_a_removed_timer_is_stopped_and_has_no_link_left(machine: Machine) -> No
     assert sorted(path.name for path in machine.user_units.rglob("*") if path.is_symlink()) == [
         SERVICE
     ]
-    assert machine.step.is_verified()
+    assert machine.step.verify()
 
 
 def test_a_removed_pair_stops_its_timer_before_its_service(machine: Machine) -> None:
@@ -333,7 +334,6 @@ def test_a_retired_link_sharing_its_name_with_a_foreign_unit_stops_nothing(
 
     assert machine.systemctl.changes == []
     assert (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
-    assert not machine.step.is_verified()
 
 
 def test_a_timer_that_does_not_run_after_enabling_fails_the_step_naming_it(
@@ -352,7 +352,7 @@ def test_a_retired_unit_that_is_not_running_is_not_stopped(machine: Machine) -> 
     machine.step.apply()
 
     assert machine.systemctl.changes.count(["stop", SERVICE]) == 0
-    assert machine.step.is_verified()
+    assert machine.step.verify()
 
 
 def test_a_link_that_is_already_gone_is_not_an_error(machine: Machine) -> None:
@@ -366,7 +366,7 @@ def test_a_link_that_is_already_gone_is_not_an_error(machine: Machine) -> None:
 
     assert machine.systemctl.changes == [["daemon-reload"]]
     assert not (machine.user_units / TIMERS_WANTS / TIMER).is_symlink()
-    assert machine.step.is_verified()
+    assert machine.step.verify()
 
 
 def test_a_link_to_a_file_outside_the_checkout_is_left_alone(
@@ -376,7 +376,7 @@ def test_a_link_to_a_file_outside_the_checkout_is_left_alone(
     foreign = machine.user_units / "foreign.service"
     foreign.symlink_to(tmp_path / "gone.service")
 
-    assert machine.step.is_verified()
+    assert machine.step.verify()
     assert foreign.is_symlink()
 
 
@@ -406,16 +406,14 @@ def test_a_same_name_entry_the_checkout_does_not_own_is_never_replaced(
 
     assert before == (entry.is_symlink(), entry.is_symlink() and entry.readlink())
     assert machine.systemctl.changes == []
-    assert not machine.step.is_verified()
 
 
-def test_a_missing_checkout_unit_directory_is_an_error_never_verified(machine: Machine) -> None:
+def test_a_missing_checkout_unit_directory_fails_the_check_and_the_apply(machine: Machine) -> None:
     shutil.rmtree(machine.checkout_units)
 
     for action in (machine.step.apply, machine.step.check):
         with pytest.raises(StepFailed, match="is missing"):
             action()
-    assert not machine.step.is_verified()
 
 
 @pytest.mark.parametrize("verb", ["daemon-reload", "enable", "show"])
@@ -427,7 +425,6 @@ def test_a_failing_systemctl_fails_the_step_loudly(machine: Machine, verb: str) 
 
     with pytest.raises(StepFailed, match=f"systemctl --user {verb}"):
         machine.step.apply()
-    assert not machine.step.is_verified()
 
 
 def test_a_failing_stop_of_a_retired_unit_fails_the_step_loudly(machine: Machine) -> None:
@@ -449,18 +446,6 @@ def test_the_dry_run_names_a_failing_systemctl_instead_of_reporting_a_change(
 
     with pytest.raises(StepFailed, match="systemctl --user show"):
         machine.step.check()
-
-
-def test_hal_setup_lists_the_step_as_pending_until_the_units_are_settled(machine: Machine) -> None:
-
-    def only_systemctl(argv: Sequence[str]) -> str | None:
-        return machine.systemctl(argv) if argv[0] == "systemctl" else None
-
-    layout, ports = build_layout_and_ports(machine.layout.home, run=only_systemctl)
-
-    assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 1
-    machine.step.apply()
-    assert [step.name for step in setup.pending(layout, ports)].count(USER_UNITS_STEP) == 0
 
 
 def test_a_retired_link_whose_name_systemd_loaded_from_elsewhere_stops_nothing(

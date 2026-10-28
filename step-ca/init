@@ -4,7 +4,7 @@
 Runs in one-off containers of the pinned step-ca image without a network. It makes the root
 (key and certificate) and the intermediate (key and certificate) and installs the intermediate
 and a copy of the root certificate into the `step-ca` volume, and creates the empty
-`traefik-mcp-acme` volume, so `edge apply` never creates one. The root key stays in
+`traefik-mcp-acme` volume, so `hal apply` never creates one. The root key stays in
 ~/.secrets/step-ca and is never mounted into the running service. Every step checks its own
 done-state first: a second run changes nothing, and a partial state completes what is missing
 without ever overwriting a key. No secret is printed: command output is captured and a failure
@@ -15,7 +15,7 @@ shows one scrubbed line.
 
 `--check` changes nothing and prints no secret: exit 0 when everything is in place, 1 when
 something is missing or half-made (one line says what), 2 when Docker did not answer. It is the
-setup contract `edge apply` asks before it switches the CA on.
+setup contract `hal apply` asks before it switches the CA on.
 """
 
 from __future__ import annotations
@@ -455,14 +455,14 @@ class StepCaInit:
         exit_code = self.attempt(make_missing)
         if exit_code == 0 and changed:
             self.tools.say(
-                "step-ca/init: done. `edge apply` starts step-ca while the catalog enables it."
+                "step-ca/init: done. `hal apply` starts step-ca while the catalog enables it."
             )
         elif exit_code == 0:
             self.tools.say("step-ca/init: nothing changed, the key material is all in place.")
         return exit_code
 
     def check(self) -> int:
-        """The setup contract of `edge apply`: 0 set up, 1 not set up, 2 cannot tell."""
+        """The setup contract of `hal apply`: 0 set up, 1 not set up, 2 cannot tell."""
 
         def find_missing() -> None:
             for step in self.steps():
@@ -489,24 +489,30 @@ class StepCaInit:
             self.report_failure(failure)
             return unclear
         except StepFailure as failure:
-            if self.read_only:
-                self.tools.say(f"step-ca/init --check: not set up: {self.scrubbed(str(failure))}")
-            else:
-                self.report_failure(failure)
+            self.report_failure(failure)
             return Exit.REFUSED
         except Exception as unexpected:
-            self.tools.say(
-                f"step-ca/init FAILED at {self.current}: "
-                f"unexpected answer ({type(unexpected).__name__})"
+            kind = type(unexpected).__name__
+            self.say_failure(
+                f"unexpected answer at {self.current} ({kind})"
+                if self.read_only
+                else f"unexpected answer ({kind})"
             )
             return unclear
         except KeyboardInterrupt:
-            self.tools.say(f"step-ca/init FAILED at {self.current}: interrupted")
+            self.say_failure("interrupted")
             return unclear
         return Exit.DONE
 
     def report_failure(self, failure: StepFailure) -> None:
-        self.tools.say(f"step-ca/init FAILED at {self.current}: {self.scrubbed(str(failure))}")
+        self.say_failure(self.scrubbed(str(failure)))
+
+    def say_failure(self, fact: str) -> None:
+        """Under `--check` the fact stands bare, so a caller can put it into its own sentence."""
+        if self.read_only:
+            self.tools.say(fact)
+        else:
+            self.tools.say(f"step-ca/init FAILED at {self.current}: {fact}")
 
 
 def main() -> int:

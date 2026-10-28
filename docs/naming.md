@@ -18,7 +18,7 @@ lives only in the property `role`.
 | Python import | `<stem>` with `-` to `_`; component `<stem>_<component>` | a valid identifier. The prefix does not prevent import clashes, so each change checks for them (below) |
 | CLI | `<stem>`, and features are subcommands. A component with its own distribution has the entry point `<stem>-<component>` | one command per repo; a separately installed process stays visibly part of it |
 | systemd unit, compose service | `<stem>` or `<stem>-<job>` | `systemctl list-units '<stem>*'` finds them all |
-| platform unit in `fleet.yaml` | the catalog key equals the compose profile name (`step-ca`, `keycloak`) | `edge apply --closed` switches the profile of that name; a key without a profile is refused |
+| platform unit in `fleet.yaml` | the catalog key equals the compose profile name (`step-ca`, `keycloak`) | `hal apply --local` switches the profile of that name; a key without a profile is refused |
 | app in `fleet.yaml` (an entry with `repo` and `run`) | the catalog key equals the repository name under `github.org`, its compose project and its checkout `~/srv/<key>`; no edge compose profile and not `edge` | `hal apply` switches the project of that name on at the repository's newest release; a key that names an edge profile or a project name that cannot be a repository is refused |
 | Sonar project key | `overnightworks_<stem>` | SonarCloud's org-key form |
 | MCP origin host | `<stem>.mcp.internal`, the stem of the app's repository | the name `traefik-mcp` routes on and answers to, and the only suffix `step-ca/ca.json` issues for (edge#37) |
@@ -33,7 +33,7 @@ topics are not set at all.
 
 ### Import clashes
 
-They matter only inside one environment. Tools (`aco`, `home`, `quality`,
+They matter only inside one environment. Tools (`aco`, `hal`, `quality`,
 `edge`) run in their own uv environments. Only the libraries (`webauth`,
 `agent_runtime*`) enter foreign environments. Each change proves its import
 with `python -I -c "import X; print(X.__file__)"` resolving into our tree, and
@@ -58,10 +58,12 @@ files.
 A check mark means the name already conforms. The repo and `~/git/<stem>` are
 always the stem.
 
+The `hal` command's name and verbs have one code owner, `hal_output.command`; every command text in `src/` is built from it, and `tests/test_command_texts.py` turns a hand-written `hal <verb>` red.
+
 | Stem (was) | Distribution(s) | Import(s) | CLI | Units / compose | Sonar key | Hosts and Keycloak (unchanged) |
 |---|---|---|---|---|---|---|
 | `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco serve` | none | `overnightworks_aco` | none until AC2, then `/apps/aco` |
-| `home` (home-tools) | `overnightworks-home` | `home` | `home` ✓ | `home-check` ✓ | `overnightworks_home` | none |
+| `home` (home-tools) | `overnightworks-home` | `home` | `hal` ✓ | `home-check` ✓ | `overnightworks_home` | none |
 | `quality` ✓ | `overnightworks-quality` | `quality` | `quality` | check `quality / verdict` ✓ | ✓ | none |
 | `edge` ✓ | `overnightworks-edge` | `edge` (`edge.check`, `edge.backup`) | `edge check`, `edge backup ...` | `edge-backup`, `edge-backup-restore-test` ✓; compose `edge` ✓ | none yet | `auth.hallucinai.de` |
 | `atelier` (marketplace) | `overnightworks-atelier` (dev only) | none | plugin and marketplace `atelier` ✓ | none | `overnightworks_atelier` | none |

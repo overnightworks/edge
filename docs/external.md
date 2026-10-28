@@ -1,24 +1,24 @@
 # Externe Dienste als Code
 
 Referenz fuer den Betreiber und fuer Entwickler von `external/` und `src/edge/external/`. Sie nennt die
-Befehle und was sie garantieren; `edge external --help` und der Code halten den Rest. Wo diese Schicht in
-der Plattform liegt: [architecture.md](architecture.md). Der lokale Teil von `edge apply` und die
+Befehle und was sie garantieren; `hal apply --help` und der Code halten den Rest. Wo diese Schicht in
+der Plattform liegt: [architecture.md](architecture.md). Der lokale Teil von `hal apply` und die
 Publish-Phase: [stack.md](stack.md).
 
 Cloudflare wird mit OpenTofu als Code verwaltet (`external/`; GitHub folgt mit edge#30 X2/X3). Der State
 liegt nie im Checkout, sondern verschluesselt in `~/.secrets/opentofu/fleet.tfstate`.
 
-## `edge external plan`
+## Die Umgebung von tofu
 
-Zeigt, was von den Live-Diensten abweicht. Exit 0 keine Aenderung, 1 Aenderungen offen, 2 nicht moeglich.
-Es laeuft aus jedem Checkout und verweigert ein `tofu`, dessen Version nicht dem Pin in
-`external/main.tf` entspricht. Es liest zwei Dateien (erwartet wird je 0600, geprueft wird das hier nicht)
-und gibt sie nur an das Kind `tofu` weiter, dessen Umgebung eine Allowlist ist (kein `TF_LOG*`,
+Die Publish-Phase von `hal apply` verweigert ein `tofu`, dessen Version nicht dem Pin in
+`external/main.tf` entspricht. Sie liest Token-Dateien (erwartet wird je 0600, geprueft wird das hier
+nicht) und gibt sie nur an das Kind `tofu` weiter, dessen Umgebung eine Allowlist ist (kein `TF_LOG*`,
 `TF_CLI_ARGS*`, `TF_ENCRYPTION`, `GITHUB_*`, `GH_*`, Proxy aus der Shell):
 
 | Datei | Variable im Kind |
 |---|---|
 | `~/.secrets/cloudflare/fleet-read` | `CLOUDFLARE_API_TOKEN` |
+| `~/.secrets/cloudflare/fleet-write` | `CLOUDFLARE_API_TOKEN` (statt der Lese-Datei, sobald geschrieben wird) |
 | `~/.secrets/opentofu/state-passphrase` | `TF_VAR_state_passphrase` |
 
 Die GitHub-Tokens (`~/.secrets/github/fleet-read`, `fleet-admin`) werden nicht gelesen und nicht
@@ -34,14 +34,14 @@ Weiterleitungen und der Proxy aus der Shell werden nicht befolgt.
 
 Es liest Zone, DNS-Records, Access-Apps, Access-Gruppen und den Tunnel und vergleicht sie mit den Hosts
 aus `fleet.yaml` des laufenden Checkouts: fehlende oder falsche Records und Apps, falsche Policies,
-unerwartete Apps an oeffentlichen Hosts sowie Records und Apps, die niemand deklariert hat (`apply`
-loescht sie nie; er endet auf demselben Check). Ohne Access auf dem Konto ist das nur dann ein Befund,
+unerwartete Apps an oeffentlichen Hosts sowie Records und Apps, die niemand deklariert hat (`hal apply`
+loescht sie nie; die Publish-Phase endet auf demselben Check). Ohne Access auf dem Konto ist das nur dann ein Befund,
 wenn ein Host `bypass` oder `protected` ist; widerspricht sich die Abfrage ("Access aus" erst nach den
 Apps), ist es Exit 3. Exit 0 keine Befunde, 1 Befunde, 3 nicht pruefbar, 130 unterbrochen (nur vor der
 Ausgabe). Mit `--json` ist stdout genau ein Objekt `{"hosts": [{problem, subject, detail, next}]}`
 (bei Exit 3 leer, die Ursache als `error: hal check: hosts: cannot check, …` auf stderr). `hal check
 hosts` liest Cloudflare; `hal check exposure` bleibt lokal, und `--allow-list` gehoert nur zu
-`exposure`; ein nacktes `hal check` ist die taegliche Pruefung (`docs/home.md`). Der `edge external apply`-Abschluss sieht weiter Exit 2 fuer "nicht pruefbar".
+`exposure`; ein nacktes `hal check` ist die taegliche Pruefung (`docs/home.md`). Der Abschluss der Publish-Phase sieht weiter Exit 2 fuer "nicht pruefbar".
 
 Zusaetzlich fragt der Check jeden deklarierten Host mit Record einmal mit `GET /` ueber HTTPS, ohne
 Anmeldedaten, Cookies und Weiterleitungen (10 s je blockierender Operation; die Wildcard unter
@@ -52,7 +52,7 @@ die Anfrage scheiterte. Eine Challenge auf einem oeffentlichen oder `bypass`-Hos
 `cf-ray` auch: ob der Dienst lebt, sagt `ready`. Als Access-Umleitung zaehlt nur Cloudflares kanonische
 Access-URL. Kein Befund zitiert Header, Ziel oder Fehlertext.
 
-## `edge external apply`
+## Die Publish-Phase von `hal apply`
 
 Schreibt die Aenderungen auf die Live-Dienste, mit `~/.secrets/cloudflare/fleet-write` (dieselbe
 Allowlist-Umgebung, dieselbe State-Passphrase).
@@ -72,7 +72,7 @@ Allowlist-Umgebung, dieselbe State-Passphrase).
   startet noch); `enabled: false` nimmt den Host aus der Pruefung.
 - **Die Plan-Datei** liegt verschluesselt (X1a) in `~/.secrets/opentofu/plans/` (0700) und wird nach
   Erfolg, Abbruch, Fehler und SIGINT/SIGTERM geloescht. Eine nach SIGKILL uebrig gebliebene loescht und
-  nennt der naechste `plan`- oder `apply`-Aufruf (`check` raeumt nicht auf).
+  nennt der naechste Aufruf (`check` raeumt nicht auf).
 - **Unterbrechung.** Strg-C oder SIGTERM geht genau einmal als SIGINT an `tofu`; der Wrapper wartet, bis
   `tofu` sauber beendet ist, weitere Strg-C werden ignoriert, und die Meldung verweist auf
   `hal check hosts`. Die Pruefung laeuft dann nicht von selbst: nichts Ungeprueftes wird
@@ -103,10 +103,10 @@ nichts; die Preload-Liste der Browser kennt die Domain erst nach dem Absenden de
 umkehrbar fuer Monate). Reihenfolge:
 
 0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens das Recht (`fleet-read`:
-   `Zone › Zone Settings › Read`; `fleet-write`: `Zone › Zone Settings › Edit`), vor `edge apply`. Der
+   `Zone › Zone Settings › Read`; `fleet-write`: `Zone › Zone Settings › Edit`), vor `hal apply`. Der
    Wert des Tokens bleibt dabei erhalten, an den Dateien aendert sich nichts.
-1. `edge apply`; die Publish-Phase wendet die Einstellung an, danach meldet `edge external plan`
-   "No changes".
+1. `hal apply`; die Publish-Phase wendet die Einstellung an; ein zweites `hal apply` meldet fuer die
+   Publish-Phase `No changes` und fragt nichts.
 2. Der Header `strict-transport-security` erscheint genau einmal auf Apex, `www` und `auth`. Sind es
    zwei, verwerfen zuerst die Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
 3. `https://hstspreload.org/api/v2/preloadable?domain=hallucinai.de` meldet keinen Fehler.
@@ -121,7 +121,7 @@ halten; Browser, die den Header sahen, behalten ihn bis zum Ablauf seines max-ag
 **Network Error Logging aus** (`cloudflare_zone_setting.nel`, `nel`): Ist es an, haengt Cloudflare an
 jede Antwort der Zone `nel` und `report-to`, und der Browser des Besuchers meldet seine Netzfehler an
 `a.nel.cloudflare.com`, eine Anfrage an Dritte, die keine unserer Seiten verlangt hat. Die Einstellung
-schaltet es fuer die ganze Zone ab; nach `edge apply` tragen Antworten von Apex, `www`, `auth` und
+schaltet es fuer die ganze Zone ab; nach `hal apply` tragen Antworten von Apex, `www`, `auth` und
 songmaker weder `nel` noch `report-to` noch `reporting-endpoints`.
 Browser, die Cloudflares NEL-Richtlinie schon halten, melden weiter, bis ihr `max_age` ablaeuft: eine
 Antwort ohne den Header loescht eine gemerkte Richtlinie nicht (W3C NEL, 4.2). Zuruecknehmen: `enabled =
@@ -184,7 +184,8 @@ Katalog steht oder bewusst entfaellt. Erwartet nach dem Anwenden: `https://hallu
 Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei einer
 geaenderten Umgebung nie neu; der Betreiber startet es erst, wenn die Regel bei Cloudflare steht
 (`docker compose --profile keycloak up -d --no-deps keycloak` in `~/git/edge`), und nur wenn
-`hal apply` sauber endete **und** `edge external plan` "No changes" meldet. So gibt es kein Fenster: ein
+`hal apply` sauber endete **und** ein zweites `hal apply` fuer die Publish-Phase `No changes` meldet
+und nichts fragt. So gibt es kein Fenster: ein
 Keycloak auf `forwarded` ohne Regel davor wuerde ein vom Besucher gesendetes `Forwarded` vertrauen.
 
 Die Token-Rechte, vor `hal apply` im Dashboard: `Zone › Transform Rules › Read` (`fleet-read`) und

@@ -10,7 +10,7 @@ scan_staged() {
 }
 
 if [ ! -x "$quality" ]; then
-    echo "$hook: quality fehlt ($quality), Commit gesperrt. Einrichten: hal setup --apply" >&2
+    echo "$hook: quality fehlt ($quality), Commit gesperrt. Einrichten: hal setup" >&2
     exit 2
 fi
 

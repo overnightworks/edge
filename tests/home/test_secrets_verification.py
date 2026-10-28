@@ -11,18 +11,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from secrets_support import FakeTerminal, run_wizard
 from test_secrets_setup import (  # noqa: F401 the fixtures, requested by name
     PASSPHRASE_FILE,
     PASTED_VALUE,
-    FakeTerminal,
     files_under,
     home,
-    home_secrets_setup,
     squeezed,
     terminal,
 )
 
-from home_tools.secrets_setup import UNSENDABLE_PASTE, Boundaries, Outcome, Response, Verdict, http_fetch, verify_token
+from home_tools.secrets_setup import UNSENDABLE_PASTE, Boundaries, Outcome, Response, Verdict, WalkEnd, http_fetch, verify_token
 from home_tools.secrets_view import Provider, TokenSource
 
 GITHUB = TokenSource(Provider.GITHUB, "example-org", ("metadata:read",), 366)
@@ -224,10 +223,10 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
     real_check = Boundaries(terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/ok")), os.fsync)
     terminal.pastes = [canary, "", canary, ""]
 
-    code = home_secrets_setup(home, real_check)
+    end = run_wizard(home, real_check)
 
     captured = capsys.readouterr()
-    assert code == 1
+    assert end is WalkEnd.STILL_OPEN
     rejection = f"rejected {UNSENDABLE_PASTE} · paste again or leave empty"
     assert sorted(line.split(" ", 2)[1] for line in squeezed(captured.out) if line.endswith(rejection)) == ["cloudflare/read", "github/read"]
     for part in (canary, "FAKE-CANARY-HEAD", "FAKE-CANARY-TAIL"):
@@ -246,10 +245,10 @@ def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
     )
     terminal.pastes = [PASTED_VALUE, "", ""]
 
-    code = home_secrets_setup(home, real_check)
+    end = run_wizard(home, real_check)
 
     captured = capsys.readouterr()
-    assert code == 1
+    assert end is WalkEnd.STILL_OPEN
     assert f"✗ cloudflare/read rejected {CLOUDFLARE_NOT_YET_VALID} · paste again or leave empty" in squeezed(captured.out)
     assert PASTED_VALUE not in captured.out + captured.err
     assert files_under(home) == {PASSPHRASE_FILE}

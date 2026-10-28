@@ -5,6 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, IntEnum
 
+from hal_output.command import Verb
+
 
 class ExitCode(IntEnum):
     OK = 0
@@ -24,9 +26,19 @@ class Asks(Enum):
 
 @dataclass(frozen=True)
 class Command:
-    name: str
+    name: Verb
     summary: str
     run: Callable[[argparse.Namespace], ExitCode]
     configure: Callable[[argparse.ArgumentParser], None]
     json: bool  # only a command whose result a program reads offers `--json`
     asks: Asks
+
+
+def add_dry_run(parser: argparse.ArgumentParser) -> None:
+    """The one `--dry-run` of every command that acts after a yes: it only shows."""
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="only show what would change; skip the yes and change nothing "
+        "(at a terminal sudo still checks the system)",
+    )

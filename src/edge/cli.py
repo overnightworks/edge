@@ -1,6 +1,6 @@
-"""`edge`: dispatches to its subcommands (`apply`, `stop`, `start` and `external`)."""
+"""The stack's switches as typed functions: apply, stop and start of a unit, stop and start of the
+tunnel. `hal` is their one door."""
 
-import argparse
 import os
 import sys
 from dataclasses import dataclass
@@ -9,57 +9,9 @@ from pathlib import Path
 
 from edge import apply, emergency, switches, tunnel
 from edge.external import cli as external_cli
+from hal_output.command import Verb, command
 
-COMMAND = "edge apply"
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="edge", description=__doc__)
-    subcommands = parser.add_subparsers(dest="subcommand", required=True)
-    add_apply_subcommand(subcommands)
-    add_switch_subcommands(subcommands)
-    external_cli.add_subcommand(subcommands)
-    arguments = parser.parse_args(argv)
-    return arguments.run(arguments)
-
-
-def add_apply_subcommand(subcommands: argparse._SubParsersAction) -> None:
-    apply_parser = subcommands.add_parser(
-        "apply",
-        help="switch the units of fleet.yaml on or off, then publish to Cloudflare",
-        description="The local part (`--closed`: the units of this repository and the apps of the "
-        "catalog, at a terminal, after `yes`), then, only if it ended clean, the publish "
-        "(`edge external apply`, after its own `yes`). Each part asks only when it has changes.",
-    )
-    apply_parser.add_argument(
-        "--closed",
-        action="store_true",
-        help="the local part alone: units of this repository and the apps of the catalog "
-        "(checked out, built and run at their newest release), at a terminal, after `yes`",
-    )
-    apply_parser.set_defaults(run=apply_command)
-
-
-def add_switch_subcommands(subcommands: argparse._SubParsersAction) -> None:
-    stop_parser = subcommands.add_parser(
-        "stop",
-        help="switch a unit or an app off at once and keep it off, or with --all the tunnel "
-        "(no terminal needed)",
-    )
-    add_unit_or_all(stop_parser, "stop the tunnel, so the PC is off the internet")
-    stop_parser.set_defaults(run=stop_command)
-    start_parser = subcommands.add_parser(
-        "start",
-        help="end the switch of a unit or an app, or with --all of the tunnel (terminal, `yes`)",
-    )
-    add_unit_or_all(start_parser, "reopen the tunnel once every unit and app barrier is proven")
-    start_parser.set_defaults(run=start_command)
-
-
-def add_unit_or_all(parser: argparse.ArgumentParser, all_help: str) -> None:
-    choice = parser.add_mutually_exclusive_group(required=True)
-    choice.add_argument("unit", nargs="?", help="a unit or an app of fleet.yaml")
-    choice.add_argument("--all", action="store_true", help=all_help)
+COMMAND = command(Verb.APPLY)
 
 
 def tunnel_of_environment(command: str) -> tunnel.Tunnel | None:
@@ -69,14 +21,6 @@ def tunnel_of_environment(command: str) -> tunnel.Tunnel | None:
     except tunnel.TunnelError as error:
         print(f"{command}: cannot plan, {error}", file=sys.stderr)
         return None
-
-
-def stop_command(arguments: argparse.Namespace) -> int:
-    return stop_all() if arguments.all else stop_unit(arguments.unit)
-
-
-def start_command(arguments: argparse.Namespace) -> int:
-    return start_all() if arguments.all else start_unit(arguments.unit)
 
 
 def stop_all() -> int:
@@ -121,13 +65,9 @@ class _Run:
     publish_exit: int | None = None
 
 
-def apply_command(arguments: argparse.Namespace) -> int:
-    return apply_units(arguments.closed)
-
-
-def apply_units(closed: bool) -> int:
-    if closed:
-        return apply.apply_closed(switches.default_state_directory())
+def apply_units(local: bool) -> int:
+    if local:
+        return apply.apply_local(switches.default_state_directory())
     return _apply_then_publish()
 
 
@@ -143,7 +83,7 @@ def _apply_then_publish() -> int:
     `_exit_after_interrupt` prints (ends with a traceback)."""
     run = _Run()
     try:
-        local_exit = apply.apply_closed(switches.default_state_directory())
+        local_exit = apply.apply_local(switches.default_state_directory())
         if local_exit != apply.ApplyExit.APPLIED_OR_NOTHING:
             print(f"{COMMAND}: nothing published", file=sys.stderr)
             return local_exit
@@ -173,7 +113,7 @@ def _exit_after_interrupt(run: _Run) -> int:
         return run.publish_exit
     if run.publish_started:
         print(
-            f"{COMMAND}: interrupted during the publish; run `hal check hosts`",
+            f"{COMMAND}: interrupted during the publish; run `{command(Verb.CHECK, 'hosts')}`",
             file=sys.stderr,
         )
     else:

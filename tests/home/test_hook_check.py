@@ -11,9 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import Sandbox, home_check
+from conftest import Sandbox, home_check, run_hal_setup
 
-from home_tools import cli, hook_check
+from hal.grammar import ExitCode
+from home_tools import hook_check
 from home_tools.hook_check import HookCheckUnavailable
 from home_tools.setup import HOOK_NAMES
 from home_tools.layout import Layout, run_command
@@ -46,7 +47,7 @@ class Machine:
         return {(f.rule, f.subject): f.fix for f in hook_check.collect_findings(self.layout, run_command)}
 
     def apply_setup(self) -> None:
-        assert cli.main(["setup", "--apply"], home=self.sandbox.home) == 0
+        assert run_hal_setup(home=self.sandbox.home, secrets_setup_boundaries=self.sandbox.secrets_boundaries) == ExitCode.OK
 
 
 @pytest.fixture
@@ -140,14 +141,14 @@ def test_a_hooks_path_from_the_system_file_names_that_file(machine: Machine, tmp
 def test_a_wrong_or_unset_global_hooks_path_is_found_for_every_worktree_and_repaired_by_setup(
     machine: Machine, damage: Callable[[Machine], object]
 ) -> None:
-    """#23 rule 2.1: a wrong or unset global hooksPath is found for every worktree and repaired by `hal setup --apply`."""
+    """#23 rule 2.1: a wrong or unset global hooksPath is found for every worktree and repaired by `hal setup`."""
     damage(machine)
 
     findings = machine.findings()
 
     assert {subject: fix for (rule, subject), fix in findings.items() if rule == "hooks-path"} == {
-        str(machine.repo): "`hal setup --apply`",
-        str(machine.outside_worktree): "`hal setup --apply`",
+        str(machine.repo): "`hal setup`",
+        str(machine.outside_worktree): "`hal setup`",
     }
     machine.apply_setup()
     assert machine.findings() == {}
@@ -215,7 +216,7 @@ def test_a_damaged_installation_is_found_with_the_setup_command_and_clean_after_
     layout = machine.layout
     owners = {"hook-file": layout.git_hooks_dir, "quality": layout.quality_executable, "engines": layout.quality_engines_dir}
     expected_subject = owners[rule] / subject if rule == "hook-file" else owners[rule]
-    assert findings[(rule, str(expected_subject))] == "`hal setup --apply`"
+    assert findings[(rule, str(expected_subject))] == "`hal setup`"
     machine.apply_setup()
     assert machine.findings() == {}
 

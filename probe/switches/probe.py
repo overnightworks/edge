@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Probe of the ingress barrier of `edge stop` (#61 proofs 1-7), of the Traefik that follows its
+"""Probe of the ingress barrier of `hal stop` (#61 proofs 1-7), of the Traefik that follows its
 `traefik.yml` (#85 cells P1-P7), of the core that follows its compose definition (#87 cells
 Q1-Q6) and of a running unit whose image is named, never swapped (#91 cells Z1-Z3): a throwaway
 compose project, HOME and copy of the repository.
 
 It starts the real Traefik, socket proxy and the `hello` whoami of compose.yaml under their own
-project name, drives the real `edge stop`, `edge start` and `edge apply --closed` of a copy, and
+project name, drives the real `hal stop`, `hal start` and `hal apply --local` of a copy, and
 checks that `hello.<domain>` answers 404 with `X-Edge-Barrier: probe` on 127.0.0.1:8081 behind
 the barrier, also after a Traefik restart with the container up. It always removes its
-containers, networks and volumes. Proof 8 (#70) drives `edge stop --all` and `edge start --all` on
+containers, networks and volumes. Proof 8 (#70) drives `hal offline` and `hal online` on
 a throwaway `systemctl --user` unit `edge-probe-tunnel-<random>.service` (`sleep infinity`) that
 it removes again, with the real boot drop-in of `tunnel/`, and shows #76's boot skip: a start
 while the global marker exists is skipped. The real `cloudflared.service` is never named.
@@ -29,14 +29,14 @@ socket-proxy's container; Q4 a second apply changes nothing; Q5 with `probe` swi
 socket-proxy change proves its barrier before the success line; Q6 the volumes, the marker and
 the barrier survive Q2-Q5.
 
-The #91 cells, after Q6's `edge start` of hello and hello-mcp: Z1 prints each one's resolved
+The #91 cells, after Q6's `hal start` of hello and hello-mcp: Z1 prints each one's resolved
 `image` and ps `Image` and requires them equal (else #91 rule 5 stops the lane); Z2 hello's image
 respelled in the copy with the same digest (a `docker.io/` prefix, nothing pulled) is named with
 both strings, and the apply still changes nothing and asks nothing; Z3 reverted, nothing is named.
 
 The copy is a clean `main` with a bare remote: every edit above is published (committed and
 pushed) before the apply that follows it (#95 P1); the #95 cell P2, after P2, applies with one
-unpublished `traefik.yml` edit and requires exit 2 naming it, with traefik's container kept. The
+unpublished `traefik.yml` edit and requires exit 3 naming it, with traefik's container kept. The
 #98 cell P1 then pushes one commit to the remote from a work clone (appending to
 `dynamic/.gitkeep` and `README.md`): the copy's apply shows it as one behind row with the merge
 line and that the plan applies HEAD, and changes nothing, HEAD and every container kept; the
@@ -73,7 +73,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
-from edge import apply, checkout, compose, core, tunnel  # noqa: E402
+from edge import checkout, compose, core, tunnel  # noqa: E402
 from edge.plan_rows import PlanEvent  # noqa: E402
 
 PROJECT = "edge-switches-probe"
@@ -90,7 +90,7 @@ NOTHING_TO_CHANGE = "nothing to change"
 TRAEFIK_FILE = "traefik.yml"
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
 TRAEFIK_KEPT = "the traefik container is the old one"
-SOCKET_PROXY_RECREATED = "edge apply --closed: socket-proxy is recreated"
+SOCKET_PROXY_RECREATED = "socket-proxy is recreated"  # also a fact of the plan: look from the end
 CORE_CURRENT = "the core is current"
 CORE = ("socket-proxy", "traefik")
 COMPOSE_FILE = "compose.yaml"
@@ -204,10 +204,10 @@ class Probe:
         states = [json.loads(line)["State"] for line in lines.splitlines()]
         return states[0] if states else "absent"
 
-    def edge(
+    def hal(
         self, *arguments: str, terminal: bool, exit_code: int = 0, typed: bytes = b"yes\n"
     ) -> str:
-        return edge_copy.run_edge(
+        return edge_copy.run_hal(
             self.copy,
             self.environment,
             *arguments,
@@ -298,7 +298,7 @@ class Probe:
 
     def cell_p1_first_apply(self) -> None:
         before = self.container_ids()["traefik"]
-        out = self.edge("apply", "--closed", terminal=True)  # also starts hello
+        out = self.hal("apply", "--local", terminal=True)  # also starts hello
         expect(
             "traefik recreate traefik.yml has no applied record" in out and RECREATED in out,
             f"the first apply said: {out[-200:]}",
@@ -309,7 +309,7 @@ class Probe:
 
     def cell_p2_second_apply(self) -> None:
         before = self.container_ids()
-        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(NOTHING_TO_CHANGE in out, f"the second apply said: {out[-200:]}")
         expect(self.container_ids() == before, "the second apply replaced a container")
         print("#85 P2 held: a second apply changes nothing and keeps every container id")
@@ -322,7 +322,7 @@ class Probe:
         before = self.container_ids()["traefik"]
         traefik_yml.write_text(published + HARMLESS_EDIT)
         try:
-            out = self.edge("apply", "--closed", terminal=True, exit_code=2)
+            out = self.hal("apply", "--local", terminal=True, exit_code=edge_copy.HAL_FAILURE)
         finally:
             traefik_yml.write_text(published)
         expect(
@@ -330,7 +330,7 @@ class Probe:
             f"apply with an unpublished edit said: {out[-200:]}",
         )
         expect(self.container_ids()["traefik"] == before, "an unpublished edit recreated traefik")
-        print(f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 2, traefik kept")
+        print(f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 3, traefik kept")
 
     def cell_98_p1_commits_waiting(self) -> None:
         """#98 P1: a commit pushed from a work clone waits on origin; the copy's apply shows it as
@@ -342,7 +342,7 @@ class Probe:
             WAITING_SUBJECT,
             {"dynamic/.gitkeep": WAITING_NOTE, "README.md": WAITING_NOTE},
         )
-        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         shown = (f"! checkout 1 behind plan applies {head} without them", NOTHING_TO_CHANGE)
         expect(all(line in out for line in shown), f"apply behind origin said: {out[-400:]}")
         expect(checkout.Git(self.copy).short() == head, "apply behind origin moved HEAD")
@@ -350,7 +350,7 @@ class Probe:
         merge = out.split("git -C ")[1].split()[:4]
         expect(merge[:3] == [checkout.LIVE_CHECKOUT, "merge", "--ff-only"], f"the merge is {merge}")
         edge_copy.git(self.copy, *merge[1:])
-        current = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        current = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(f"✓ checkout current {waiting}" in current, f"after the merge: {current[-200:]}")
         print(
             f"#98 P1 held: {waiting} waiting shown as one behind row, HEAD {head} planned and kept"
@@ -360,7 +360,7 @@ class Probe:
         self.volumes_before_p3 = self.volumes()
         before = self.container_ids()["traefik"]
         self.edit_traefik_yml()
-        out = self.edge("apply", "--closed", terminal=True)
+        out = self.hal("apply", "--local", terminal=True)
         expect(
             "traefik recreate traefik.yml changed" in out and RECREATED in out,
             f"apply after the edit said: {out[-200:]}",
@@ -370,10 +370,10 @@ class Probe:
         print(f"#85 P3 held: the edit recreated traefik, and {HOST} answers through it")
 
     def cell_p4_barrier_proven_after_the_recreate(self) -> None:
-        self.edge("stop", UNIT, terminal=False)
+        self.hal("stop", UNIT, terminal=False)
         self.compose("--profile", UNIT, "up", "--detach", "hello")
         self.edit_traefik_yml()
-        out = self.edge("apply", "--closed", terminal=True)
+        out = self.hal("apply", "--local", terminal=True)
         proven = f"the barrier of {UNIT} is proven"
         expect(
             proven in out and RECREATED in out and out.index(proven) < out.index(RECREATED),
@@ -387,7 +387,7 @@ class Probe:
         self.compose("stop", "traefik")
         recorded = self.record.read().entries
         self.edit_traefik_yml()
-        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(
             "traefik not started traefik.yml changed · not running" in out
             and NOTHING_TO_CHANGE in out,
@@ -404,7 +404,7 @@ class Probe:
         expect(self.marker.is_file() and self.barrier.is_file(), "the marker or barrier is gone")
         self.compose("up", "--detach", "traefik")
         self.wait_until("the barrier answering", self.answers_the_barrier)
-        self.edge("start", UNIT, terminal=True)
+        self.hal("start", UNIT, terminal=True)
         print("#85 P6 held: the named volumes, the marker and the barrier survived P3-P5")
 
     def cell_q1_the_definition_fact(self, after: str, must_match: tuple[str, ...]) -> None:
@@ -441,9 +441,9 @@ class Probe:
         )
 
     def apply_core_change(self) -> tuple[dict[str, str], dict[str, str], str]:
-        """The container ids before and after one `edge apply --closed` with `yes`, and its out."""
+        """The container ids before and after one `hal apply --local` with `yes`, and its out."""
         before = self.container_ids()
-        out = self.edge("apply", "--closed", terminal=True)
+        out = self.hal("apply", "--local", terminal=True)
         return before, self.container_ids(), out
 
     def cell_q2_socket_proxy_definition(self) -> None:
@@ -454,7 +454,7 @@ class Probe:
             "socket-proxy recreate definition changed" in out
             and "traefik recreate" in out
             and out.count("socket-proxy is recreated") == 2  # the fact of traefik's row, the result
-            and out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT),
+            and out.rindex(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT),
             f"apply after the socket-proxy label said: {out[-400:]}",
         )
         expect(all(after[s] != before[s] for s in CORE), "a core container is the old one")
@@ -481,13 +481,13 @@ class Probe:
 
     def cell_q4_second_run(self) -> None:
         before = self.container_ids()
-        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(NOTHING_TO_CHANGE in out, f"the second apply said: {out[-200:]}")
         expect(self.container_ids() == before, "the second apply replaced a container")
         print("#87 Q4 held: a second apply changes nothing and keeps every container id")
 
     def cell_q5_barrier_after_a_socket_proxy_recreate(self) -> None:
-        self.edge("stop", UNIT, terminal=False)
+        self.hal("stop", UNIT, terminal=False)
         self.compose("--profile", UNIT, "up", "--detach", "hello")
         self.label_core_service("socket-proxy", "q5")
         _, _, out = self.apply_core_change()
@@ -495,7 +495,7 @@ class Probe:
         expect(
             proven in out
             and SOCKET_PROXY_RECREATED in out
-            and out.index(proven) < out.index(SOCKET_PROXY_RECREATED),
+            and out.index(proven) < out.rindex(SOCKET_PROXY_RECREATED),
             f"apply with the barrier said: {out[-400:]}",
         )
         expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after the recreate")
@@ -507,7 +507,7 @@ class Probe:
         expect(volumes == self.volumes_before_q2, f"the volumes were {self.volumes_before_q2}")
         expect(f"{PROJECT}_socket-proxy-run" in volumes, f"no socket-proxy-run in {volumes}")
         expect(self.marker.is_file() and self.barrier.is_file(), "the marker or barrier is gone")
-        self.edge("start", UNIT, terminal=True)
+        self.hal("start", UNIT, terminal=True)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
         print(
             "#87 Q6 held: socket-proxy-run, the named volumes, the marker and the barrier survived"
@@ -539,7 +539,7 @@ class Probe:
         self.compose_before_z2 = (self.copy / COMPOSE_FILE).read_text()
         self.respell_hello_image()
         before = self.container_ids()
-        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         named = f"compose.yaml {RESPELLED_WHOAMI.split('@')[0]}@"
         lines = [line for line in out.splitlines() if OLD_IMAGE in line and "hello" in line]
         print(f"#91 Z2 the line: {lines!r}")
@@ -555,7 +555,7 @@ class Probe:
         (self.copy / COMPOSE_FILE).write_text(self.compose_before_z2)
         edge_copy.publish(self.copy, "probe: hello's image as before")
         before = self.container_ids()
-        out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
+        out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(
             OLD_IMAGE not in out and NOTHING_TO_CHANGE in out,
             f"apply after the revert said: {out[-400:]}",
@@ -568,7 +568,7 @@ class Probe:
         print(f"#61 proof 1 held: {HOST} answers whoami without a switch")
 
     def cell_2_stop(self) -> None:
-        self.edge("stop", UNIT, terminal=False)
+        self.hal("stop", UNIT, terminal=False)
         expect(self.barrier.is_file(), "stop wrote no dynamic/switch-probe.yml")
         expect(self.marker.is_file(), "stop wrote no marker")
         expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after stop")
@@ -591,7 +591,7 @@ class Probe:
         )
 
     def cell_5_apply(self) -> None:
-        out = self.edge("apply", "--closed", terminal=True)
+        out = self.hal("apply", "--local", terminal=True)
         expect(
             "probe stays stopped" in out and NOTHING_TO_CHANGE in out, f"apply said: {out[-160:]}"
         )
@@ -602,7 +602,7 @@ class Probe:
         )
 
     def cell_6_start(self) -> None:
-        self.edge("start", UNIT, terminal=True)
+        self.hal("start", UNIT, terminal=True)
         expect(not self.barrier.exists(), "start left the barrier")
         expect(not self.marker.exists(), "start left the marker")
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
@@ -614,51 +614,47 @@ class Probe:
         self.environment["EDGE_TUNNEL_MANAGER"] = "user"
         global_marker = self.home / ".local" / "state" / "edge" / "global-stop"
         try:
-            self.edge(
-                "stop", UNIT, terminal=False
-            )  # the unit barrier to be proven before reopening
+            self.hal("stop", UNIT, terminal=False)  # the unit barrier to be proven before reopening
             throwaway.install()
-            stopped = self.edge("stop", "--all", terminal=False)
-            expect("the tunnel is stopped" in stopped, f"stop --all said: {stopped[-160:]}")
+            stopped = self.hal("offline", terminal=False)
+            expect("the tunnel is stopped" in stopped, f"offline said: {stopped[-160:]}")
             expect(
                 throwaway.state() == "inactive",
-                f"the tunnel is {throwaway.state()} after stop --all",
+                f"the tunnel is {throwaway.state()} after offline",
             )
-            expect(global_marker.is_file(), "stop --all wrote no global marker")
+            expect(global_marker.is_file(), "offline wrote no global marker")
             throwaway.start_is_skipped()
-            self.barrier.unlink()  # start --all renders the barrier again before it proves it
-            started = self.edge("start", "--all", terminal=True)
-            expect(
-                f"the barrier of {UNIT} is proven" in started, f"start --all said: {started[-200:]}"
-            )
+            self.barrier.unlink()  # online renders the barrier again before it proves it
+            started = self.hal("online", terminal=True)
+            expect(f"the barrier of {UNIT} is proven" in started, f"online said: {started[-200:]}")
             expect(
                 throwaway.state() == "active",
-                f"the tunnel is {throwaway.state()} after start --all",
+                f"the tunnel is {throwaway.state()} after online",
             )
-            expect(not global_marker.exists(), "start --all left the global marker")
+            expect(not global_marker.exists(), "online left the global marker")
             expect(self.marker.is_file() and self.answers_the_barrier(), "the unit switch fell")
         finally:
             throwaway.remove()
             self.environment.pop("EDGE_TUNNEL_UNIT")
             self.environment.pop("EDGE_TUNNEL_MANAGER")
-        self.edge("start", UNIT, terminal=True)
+        self.hal("start", UNIT, terminal=True)
         print(
-            "#70 proof 8 held: stop --all left the throwaway unit inactive with the marker, and "
-            "its boot drop-in skipped a start; start --all proved the unit barrier, reopened it "
+            "#70 proof 8 held: offline left the throwaway unit inactive with the marker, and "
+            "its boot drop-in skipped a start; online proved the unit barrier, reopened it "
             "and cleared only the marker"
         )
 
     def cell_7_traefik_down(self) -> None:
         self.compose("stop", "traefik")
-        out = self.edge("stop", UNIT, terminal=False, exit_code=1)
+        out = self.hal("stop", UNIT, terminal=False, exit_code=edge_copy.HAL_FAILURE)
         expect("partial" in out, f"the stop without traefik said: {out[-160:]}")
         expect(self.hello_state() == "exited", "hello still runs after the partial stop")
         expect(self.marker.is_file() and self.barrier.is_file(), "marker or barrier missing")
         self.compose("up", "--detach", "traefik")
         self.wait_until("the barrier answering", self.answers_the_barrier)
-        self.edge("start", UNIT, terminal=True)
+        self.hal("start", UNIT, terminal=True)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print("#61 proof 7 held: traefik down: stop exits 1 partial, both kept; start reopens")
+        print("#61 proof 7 held: traefik down: stop exits 3 partial, both kept; start reopens")
 
 
 class ThrowawayTunnel:
@@ -707,12 +703,6 @@ class ThrowawayTunnel:
             self.drop_in.parent.rmdir()
         self.unit_file.unlink(missing_ok=True)
         self.systemctl("daemon-reload")
-
-
-def printed(*lines: str) -> str:
-    """`lines` as `edge apply --closed` prints them one after another, each with its prefix, in the
-    whitespace-joined form `edge_copy.run_edge` returns."""
-    return " ".join(" ".join(f"{apply.COMMAND}: {line}" for line in lines).split())
 
 
 def port_is_busy() -> bool:

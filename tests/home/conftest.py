@@ -5,20 +5,27 @@ import email.policy
 import fnmatch
 import json
 import os
+import re
 import shlex
 import stat
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
-from hal import check_commands
+from hal import check_commands, secrets_commands, setup_commands
 from hal import cli as hal_cli
 from hal import config as hal_config
-from home_tools import backup_check, check, cli, logs_check, platform_check, secrets_view, system_step, tunnel_config
+from hal.grammar import ExitCode
+from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
+from home_tools import ports as home_ports
+from home_tools.secrets_setup import Boundaries as SecretsBoundaries
+from home_tools.secrets_setup import Terminal as SecretsTerminal
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.layout import Layout, run_command
@@ -43,7 +50,7 @@ CANARY_INSPECT_LINE = f"/{INSPECT_CANARY}\trunning\tunhealthy\t0\tedge\n"
 
 
 def symlinked_folder_fix(place: str) -> str:
-    """The command `home secrets` names for a symlink on the way to a secret: the folder it points to, or a new one, takes its place."""
+    """The command `hal secrets` names for a symlink on the way to a secret: the folder it points to, or a new one, takes its place."""
     real_folder = f'if [ -e "$t" ]; then mv -T "$t" {place}; else mkdir {place}; fi'
     return f"t=$(readlink -m {place}) && rm {place} && {real_folder} && chmod 700 {place}"
 
@@ -115,7 +122,7 @@ def stand_in_tunnel_config(tmp_path_factory: pytest.TempPathFactory, monkeypatch
 
 @pytest.fixture
 def use_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], Path]:
-    """Points `home secrets` at a manifest written from the given text."""
+    """Points `hal secrets` at a manifest written from the given text."""
 
     def use(text: str) -> Path:
         path = tmp_path / "secrets_manifest.toml"
@@ -419,6 +426,16 @@ class Sandbox:
     def layout(self) -> Layout:
         return Layout(self.home)
 
+    @property
+    def secrets_boundaries(self) -> SecretsBoundaries:
+        """The wizard's boundaries over the one sandbox terminal; asking a person, opening a page, the network and the disk sync fail the test."""
+
+        def never(*_arguments: object) -> NoReturn:
+            pytest.fail("the sandbox terminal answers no question, opens no page and reaches no network")
+
+        terminal = SecretsTerminal(lambda: self.system.terminal, never, never, never)
+        return SecretsBoundaries(terminal, never, never)
+
 
 @pytest.fixture
 def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
@@ -447,14 +464,14 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
         monkeypatch.delenv(name, raising=False)
     # A real ~/git/edge in the sandbox home would be a repository the hook check reports on.
-    monkeypatch.setattr(cli, "edge_units_directory", lambda _layout: unit_directory)
+    monkeypatch.setattr(home_ports, "edge_units_directory", lambda _layout: unit_directory)
     # The packaged manifest names secrets this sandbox home lacks; the secrets step of `hal setup` looks at none unless a test names some.
     empty_manifest = tmp_path / "empty-secrets-manifest.toml"
     empty_manifest.write_text("secret = []\n")
     monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
-    monkeypatch.setattr(cli, "MONOTONIC_CLOCK", FakeClock())
+    monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
     return Sandbox(home, global_git_config, uv_calls, system)
 
 
@@ -493,7 +510,7 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
     monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
     write_backup_status(clean_home)
-    assert cli.main(["setup", "--apply"], home=clean_home) == 0
+    assert run_hal_setup(home=clean_home, secrets_setup_boundaries=sandbox.secrets_boundaries) == ExitCode.OK
 
 
 def write_hal_config(home: Path, text: str) -> Path:
@@ -528,15 +545,77 @@ def home_check(
 ) -> int:
     """`hal check` through `hal.cli.main`, over the given home and runner instead of this machine; the exposure scan runs shimmed `docker` and `ss`."""
 
-    def ports():
-        return cli.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
+    def build_ports():
+        return home_ports.build_layout_and_ports(home=home, run=runner, probe=probe or FakeProbe(), disk_space=disk or FakeDisk())
 
     shims = home.parent / "host-shims"
     write_host_shims(shims, listeners, docker_script)
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(check_commands, "build_layout_and_ports", ports)
+        patch.setattr(check_commands, "build_layout_and_ports", build_ports)
         patch.setenv("PATH", f"{shims}{os.pathsep}{os.environ['PATH']}")
         return hal_cli.main(["check", *arguments])
+
+
+def run_hal_secrets(home: Path, probe: FakeProbe, *options: str, now: datetime | None = None, runner=None) -> int:
+    """`hal secrets` through `hal.cli.main`, over the given home and probe instead of this machine."""
+
+    def build_ports():
+        return home_ports.build_layout_and_ports(home=home, run=runner, probe=probe, now=now)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(secrets_commands, "build_layout_and_ports", build_ports)
+        return hal_cli.main(["secrets", *options])
+
+
+class _Typist:
+    """The person at the yes prompt: one typed line, none (EOF), or Ctrl-C."""
+
+    def __init__(self, answer: str | type[BaseException] | None) -> None:
+        self.answer = answer
+
+    def readline(self) -> str:
+        if isinstance(self.answer, type):
+            raise self.answer
+        return "" if self.answer is None else f"{self.answer}\n"
+
+
+def run_hal_setup(*flags: str, answer: str | type[BaseException] | None = "yes", **port_overrides) -> int:
+    """`hal setup` through `hal.cli.main`, over the given ports (`home`, `run`, `probe`, `now`, `clock`, `secrets_setup_boundaries`, `system_boundaries`) instead of this machine's.
+
+    `answer` is what the person types at the yes prompt: a line, `None` for EOF, or an exception class raised as Ctrl-C is.
+    """
+
+    def build_ports():
+        return home_ports.build_layout_and_ports(**port_overrides)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(setup_commands, "build_layout_and_ports", build_ports)
+        patch.setattr(sys, "stdin", _Typist(answer))
+        return hal_cli.main(["setup", *flags])
+
+
+YES_PROMPT = re.compile(r"Type yes to [^:\n]*: ")
+
+
+def split_at_the_prompt(output: str) -> tuple[list[str], list[str]]:
+    """The stdout lines before the yes prompt (the plan) and after it (the run); an output without a prompt is all plan."""
+    prompt = YES_PROMPT.search(output)
+    if prompt is None:
+        return output.splitlines(), []
+    return output[: prompt.start()].splitlines(), output[prompt.end() :].splitlines()
+
+
+def run_captured_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str, **port_overrides) -> tuple[int, list[str], str]:
+    """`run_hal_setup`, with what it printed: the exit code, the stdout lines of the run (all of them when no yes was asked) and the stderr text."""
+    code = run_hal_setup(*flags, **port_overrides)
+    captured = capsys.readouterr()
+    return code, lines_of_the_run(captured.out), captured.err
+
+
+def lines_of_the_run(output: str) -> list[str]:
+    """What `hal setup` printed after the yes; an output that asked no yes is all of it."""
+    plan, run = split_at_the_prompt(output)
+    return run if YES_PROMPT.search(output) else plan
 
 
 UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("
@@ -545,7 +624,7 @@ UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("
 def run_report_command(command: str, home: Path, runner, probe: FakeProbe) -> int:
     if command == "check":
         return home_check(home, runner, probe)
-    return cli.main([command], home=home, run=runner, probe=probe)
+    return run_hal_secrets(home, probe, runner=runner)
 
 
 REPORT_DISPLAY = "~/.local/state/hal/check-report.md"

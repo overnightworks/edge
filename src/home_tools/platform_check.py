@@ -20,6 +20,7 @@ from pathlib import Path
 
 from home_tools.report import Finding, render_findings_report
 from home_tools.layout import CommandRunner
+from hal_output.command import Verb, command
 
 REBOOT_REQUIRED_FILE = Path("/var/run/reboot-required")
 CHECKED_FILESYSTEM = Path("/")
@@ -118,7 +119,7 @@ def _container_findings(run: CommandRunner, switched_off: frozenset[str]) -> tup
     excused = sum(_stopped_on_purpose(container, switched_off) for container in judged)
     lines = [f"Container mit Compose-Projekt: {len(judged)}, davon in Ordnung {len(judged) - len(findings) - excused}"]
     if switched_off:
-        lines.append(f"Mit hal stop abgeschaltet: {', '.join(sorted(switched_off))}")
+        lines.append(f"Mit {command(Verb.STOP)} abgeschaltet: {', '.join(sorted(switched_off))}")
     return findings, lines
 
 

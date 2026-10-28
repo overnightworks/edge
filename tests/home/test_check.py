@@ -19,7 +19,7 @@ pytestmark = pytest.mark.usefixtures("quiet_pc")
 
 @pytest.fixture
 def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> Path:
-    """The conftest's clean home, inside the sandbox's HOME so that `home setup` can install the hook there."""
+    """The conftest's clean home, inside the sandbox's HOME so that `hal setup` can install the hook there."""
     return furnish_clean_home(sandbox.home)
 
 
@@ -219,7 +219,7 @@ def test_a_note_joins_the_report_but_sends_nothing(clean_home, runner) -> None:
     report = Layout(clean_home).check_report_file.read_text()
     assert code == 1
     assert report.splitlines()[0].endswith("| 1 finding")
-    assert "# home secrets " in report
+    assert "# hal secrets " in report
     assert "| missing | gitlab |" in report
     assert runner.notifications == []
 
@@ -409,7 +409,7 @@ def test_a_missing_human_password_is_an_action_and_its_secret_name_stays_out_of_
 
     news = message_of(mail_stub.sent[0])
     assert news["Subject"] == "PC check: action needed – Secrets"
-    assert "1. The backup password is missing; without it nothing can be restored. (new)\n   Next step: Run `home next`." in news.get_content()
+    assert "1. The backup password is missing; without it nothing can be restored. (new)\n   Next step: Run `hal secrets`." in news.get_content()
     assert "gitlab" not in news.get_content()
 
 
@@ -712,7 +712,7 @@ Secrets: Note – Credentials for hopin are still missing
 Server logs: OK
 Exposure: OK
 
-Notes are not urgent; home next shows what you can do.
+Notes are not urgent.
 Everything in detail: {REPORT_DISPLAY}
 """
 

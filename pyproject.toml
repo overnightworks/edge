@@ -1,7 +1,7 @@
 [project]
 name = "edge-check"
 version = "0.1.0"
-description = "The edge tools: the edge command, home, the workstation tool, and hal, the daily door."
+description = "The edge tools: hal, the daily door."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -10,8 +10,6 @@ dependencies = [
 ]
 
 [project.scripts]
-edge = "edge.cli:main"
-home = "home_tools.cli:main"
 hal = "hal.cli:main"
 
 [dependency-groups]

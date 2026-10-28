@@ -30,7 +30,7 @@ console. Change the YAML and apply it again, and the running Keycloak follows.
 
 Going live needs you in one place only: in the browser, to create your own
 admin with a second factor (a machine must not hold that). Everything else is
-`keycloak/go-live` (see [Go-live](#go-live)), and `bin/edge apply`
+`keycloak/go-live` (see [Go-live](#go-live)), and `hal apply`
 publishes the public door afterwards. The sections below are the reference.
 
 ## Doors, issuers and configuration
@@ -213,7 +213,7 @@ secrets.
 
 ## Start and apply
 
-Start the stack as in [stack.md](stack.md) (Start, readiness, stop; Keycloak comes with `edge
+Start the stack as in [stack.md](stack.md) (Start, readiness, stop; Keycloak comes with `hal
 apply`), and wait until Keycloak answers the master realm on 8090. A realm change reaches it
 through `hal apply`: merge the change to `keycloak/realm.yaml` or `keycloak/master.yaml`, update the
 live checkout, run `hal apply`.
@@ -263,14 +263,14 @@ admin. An agent never runs it against the live project and never holds an admin 
 `keycloak/go-live --help` lists its steps, each skipped when already done, so it can be run again
 after any interruption; a failure ends with one line naming the step and exit code 1, and it never
 prints a secret. Your own part is in the browser (step 7): a machine must not hold your second
-factor. `edge apply` publishes `auth.<EDGE_DOMAIN>` afterwards, once the catalog declares it;
-`fleet.yaml` names `keycloak/go-live` as Keycloak's setup, so `edge apply` asks and runs it in
+factor. `hal apply` publishes `auth.<EDGE_DOMAIN>` afterwards, once the catalog declares it;
+`fleet.yaml` names `keycloak/go-live` as Keycloak's setup, so `hal apply` asks and runs it in
 your terminal on yes while it is not done.
 
-While `~/.local/state/edge/stopped/keycloak` exists (`edge stop keycloak`), go-live refuses and
-starts nothing; `edge start keycloak` ends the switch. `keycloak/go-live --check` asks nothing,
+While `~/.local/state/edge/stopped/keycloak` exists (`hal stop keycloak`), go-live refuses and
+starts nothing; `hal start keycloak` ends the switch. `keycloak/go-live --check` asks nothing,
 changes nothing and ignores the marker: its exit codes are in `--help`. It reads go-live's durable
-trace, not Keycloak, and it is also the setup check of `edge apply --closed` for the unit
+trace, not Keycloak, and it is also the setup check of `hal apply --local` for the unit
 `keycloak`.
 
 ## Patch upgrade

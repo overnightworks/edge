@@ -32,7 +32,7 @@ jobs:
       - name: edge-check installs from the lock file
         run: uv sync --locked --no-build --no-install-project
 
-      # The compose file interpolates the domain: the zone fleet.yaml names, as `edge apply` writes it to .env.
+      # The compose file interpolates the domain: the zone fleet.yaml names, as `hal apply` writes it to .env.
       - name: EDGE_DOMAIN is fleet.yaml's cloudflare.zone
         run: |
           PYTHONPATH=src uv run --no-sync python -c 'from pathlib import Path; from edge import catalog; print("EDGE_DOMAIN=" + catalog.zone(catalog.read(Path("fleet.yaml"))))' >> "$GITHUB_ENV"
@@ -62,7 +62,7 @@ jobs:
           path: coverage.xml
 
       # The wheel must ship every package, not only the one the editable install happens to find.
-      - name: The wheel installs edge-check, home and hal
+      - name: The wheel installs edge-check and hal
         run: |
           uv build --wheel --out-dir dist
           uv run --isolated --no-project --no-build --with dist/*.whl hal backup --help
@@ -75,10 +75,11 @@ jobs:
           UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/edge_check-*.whl
           cd "$scratch/work"
           export HOME="$scratch/home" PATH="$scratch/bin:$PATH"
-          home --help
-          home secrets --help
-          home secrets --by-service | grep -F "declared dependencies"
           hal --help
+          [ ! -e "$scratch/bin/home" ]
+          [ ! -e "$scratch/bin/edge" ]
+          hal secrets --help
+          hal secrets --by-service | grep -F "declared dependencies"
           version=$(hal version)
           [ "$version" = "no checkout (installed from a wheel)" ]
           rc=0; hal frobnicate >"$scratch/out" 2>"$scratch/err" || rc=$?

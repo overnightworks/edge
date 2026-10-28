@@ -46,6 +46,7 @@ from edge_backup.verify import (
     check_rows,
 )
 from hal_output import Glyph, Row, format_bytes, format_duration
+from hal_output.command import Verb, command
 
 # A run stages in `staging-<random>` and first creates `staging-<random>.run` beside it: that
 # mark, not the name, proves the directory is a run's own, so a sweep removes only what runs made.
@@ -584,7 +585,7 @@ def _newest_snapshot_hint(settings: Settings, app: App) -> str:
         return ""
     return (
         f"; the newest snapshot is {newest[:8]}; choose it with: "
-        f"hal restore {app.name} --snapshot <ID> --target <folder>"
+        f"{command(Verb.RESTORE, app.name, '--snapshot', '<ID>', '--target', '<folder>')}"
     )
 
 
@@ -599,7 +600,8 @@ def _chosen_snapshot(settings: Settings, app: App, prefix: str) -> str:
         raise StepFailed(
             ExitCategory.CONFIGURATION,
             f"{prefix} names no single snapshot of {app.name} "
-            f"(at least {MIN_SNAPSHOT_PREFIX} characters of an ID from `hal restore --list`)",
+            f"(at least {MIN_SNAPSHOT_PREFIX} characters of an ID from "
+            f"`{command(Verb.RESTORE, '--list')}`)",
         )
     return matches[0]
 

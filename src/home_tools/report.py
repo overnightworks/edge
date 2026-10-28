@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, IntEnum
+from enum import IntEnum
 from pathlib import Path
 
 
@@ -137,26 +137,3 @@ def _open_state_directory(home: Path, below_home: Path, *, create_directories: b
             os.close(directory)
         directory = child
     return directory
-
-
-class ClosedBy(Enum):
-    """Who closes a finding: the operator, as a step only he can take, or an agent that sorts it in as bookkeeping."""
-
-    OPERATOR = "operator"
-    BOOKKEEPING = "bookkeeping"
-
-    @classmethod
-    def counted_by(cls, tally: Tally | None) -> ClosedBy:
-        """A rule is bookkeeping exactly when it says how its findings are counted, so no rule can be one without the other."""
-        return cls.OPERATOR if tally is None else cls.BOOKKEEPING
-
-
-@dataclass(frozen=True)
-class Tally:
-    """How a kind of bookkeeping finding is counted, singular and plural: "1 Download", "13 Downloads"."""
-
-    one: str
-    many: str
-
-    def of(self, count: int) -> str:
-        return f"{count} {self.one if count == 1 else self.many}"

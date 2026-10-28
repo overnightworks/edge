@@ -14,14 +14,14 @@ secrets, deploy, re-setup, operations, decisions) is [docs/architecture.md](docs
 
 ## Start
 
-The first `hal apply --closed` writes `.env`, plans, asks to run each setup still missing (for example
+The first `hal apply --local` writes `.env`, plans, asks to run each setup still missing (for example
 `keycloak/go-live`, which itself starts the socket proxy and Traefik), asks `yes` and switches the
 catalog's units on. Apply never starts a stopped core service, so Traefik and the socket proxy are
 started by hand; `hal apply` then publishes, and `hal online` opens the tunnel, which `hal setup`
 installs disabled. Readiness and stop are in [docs/stack.md](docs/stack.md).
 
 ```sh
-hal apply --closed
+hal apply --local
 docker compose up -d --no-recreate socket-proxy traefik
 hal apply
 hal online
@@ -44,9 +44,9 @@ read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
 `hal stop` and `hal offline` only, never `hal apply`, `hal start` or `hal online`
 ([docs/architecture.md](docs/architecture.md), section 9). `hal rename OLD NEW [--apply]` moves a
 renamed repository's clones on this PC ([docs/naming.md](docs/naming.md), P1).
-The five stack commands and `hal setup` deviate from the grammar until overnightworks/edge#207
-H5a2 (Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints four rows, a verdict
-and, when it stops, an `error:`/`next:` pair, and ends 0 or 3.
+The five stack commands and `hal setup` deviate from the grammar
+(Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints four rows, a verdict
+and, when it stops, an `error:`/`next:` pair, asks one `yes` before it acts (`--dry-run` only shows), and ends 0, 1 (declined), 3 or 4 (no terminal).
 
 ## Adding a tool: the label rule
 
@@ -80,12 +80,11 @@ container environment values; review evidence must not dump those payloads.
 
 `compose.yaml`, `traefik.yml` and `fleet.yaml` (the service catalog: which units run, and the
 OpenTofu inputs) hold the stack; `dynamic/` holds routes for host processes and the emergency
-barriers `edge stop` writes. `keycloak/` is the realms as code, `step-ca/` and `traefik-mcp.yml` the
+barriers `hal stop` writes. `keycloak/` is the realms as code, `step-ca/` and `traefik-mcp.yml` the
 internal CA and the MCP gateway, `agent-service/` the agent service and its egress gateway,
 `legal/` the legal unit's frame and sections (imprint, privacy notice, terms; `hal apply` builds the pages into `legal/built/`), stylesheet and nginx config, `tunnel/` the cloudflared unit and its polkit rule, `backup/` and `systemd/` the declared backups and
-their timers. The commands are Python under `src/` (`edge`, `hal`, `home`;
-a bare `hal check` is the daily check (it also mails and pops up what is new), `hal check exposure` reports what reaches beyond loopback and `hal check hosts` compares Cloudflare with `fleet.yaml`, `hal backup` and `hal restore` run the backup runner; `bin/edge` is the one launcher that
-`bin/hal` and `bin/home` link to), the OpenTofu
+their timers. The commands are Python under `src/` (`edge`, `hal`;
+a bare `hal check` is the daily check (it also mails and pops up what is new), `hal check exposure` reports what reaches beyond loopback and `hal check hosts` compares Cloudflare with `fleet.yaml`, `hal backup` and `hal restore` run the backup runner; `bin/hal` is the launcher), the OpenTofu
 root is `external/`, the probes that prove each service on a throwaway stack are under `probe/`, and
 `tests/` holds the rest.
 
@@ -95,13 +94,13 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | the platform picture, decisions, operations |
 | [docs/stack.md](docs/stack.md) | run, apply, stop, catalog on and off, the emergency switch, rollback |
-| [docs/external.md](docs/external.md) | Cloudflare as code (`edge external`) |
+| [docs/external.md](docs/external.md) | Cloudflare as code (the publish phase of `hal apply`) |
 | [docs/keycloak.md](docs/keycloak.md) | the login, the realm as code, go-live, upgrade |
 | [docs/backup.md](docs/backup.md) | `hal check`, `hal backup`, `hal restore`, what a backup holds, restore |
 | [docs/people.md](docs/people.md) | what an app offers so one person can be exported and erased |
 | [docs/internal-ca.md](docs/internal-ca.md) | `step-ca`, `traefik-mcp`, `agent-egress` |
 | [docs/agent-service.md](docs/agent-service.md) | the agent service: image, login, an app's side, proofs |
-| [docs/home.md](docs/home.md) | the `home` workstation tool (German) |
+| [docs/home.md](docs/home.md) | `hal setup` and the workstation tools (German) |
 | [docs/naming.md](docs/naming.md) | how every overnightworks repo, tool, package and unit is named |
 
 ## Checks

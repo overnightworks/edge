@@ -199,31 +199,33 @@ def test_ignored_files_do_not_count(git, main_tree):
 
 def test_a_clean_main_has_no_refusal(git):
     """#124 rule 1: the one owner of the clean-main check says nothing on a clean main."""
-    assert checkout.not_clean_main(git) == []
+    assert checkout.not_clean_main(git) is None
 
 
-def test_a_branch_is_one_refusal_line(git, main_tree):
+def test_a_branch_is_a_refusal_without_paths(git, main_tree):
     plain_git(main_tree, "switch", "--quiet", "--create", "feature/x")
 
-    assert checkout.not_clean_main(git) == ["runs only on main (this is branch feature/x)"]
+    assert checkout.not_clean_main(git) == checkout.Refusal(
+        "runs only on main (this is branch feature/x)"
+    )
 
 
-def test_changed_paths_follow_the_local_changes_line_one_each(git, main_tree):
+def test_the_local_changes_refusal_carries_each_changed_path(git, main_tree):
     (main_tree / "fleet.yaml").write_text("services: {edited: {}}\n")
     (main_tree / "extra.auto.tfvars").touch()
 
-    lines = checkout.not_clean_main(git)
+    refusal = checkout.not_clean_main(git)
 
-    assert lines[0].startswith("the live checkout has local changes, nothing changed;")
-    assert sorted(lines[1:]) == ["  extra.auto.tfvars", "  fleet.yaml"]
+    assert refusal.message == "the live checkout has local changes, nothing changed"
+    assert sorted(refusal.paths) == ["extra.auto.tfvars", "fleet.yaml"]
 
 
-def test_a_git_that_fails_is_a_refusal_line_not_an_error(main_tree, tmp_path, monkeypatch):
+def test_a_git_that_fails_is_a_refusal_not_an_error(main_tree, tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))
 
-    assert checkout.not_clean_main(checkout.Git(main_tree)) == [
+    assert checkout.not_clean_main(checkout.Git(main_tree)) == checkout.Refusal(
         "cannot read the live checkout, cannot run git (No such file or directory)"
-    ]
+    )
 
 
 def test_traefik_yml_replaced_by_an_empty_directory_is_named(git, main_tree):
@@ -448,13 +450,12 @@ def origin(main_tree: Path, tmp_path: Path) -> Path:
 
 
 def test_an_equal_main_is_current_and_pinned_to_heads_sha(git, main_tree, origin):
-    """#98 rule 3, B1 (S5): HEAD equal to the fetched sha stands current; the URL is origin's."""
+    """#98 rule 3, B1 (S5): HEAD equal to the fetched sha stands current."""
     fetched = checkout.fetch_origin(git)
 
     assert fetched.standing is checkout.Standing.CURRENT
     assert fetched.sha == head_of(main_tree)
     assert fetched.short == plain_git(main_tree, "rev-parse", "--short", "HEAD").stdout.strip()
-    assert fetched.url == origin.as_uri()
 
 
 @pytest.mark.parametrize(
@@ -497,11 +498,9 @@ def test_a_removed_remote_is_one_git_line_and_changes_nothing(git, main_tree, or
     with pytest.raises(checkout.GitError) as raised:
         checkout.fetch_origin(git)
 
-    expected = {
-        "the repository": "`git fetch` exited 128: fatal: Could not read from remote repository.",
-        "the remote": "`git remote` exited 2: error: No such remote 'origin'",
-    }
-    assert str(raised.value) == expected[removed]
+    assert str(raised.value) == (
+        "`git fetch` exited 128: fatal: Could not read from remote repository."
+    )
     assert checkout_state(main_tree) == before
 
 
@@ -514,8 +513,10 @@ def test_a_url_with_a_password_is_refused_before_connecting_and_never_printed(gi
     with pytest.raises(checkout.GitError) as raised:
         checkout.fetch_origin(git)
 
-    assert "plaintext credentials" in str(raised.value)
-    assert "s3cr3t-pw" not in str(raised.value)
+    assert str(raised.value) == (
+        "`git fetch` exited 128: fatal: URL 'https://<redacted>@127.0.0.1:1/x' "
+        "uses plaintext credentials"
+    )
     assert checkout_state(main_tree) == before
 
 
@@ -533,7 +534,7 @@ def test_a_url_with_a_password_is_refused_before_connecting_and_never_printed(gi
         pytest.param("file:///srv/edge.git", "file:///srv/edge.git", id="a path"),
     ],
 )  # fmt: skip
-def test_the_shown_url_and_gits_lines_never_carry_a_user_or_password(url, shown):
+def test_a_url_and_gits_lines_never_carry_a_user_or_password(url, shown):
     """#98 rules 1 and 2 (R3): what stands before `@` in a `scheme://` URL is redacted."""
     assert checkout.without_credentials(url) == shown
     assert checkout.without_credentials(f"fatal: unable to access '{url}/': no") == (
@@ -675,47 +676,6 @@ def test_no_reference_transaction_hook_runs_at_the_fetch(git, main_tree, origin,
     checkout.fetch_origin(git)
 
     assert not sentinel.exists()
-
-
-def test_every_waiting_commit_is_one_line_with_its_short_sha_and_subject(git, main_tree, origin):
-    """#98 rule 4, B12: 1000 waiting commits are all shown, newest first, each its short sha."""
-    tip = advance(origin, *subjects(*(f"commit {n:04}" for n in range(1000))))
-    fetched = checkout.fetch_origin(git)
-
-    commits = git.waiting_commits(fetched.sha)
-
-    assert [commit.subject for commit in commits] == [
-        f"commit {n:04}" for n in reversed(range(1000))
-    ]
-    assert commits[0].short == plain_git(main_tree, "rev-parse", "--short", tip).stdout.strip()
-
-
-def test_a_subject_with_control_characters_is_escaped_onto_one_line(git, main_tree, origin):
-    """#98 rule 4, B11: ESC, a carriage return and a wrapped first paragraph stay one line."""
-    advance(origin, (b"red \x1b[31malert\r over\nwrapped\n\nbody", {}))
-    fetched = checkout.fetch_origin(git)
-
-    [commit] = git.waiting_commits(fetched.sha)
-
-    assert commit.subject == "red \\x1b[31malert\\r over wrapped"
-
-
-def test_the_waiting_files_are_named_with_their_status_and_escaped(git, main_tree, origin):
-    """#98 rule 4, B15: added, modified and deleted paths, a non-UTF-8 byte and a newline among
-    them, each escaped onto one line; renames are not detected."""
-    plain_git(main_tree, "rm", "--quiet", "fleet.yaml")
-    plain_git(main_tree, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--message", "rm")
-    plain_git(main_tree, "push", "--quiet", "origin", checkout.MAIN)
-    plain_git(main_tree, "reset", "--quiet", "--hard", "HEAD~1")
-    files = {b"traefik.yml": b"changed\n", b"latin\xe9": b"x", b"new\nline": b"y"}
-    advance(origin, (b"files", files))
-    fetched = checkout.fetch_origin(git)
-
-    changed = git.waiting_files(fetched.sha)
-
-    assert sorted((file.status, file.shown) for file in changed) == [
-        ("A", "latin\\xe9"), ("A", "new\\nline"), ("D", "fleet.yaml"), ("M", "traefik.yml"),
-    ]  # fmt: skip
 
 
 def test_a_file_ignored_only_globally_makes_the_checkout_dirty(git, main_tree, home):

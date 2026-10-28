@@ -1,4 +1,4 @@
-"""`edge external`: tokens only in the child, an allowlisted environment, the pinned tofu."""
+"""Publish phase of `hal apply`: tokens only in the child, allowlisted environment, pinned tofu."""
 
 import errno
 import fcntl
@@ -16,7 +16,6 @@ import subprocess
 import sys
 import threading
 import time
-import tomllib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -26,7 +25,7 @@ import pytest
 from live_stack import LIVE_STACK_PORTS
 from test_edge_host_probe import RAY, Behaviour, serving
 
-from edge import catalog, checkout, cli
+from edge import catalog, checkout
 from edge.external import apply as external_apply
 from edge.external import cli as external_cli
 from edge.external import cloudflare_read, host_probe, secrets, tofu
@@ -219,47 +218,31 @@ def live_checkout(home) -> Path:
     return tree
 
 
-def edge_external_plan() -> int:
-    return cli.main(["external", "plan"])
-
-
-def test_a_clean_plan_exits_0(home, fake_tofu):
-    """#40 rule 4: no changes exits 0."""
-    assert edge_external_plan() == 0
-
-
-def test_changes_exit_1_with_one_line_naming_the_cause(home, fake_tofu, capsys):
-    """#40 rule 4: pending changes exit 1 with one line naming the cause."""
-    fake_tofu.configure(plan=2)
-    assert edge_external_plan() == 1
-    assert "changes pending" in capsys.readouterr().out
-
-
-def test_a_failed_plan_exits_2(home, fake_tofu, capsys):
-    """#40 rule 4: a failed plan exits 2 and names the cause on stderr."""
-    fake_tofu.configure(plan=1)
-    assert edge_external_plan() == 2
-    error = capsys.readouterr().err
-    assert "tofu plan failed (exit 1)" in error
-    assert "edge external plan:" in error
+@pytest.fixture
+def publish(home, live_checkout, monkeypatch) -> Callable[[], int]:
+    """`apply_command` in this process on a plan without changes: the terminal refusal lifted, the
+    closing host check clean, so a cell sees only the session, the token files and the exit."""
+    monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
+    monkeypatch.setattr(external_cli, "check_command", lambda _home: 0)
+    return lambda: external_cli.apply_command(home, live_checkout)
 
 
 @pytest.mark.parametrize("token_file", TOKEN_FILES)
 def test_a_missing_token_file_exits_2_naming_it_without_running_tofu(
-    home, fake_tofu, capsys, token_file
+    home, fake_tofu, capsys, token_file, publish
 ):
     """#40 rule 1: a missing token file stops the run before tofu."""
     (home / token_file).unlink()
-    assert edge_external_plan() == 2
+    assert publish() == 2
     assert str(home / token_file) in capsys.readouterr().err
     assert fake_tofu.calls() == []
 
 
-def test_the_tokens_never_reach_the_wrapper_output(home, fake_tofu, capsys):
+def test_the_tokens_never_reach_the_wrapper_output(home, fake_tofu, capsys, publish):
     """#40 rule 1: tokens reach only the tofu child, never the wrapper output."""
     (home / ".secrets/opentofu/state-passphrase").write_text(SENTINEL)
     fake_tofu.configure(echo_environment=True)
-    edge_external_plan()
+    publish()
     printed = capsys.readouterr()
     assert SENTINEL not in printed.out + printed.err
     assert SENTINEL in json.dumps(fake_tofu.call("plan")["env"])
@@ -301,33 +284,35 @@ def inherit(monkeypatch, tmp_path, variables):
 @pytest.mark.parametrize("version,expected_exit", TOFU_VERSIONS)
 @pytest.mark.parametrize("inherited", DROPPED_VARIABLE_FAMILIES)
 def test_tofu_gets_exactly_the_allowlisted_variables(
-    home, fake_tofu, monkeypatch, tmp_path, inherited, version, expected_exit
+    home, fake_tofu, monkeypatch, tmp_path, inherited, version, expected_exit, publish
 ):
     """#40 rule 2: tofu gets exactly the allowlisted variables, tokens from the files."""
     fake_tofu.configure(version=version)
     inherit(monkeypatch, tmp_path, inherited)
-    assert edge_external_plan() == expected_exit
+    assert publish() == expected_exit
     environment = fake_tofu.call("version")["env"]
     assert set(environment) == ALLOWED_NAMES
     assert environment["TF_VAR_state_passphrase"] == "file-passphrase"
-    assert environment["CLOUDFLARE_API_TOKEN"] == "cloudflare-token"
+    assert (
+        environment["CLOUDFLARE_API_TOKEN"] == WRITE_TOKEN_FILES[".secrets/cloudflare/fleet-write"]
+    )
     assert not (tmp_path / "trace").exists()
 
 
-def test_plan_never_reads_a_github_token_file(home, fake_tofu):
+def test_apply_never_reads_a_github_token_file(home, fake_tofu, publish):
     """#182 G1/G2: unreadable GitHub token files change nothing; no GITHUB_TOKEN reaches tofu."""
     for relative in GITHUB_TOKEN_FILES:
         token_file = home / relative
         token_file.parent.mkdir(parents=True, exist_ok=True)
         token_file.write_text("github-token\n")
         token_file.chmod(0o000)
-    assert edge_external_plan() == 0
+    assert publish() == 0
     assert "GITHUB_TOKEN" not in fake_tofu.call("plan")["env"]
 
 
-def test_the_child_environment_values(home, fake_tofu):
+def test_the_child_environment_values(home, fake_tofu, publish):
     """#40 rule 2: the allowlisted variables carry the wrapper's own values."""
-    edge_external_plan()
+    publish()
     environment = fake_tofu.call("plan")["env"]
     assert environment["PATH"] == f"{fake_tofu.directory.resolve()}:/usr/bin:/bin"
     assert environment["HOME"] == str(home)
@@ -338,69 +323,51 @@ def test_the_child_environment_values(home, fake_tofu):
 
 
 def test_every_file_tofu_creates_is_for_the_owner_only_whatever_the_umask_of_the_wrapper(
-    home, fake_tofu
+    home, fake_tofu, publish
 ):
     """#159 T1: the state tofu writes was 664 under the PC's umask 002."""
     previous = os.umask(0o002)
     try:
-        edge_external_plan()
+        publish()
     finally:
         os.umask(previous)
     assert (fake_tofu.directory / "made-by-tofu").stat().st_mode & 0o777 == 0o600
 
 
-def test_the_temporary_directory_is_private_and_removed_afterwards(home, fake_tofu):
+def test_the_temporary_directory_is_private_and_removed_afterwards(home, fake_tofu, publish):
     """#40 rule 2: TMPDIR is a 0700 directory removed afterwards."""
-    edge_external_plan()
+    publish()
     assert fake_tofu.call("plan")["tmpdir_mode"] == 0o700
     assert list((home / ".secrets/opentofu/tmp").iterdir()) == []
 
 
-def test_another_tofu_version_exits_2_naming_both_versions(home, fake_tofu, capsys):
+def test_another_tofu_version_exits_2_naming_both_versions(home, fake_tofu, capsys, publish):
     """#40 rule 3: another tofu version exits 2 naming both versions."""
     fake_tofu.configure(version="1.12.0")
-    assert edge_external_plan() == 2
+    assert publish() == 2
     error = capsys.readouterr().err
     assert "1.12.0" in error
     assert tofu.pinned_version() in error
     assert [call["argv"][0] for call in fake_tofu.calls()] == ["version"]
 
 
-def test_init_is_locked_non_interactive_and_uses_the_state_in_secrets(home, fake_tofu):
+def test_init_is_locked_non_interactive_and_uses_the_state_in_secrets(home, fake_tofu, publish):
     """#40 rule 3: init is locked, non-interactive and uses the state in secrets."""
-    edge_external_plan()
+    publish()
     assert fake_tofu.call("init")["argv"] == [
         "init",
         "-input=false",
         "-lockfile=readonly",
         f"-backend-config=path={home}/.secrets/opentofu/fleet.tfstate",
     ]
-    assert fake_tofu.call("plan")["argv"] == ["plan", "-refresh=true", "-detailed-exitcode"]
+    assert fake_tofu.call("plan")["argv"][:3] == ["plan", "-refresh=true", "-detailed-exitcode"]
 
 
-def test_a_failed_init_exits_2_without_planning(home, fake_tofu):
+def test_a_failed_init_exits_2_without_planning(home, fake_tofu, publish):
     """#40 rule 4: a failed init exits 2 without planning."""
     fake_tofu.configure(init=1)
-    assert edge_external_plan() == 2
+    assert publish() == 2
     assert [call["argv"][0] for call in fake_tofu.calls()] == ["version", "init"]
-
-
-def test_edge_external_help_exits_0_and_edge_help_lists_it(capsys):
-    """#40 rule 5: `edge external --help` works and `edge --help` lists it."""
-    with pytest.raises(SystemExit) as external_help:
-        cli.main(["external", "--help"])
-    assert external_help.value.code == 0
-    assert "check" not in capsys.readouterr().out
-    with pytest.raises(SystemExit):
-        cli.main(["--help"])
-    assert "external" in capsys.readouterr().out
-
-
-def test_the_only_new_script_is_edge():
-    """#40 rule 5: no new script besides `edge`."""
-    scripts = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["project"]["scripts"]
-    assert scripts["edge"] == "edge.cli:main"
-    assert "edge-external" not in scripts
 
 
 @pytest.mark.parametrize(
@@ -412,6 +379,7 @@ def test_the_only_new_script_is_edge():
     "token_file,variable",
     [
         (".secrets/cloudflare/fleet-read", "CLOUDFLARE_API_TOKEN"),
+        (".secrets/cloudflare/fleet-write", "CLOUDFLARE_API_TOKEN"),
         (".secrets/opentofu/state-passphrase", "TF_VAR_state_passphrase"),
     ],
 )
@@ -426,6 +394,7 @@ def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
     family,
     version,
     credential_inherited,
+    publish,
 ):
     """#40 rule 1: an inherited credential never stands in for an absent token file."""
     fake_tofu.configure(version=version)
@@ -435,61 +404,68 @@ def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
     else:
         monkeypatch.delenv(variable, raising=False)
     (home / token_file).unlink()
-    assert edge_external_plan() == 2
+    assert publish() == 2
     printed = capsys.readouterr()
     assert str(home / token_file) in printed.err
     assert SENTINEL not in printed.out + printed.err
     assert fake_tofu.calls() == []
 
 
-def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tofu, capsys):
+def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tofu, capsys, publish):
     """#40 rule 4: an unreadable token file is exit 2, not a traceback with exit 1."""
-    (home / ".secrets/cloudflare/fleet-read").write_bytes(b"\xff\xfe")
-    assert edge_external_plan() == 2
-    assert "not valid UTF-8" in capsys.readouterr().err
+    token_file = home / ".secrets/cloudflare/fleet-read"
+    token_file.write_bytes(b"\xff\xfe")
+    assert publish() == 2
+    assert capsys.readouterr().err == f"{REFUSAL}{token_file} is not valid UTF-8\n"
     assert fake_tofu.calls() == []
 
 
-def test_a_temporary_parent_that_is_a_file_exits_2_naming_error_and_path(home, fake_tofu, capsys):
+def test_a_temporary_parent_that_is_a_file_exits_2_naming_error_and_path(
+    home, fake_tofu, capsys, publish
+):
     """#40 rule 4: a filesystem failure while preparing the run is exit 2 naming what failed."""
     in_the_way = home / ".secrets/opentofu/tmp"
     in_the_way.write_text("in the way")
-    assert edge_external_plan() == 2
+    assert publish() == 2
     error = capsys.readouterr().err
     assert "FileExistsError" in error
     assert str(in_the_way) in error
     assert fake_tofu.calls() == []
 
 
-def test_a_version_report_carrying_a_token_never_prints_it(home, fake_tofu, capsys):
+def test_a_version_report_carrying_a_token_never_prints_it(home, fake_tofu, capsys, publish):
     """#40 rule 1: child-derived diagnostics are redacted before they are printed."""
-    fake_tofu.configure(version=TOKEN_FILES[".secrets/cloudflare/fleet-read"])
-    assert edge_external_plan() == 2
+    write_token = WRITE_TOKEN_FILES[".secrets/cloudflare/fleet-write"]
+    fake_tofu.configure(version=write_token)
+    assert publish() == 2
     printed = capsys.readouterr()
-    assert "cloudflare-token" not in printed.out + printed.err
+    assert write_token not in printed.out + printed.err
 
 
-def test_a_temporary_directory_that_cannot_be_removed_exits_2(home, fake_tofu, capsys):
+def test_a_temporary_directory_that_cannot_be_removed_exits_1(home, fake_tofu, capsys, publish):
     """#40 rule 4: a cleanup failure is reported, not reported as success."""
     fake_tofu.configure(leave_undeletable=True)
     try:
-        assert edge_external_plan() == 2
+        assert publish() == 1
         assert "PermissionError" in capsys.readouterr().err
     finally:
         for locked in (home / ".secrets/opentofu/tmp").glob("*/locked"):
             locked.chmod(0o700)
 
 
-def test_a_cleanup_failure_never_prints_a_token_named_by_the_child(home, fake_tofu, capsys):
+def test_a_cleanup_failure_never_prints_a_token_named_by_the_child(
+    home, fake_tofu, capsys, publish
+):
     """#40 rule 1: a child-controlled name in a cleanup failure is redacted."""
-    fake_tofu.configure(leave_undeletable=True, locked_name="cloudflare-token")
+    write_token = WRITE_TOKEN_FILES[".secrets/cloudflare/fleet-write"]
+    fake_tofu.configure(leave_undeletable=True, locked_name=write_token)
     try:
-        assert edge_external_plan() == 2
+        assert publish() == 1
         printed = capsys.readouterr()
         assert "PermissionError" in printed.err
-        assert "cloudflare-token" not in printed.out + printed.err
+        assert write_token not in printed.out + printed.err
     finally:
-        for locked in (home / ".secrets/opentofu/tmp").glob("*/cloudflare-token"):
+        for locked in (home / ".secrets/opentofu/tmp").glob(f"*/{write_token}"):
             locked.chmod(0o700)
 
 
@@ -501,11 +477,13 @@ def test_the_temporary_directory_is_removed_when_the_run_is_interrupted(home):
     assert list((home / ".secrets/opentofu/tmp").iterdir()) == []
 
 
-def test_a_cleanup_failure_after_another_version_still_names_both_versions(home, fake_tofu, capsys):
+def test_a_cleanup_failure_after_another_version_still_names_both_versions(
+    home, fake_tofu, capsys, publish
+):
     """#40 rule 3: a failing cleanup does not hide the version mismatch already in flight."""
     fake_tofu.configure(version="1.12.0", leave_undeletable=True)
     try:
-        assert edge_external_plan() == 2
+        assert publish() == 2
         error = capsys.readouterr().err
         assert "1.12.0" in error
         assert tofu.pinned_version() in error
@@ -517,7 +495,7 @@ def test_a_cleanup_failure_after_another_version_still_names_both_versions(home,
 
 @dataclass
 class Terminal:
-    """`edge external apply` as a child on a pty, the way the operator runs it."""
+    """`apply_command` as a child on a pty, the way the operator runs it."""
 
     process: subprocess.Popen
     master: int
@@ -573,7 +551,6 @@ class Terminal:
 CHILD_PROGRAM = """
 import functools, json, socket, sys, time
 from pathlib import Path
-from edge import cli
 from edge.external import cli as external_cli
 from edge.external import host_probe, tofu
 
@@ -644,13 +621,13 @@ if not config["real_ready_prober"]:
         external_cli.apply_command, prober_for=RecordingReadyProber
     )
 
-sys.exit(cli.main(sys.argv[1:]))
+sys.exit(external_cli.apply_command(Path.home()))
 """
 
 
 @pytest.fixture
 def terminal(home, fake_tofu, live_checkout, tmp_path):
-    """Start `command` on a pty with a minimal environment and no session bus.
+    """Start `apply` on a pty with a minimal environment and no session bus.
 
     The child never reaches a live service: its host check is a recording fake that returns
     `check_exit` (or the real one, `real_check`), its ready prober is a recording fake that
@@ -664,7 +641,6 @@ def terminal(home, fake_tofu, live_checkout, tmp_path):
 
     def start(
         *,
-        command="apply",
         stdin_is_terminal=True,
         stdout_is_terminal=True,
         tree=None,
@@ -697,7 +673,7 @@ def terminal(home, fake_tofu, live_checkout, tmp_path):
             )
         )
         process = subprocess.Popen(
-            [sys.executable, "-c", CHILD_PROGRAM, str(scratch / "child.json"), "external", command],
+            [sys.executable, "-c", CHILD_PROGRAM, str(scratch / "child.json")],
             stdin=slave if stdin_is_terminal else subprocess.DEVNULL,
             stdout=slave if stdout_is_terminal else subprocess.DEVNULL,
             stderr=slave,
@@ -729,7 +705,7 @@ def plan_files(home) -> list[Path]:
 
 def test_apply_without_a_terminal_exits_1_before_any_tofu_call(home, fake_tofu, capsys):
     """#45 rule 2: stdin or stdout that is no terminal refuses before tofu."""
-    assert cli.main(["external", "apply"]) == 1
+    assert external_cli.apply_command(home) == 1
     assert "terminal" in capsys.readouterr().err
     assert fake_tofu.calls() == []
 
@@ -767,9 +743,10 @@ def with_a_stray_tfvars(live_checkout, _tmp_path) -> Path:
     return live_checkout
 
 
-REFUSAL = "edge external apply: "
+REFUSAL = "cloudflare: "
 LIVE_ONLY = f"{REFUSAL}runs only from the live checkout ~/git/edge ("
 MAIN_ONLY = f"{REFUSAL}runs only on main ("
+APPLY_INTERRUPTED = f"{REFUSAL}interrupted during tofu apply, live services may be partly changed"
 
 
 @pytest.mark.parametrize(
@@ -818,7 +795,7 @@ def test_apply_with_a_failing_git_exits_2_saying_it_cannot_read_the_checkout(
     broken_git.chmod(0o755)
     apply = terminal()
     assert apply.finish() == 2
-    assert "edge external apply: cannot read the live checkout, " in apply.output
+    assert "cloudflare: cannot read the live checkout, " in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -874,12 +851,6 @@ def test_apply_without_a_terminal_from_a_wrong_tree_exits_1_first(
     assert "terminal" in capsys.readouterr().err
 
 
-def test_plan_runs_from_any_checkout(home, fake_tofu, live_checkout, tmp_path, monkeypatch):
-    """#124 rule 4, E8: plan asks nothing of the tree it runs from."""
-    monkeypatch.setattr(tofu, "PROJECT_ROOT", another_copy(live_checkout, tmp_path))
-    assert edge_external_plan() == 0
-
-
 INVALID_CATALOG = """\
 cloudflare: {zone: edge-fixture.invalid}
 services:
@@ -900,18 +871,6 @@ def without_tokens(home) -> None:
         (home / token_file).unlink()
 
 
-def test_plan_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
-    home, fake_tofu, live_checkout, monkeypatch, capsys
-):
-    """#131 P1: the pre-flight names the key; no token file is read and tofu never starts."""
-    commit_catalog(live_checkout, INVALID_CATALOG)
-    monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
-    without_tokens(home)
-    assert edge_external_plan() == 2
-    assert capsys.readouterr().err == f"edge external plan: {CATALOG_LINE}\n"
-    assert fake_tofu.calls() == []
-
-
 def test_apply_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
     home, fake_tofu, live_checkout, terminal
 ):
@@ -920,7 +879,7 @@ def test_apply_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
     without_tokens(home)
     apply = terminal()
     assert apply.finish() == 2
-    assert f"edge external apply: {CATALOG_LINE}" in apply.output
+    assert f"cloudflare: {CATALOG_LINE}" in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -930,7 +889,7 @@ def test_apply_without_a_terminal_refuses_before_the_catalog_is_read(
     """#131 P2: the terminal refusal still comes first."""
     commit_catalog(live_checkout, INVALID_CATALOG)
     monkeypatch.setattr(tofu, "PROJECT_ROOT", live_checkout)
-    assert cli.main(["external", "apply"]) == 1
+    assert external_cli.apply_command(home) == 1
     assert "terminal" in capsys.readouterr().err
 
 
@@ -940,7 +899,7 @@ def test_apply_without_a_terminal_exits_1_even_when_the_write_tokens_are_missing
     """#45 rule 2: the refusal comes before any token file is read."""
     for write_file in WRITE_TOKEN_FILES:
         (home / write_file).unlink()
-    assert cli.main(["external", "apply"]) == 1
+    assert external_cli.apply_command(home) == 1
     assert "terminal" in capsys.readouterr().err
     assert fake_tofu.calls() == []
 
@@ -958,7 +917,7 @@ def test_apply_with_only_one_of_stdin_and_stdout_a_terminal_exits_1_before_tofu(
     """#45 rule 2: stdin and stdout must both be terminals."""
     apply = terminal(**terminals)
     assert apply.finish() == 1
-    assert "must be a terminal" in apply.output
+    assert apply_line("refused, stdin and stdout must be a terminal") in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -1068,24 +1027,6 @@ def test_the_plan_file_is_deleted_on_every_path(
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
-def test_an_interrupt_during_plan_exits_2_names_the_step_and_shows_tofus_output(
-    home, fake_tofu, terminal, interrupt
-):
-    """#40 rule 4 / #45: an interrupted plan is `cannot plan` (2), never `changes pending` (1)."""
-    fake_tofu.configure(hang_in="plan")
-    plan = terminal(command="plan")
-    with fake_tofu.watch_hang() as wait_until_hanging:
-        wait_until_hanging()
-        plan.signal(interrupt)
-        assert plan.finish() == 2
-    assert fake_tofu.stopped_gracefully
-    assert fake_tofu.sigints_received == 1
-    assert "tofu stopped gracefully" in plan.output
-    assert "edge external plan: interrupted during the plan" in plan.output
-    assert "Traceback" not in plan.output
-
-
-@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
 def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
     home, fake_tofu, terminal, interrupt
 ):
@@ -1104,7 +1045,7 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
         assert apply.finish() == 1
     assert fake_tofu.stopped_gracefully
     assert "tofu stopped gracefully" in apply.output
-    assert "interrupted during tofu apply, live services may be partly changed" in apply.output
+    assert APPLY_INTERRUPTED in apply.output
     assert "run hal check hosts" in " ".join(apply.output.split())
     assert apply.checks() == []
 
@@ -1130,14 +1071,14 @@ def test_further_interrupts_while_tofu_drains_are_not_forwarded_to_it(home, fake
     assert fake_tofu.stopped_gracefully
 
 
-def test_a_second_plan_command_keeps_the_plan_file_of_an_apply_awaiting_confirmation(
+def test_a_second_non_terminal_apply_keeps_the_plan_file_of_an_apply_awaiting_confirmation(
     home, fake_tofu, terminal
 ):
     """#45 rule 4: only leftovers of killed runs are deleted, not a live run's plan."""
     fake_tofu.configure(plan=2)
     apply = terminal()
     apply.read_until(PROMPT)
-    edge_external_plan()
+    external_cli.apply_command(home)
     apply.type("yes\n")
     assert apply.finish() == 0
     assert fake_tofu.call("apply")["plan_file_existed"]
@@ -1156,7 +1097,7 @@ def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_e
     (fake_tofu.directory / "tofu").unlink()
     apply.type("yes\n")
     assert apply.finish() == 1
-    assert "tofu apply failed" in apply.output
+    assert apply_line("tofu apply failed") in apply.output
     assert "cannot plan" not in apply.output
     assert plan_files(home) == []
     assert len(apply.checks()) == 1
@@ -1171,21 +1112,13 @@ def leave_a_killed_run_behind(home) -> Path:
     return leftover
 
 
-def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_plan(home, fake_tofu, capsys):
-    """#45 rule 4: a plan file left by a killed run is removed and named at the next start."""
-    leftover = leave_a_killed_run_behind(home)
-    cli.main(["external", "plan"])
-    assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
-
-
 def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_apply(home, fake_tofu, terminal):
     """#45 rule 4: the same sweep runs at the start of apply, naming only the plan file."""
     leftover = leave_a_killed_run_behind(home)
     apply = terminal()
     assert apply.finish() == 0
     assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in apply.output
+    assert apply_line(f"removed the leftover plan file {leftover}") in apply.output
     assert ".lock" not in apply.output
 
 
@@ -1194,11 +1127,11 @@ def test_a_non_terminal_apply_still_deletes_and_names_a_leftover_before_refusing
 ):
     """#45 rule 4: the refusal comes after the sweep, so a killed run's plan is not kept."""
     leftover = leave_a_killed_run_behind(home)
-    assert cli.main(["external", "apply"]) == 1
+    assert external_cli.apply_command(home) == 1
     error = capsys.readouterr().err
     assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in error
-    assert "terminal" in error
+    assert apply_line(f"removed the leftover plan file {leftover}") in error
+    assert apply_line("refused, stdin and stdout must be a terminal") in error
     assert fake_tofu.calls() == []
 
 
@@ -1208,7 +1141,7 @@ def test_a_plan_file_whose_lock_is_gone_is_a_leftover(home, capsys):
     leftover.with_suffix(".lock").unlink()
     external_apply.remove_leftover_plans(home)
     assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
+    assert apply_line(f"removed the leftover plan file {leftover}") in capsys.readouterr().err
 
 
 def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(home):
@@ -1301,7 +1234,7 @@ def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_app
     outcome = external_apply.apply_plan(home, {}, plan_file_scope=interrupted_when_leaving)
     assert outcome.exit == 1
     error = capsys.readouterr().err
-    assert "interrupted during the cleanup" in error
+    assert apply_line("interrupted during the cleanup") in error
     assert ("live services may be partly changed" in error) is live_services_may_have_changed
     assert ("hal check hosts" in error) is live_services_may_have_changed
     assert outcome.closing is (
@@ -1351,13 +1284,6 @@ def test_a_failed_cleanup_after_a_good_apply_is_not_an_interrupt_because_one_was
         with pytest.raises(external_apply.StepFailed) as failure:
             external_apply.apply_plan(home, {}, plan_file_scope=failing_when_leaving)
     assert failure.value.closing is external_apply.ClosingCheck.CHECK_APPLIED
-
-
-def test_the_changes_pending_line_follows_the_plan_without_a_blank_line(home, fake_tofu, capsys):
-    """#34 finding 11 (c): the plan output ends in one newline, then the line."""
-    fake_tofu.configure(plan=2, echo_environment=True)
-    edge_external_plan()
-    assert "\n\n" not in capsys.readouterr().out
 
 
 HOSTS_CATALOG = """\
@@ -1626,13 +1552,6 @@ def test_an_interrupt_after_the_whole_document_is_written_keeps_the_verdict(
     assert "interrupted" not in printed.err
 
 
-def test_edge_external_has_no_check_verb(capsys):
-    with pytest.raises(SystemExit) as refused:
-        cli.main(["external", "check", "--hosts"])
-    assert refused.value.code == 2
-    assert "check" in capsys.readouterr().err
-
-
 @pytest.mark.parametrize(
     ("outcome", "problem"),
     [
@@ -1736,7 +1655,7 @@ def test_a_challenge_hides_nothing_on_the_protected_wildcard_however_it_is_sent(
     assert (exit_code, finding["problem"]) == (1, "answer-wrong")
 
 
-# #156: `edge external apply` ends on the host check.
+# #156: the publish phase of `hal apply` ends on the host check.
 REAL_CHECK_COMMAND = external_cli.check_command
 INTERRUPTED_CHECK = 130
 RUN_MANUALLY = "run hal check hosts"
@@ -1750,7 +1669,7 @@ def said(output: str) -> str:
 
 
 def apply_line(text: str) -> str:
-    return f"edge external apply: {text}"
+    return f"cloudflare: {text}"
 
 
 @pytest.mark.parametrize(
@@ -1813,7 +1732,7 @@ def test_apply_ends_on_the_host_check_and_maps_its_verdict_to_the_exit(
     assert ("apply" in commands) is (configuration is not EMPTY_PLAN)
     printed = said(apply.output)
     if line is None:
-        assert "edge external apply:" not in printed
+        assert f"{external_apply.SENDER}:" not in printed
     else:
         assert apply_line(line) in printed
     if configuration is EMPTY_PLAN:
@@ -2225,7 +2144,7 @@ def test_a_cleanup_failure_of_any_kind_after_an_interrupted_apply_still_reports_
     assert failure.value.step is external_apply.Step.CLEANUP
     assert failure.value.closing is external_apply.ClosingCheck.NO_CHECK_INTERRUPTED
     error = capsys.readouterr().err
-    assert "interrupted during tofu apply, live services may be partly changed" in error
+    assert APPLY_INTERRUPTED in error
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
@@ -2244,8 +2163,7 @@ def test_a_signal_while_the_interrupt_line_is_published_shows_it_exactly_once(
     monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
     reader = FakeReader(CLEAN_SNAPSHOT)
     assert apply_in_process(reader) == 1
-    line = "interrupted during tofu apply, live services may be partly changed"
-    assert stderr.getvalue().count(line) == 1
+    assert stderr.getvalue().count(APPLY_INTERRUPTED) == 1
     assert reader.tokens == []
 
 
@@ -2263,8 +2181,7 @@ def test_a_signal_as_the_interrupt_is_recorded_as_reported_shows_the_line_exactl
         external_apply.report_interrupt, "progress.reported = True", interrupt
     ):
         assert apply_in_process(reader) == 1
-    line = "interrupted during tofu apply, live services may be partly changed"
-    assert capsys.readouterr().err.count(line) == 1
+    assert capsys.readouterr().err.count(APPLY_INTERRUPTED) == 1
     assert reader.tokens == []
 
 
@@ -2511,7 +2428,7 @@ def assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, erro
     assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
     assert reader.reads == 0
     assert plan_files(home) == []
-    assert "nothing applied" in error
+    assert apply_line("refused, a ready host does not answer, nothing applied") in error
     assert "deleted" not in error
 
 
@@ -2563,7 +2480,7 @@ def test_only_the_host_that_does_not_answer_is_named_and_the_whole_plan_is_refus
     )
     error = capsys.readouterr().err
     assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error)
-    assert f"{DOCS} did not answer /ready" in error
+    assert apply_line(f"{DOCS} did not answer /ready") in error
     assert AUTH not in error
 
 
@@ -2665,10 +2582,9 @@ def test_a_signal_during_the_ready_probe_leaves_nothing_applied_and_no_plan_file
     apply.wait_until_probing()
     apply.signal(interrupt)
     assert apply.finish() == 1
-    assert (
+    assert apply_line(
         "interrupted during the readiness check, nothing was applied; the plan file is deleted"
-        in said(apply.output)
-    )
+    ) in said(apply.output)
     assert plan_files(home) == []
     assert PROMPT not in said(apply.output)
     assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
@@ -2783,7 +2699,7 @@ def test_a_plan_file_that_cannot_be_deleted_after_the_readiness_step_is_named_no
     error = said(capsys.readouterr().err)
     out_argument = next(a for a in fake_tofu.call("plan")["argv"] if a.startswith("-out="))
     assert code == 1
-    assert said_of_the_end in error
+    assert apply_line(said_of_the_end) in error
     assert apply_line("the cleanup failed,") in error
     assert "deleted" not in error
     assert reader.reads == 0

@@ -1,4 +1,4 @@
-"""`edge apply --closed` with the legal step (#435): the three pages built from the repository's own
+"""`hal apply --local` with the legal step (#435): the three pages built from the repository's own
 frame and sections on the scripted boundaries of `test_edge_apply`, in a real git repository (the
 Stand of a page is a commit date)."""
 
@@ -53,7 +53,7 @@ NEW_HEADING = b'<h2 id="neu">Neu</h2>\n<p>Text</p>\n'
 
 @dataclass
 class World:
-    """A tree with the legal unit enabled, and how to run `edge apply --closed` on it."""
+    """A tree with the legal unit enabled, and how to run `hal apply --local` on it."""
 
     repository: Path
     scripted: ScriptedCompose
@@ -376,7 +376,7 @@ def test_a_refused_section_stops_the_run_before_the_question_and_writes_nothing(
 
     assert exit_code == 2
     assert f"cannot plan, legal: {line}" in err
-    assert "apply exactly this plan" not in out
+    assert "Type yes" not in plain(out)
     assert world.built_names() == [".gitkeep"]
 
 
@@ -434,10 +434,11 @@ def test_a_write_that_fails_is_partial_and_switches_no_unit(world):
         world.built.chmod(0o700)
 
     assert exit_code == 1
-    assert (
-        "partial, legal: could not write legal/built/impressum.html (Permission denied); "
-        "no unit switched; run `edge apply --closed` again"
-    ) in err
+    assert err.splitlines() == [
+        "error: partial, legal: could not write legal/built/impressum.html (Permission denied); "
+        "no unit switched",
+        "next: hal apply",
+    ]
     assert world.scripted.changing_verbs() == []
 
 

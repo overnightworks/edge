@@ -1,6 +1,6 @@
 """The live checkout: `~/git/edge` on `main` is the tree the live stack runs from (P6).
 
-`edge apply` binds the compose project `edge` to the tree its code runs from, so it runs only
+`hal apply` binds the compose project `edge` to the tree its code runs from, so it runs only
 from the live checkout (#79 rule 1). Whether a tree is that checkout is read from paths alone,
 without git: it is `$HOME/git/edge` once both are resolved, and it is a main worktree, whose `.git`
 is a directory where a linked worktree has a `.git` file.
@@ -15,9 +15,9 @@ only the repository's own `.gitignore` (#98 rule 6).
 The one step that reaches beyond the machine is the fetch of origin's `main` (#98): it runs in the
 transfer profile, which keeps the global configuration for the operator's credential helper,
 refuses a URL that carries a password and never prompts. From the fetch on, the fetched sha is
-pinned: the comparison with HEAD and the waiting commits and files are all read against it. The
-fetch writes only objects, FETCH_HEAD and `origin/main`; HEAD, the index and the tree stay as
-they are. A credential is never printed: whatever stands before `@` in a URL is redacted.
+pinned: the comparison with HEAD is read against it. The fetch writes only objects, FETCH_HEAD and
+`origin/main`; HEAD, the index and the tree stay as they are. A credential is never printed:
+whatever stands before `@` in a URL is redacted.
 """
 
 import contextlib
@@ -35,6 +35,8 @@ from hal_output import printable
 
 LIVE_CHECKOUT = "~/git/edge"
 MAIN = "main"
+DIRTY_TREE = "the live checkout has local changes, nothing changed"
+PULL_REQUEST_ROUTE = "a change reaches it through a pull request and `git pull --ff-only`"
 _BRANCH_PREFIX = "refs/heads/"
 _ISOLATION = (
     "-c", "core.hooksPath=/dev/null",
@@ -47,7 +49,6 @@ _NEVER_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": "
 _ERROR_PREFIXES = ("fatal:", "error:")
 _URL_CREDENTIALS = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/\s]+@", re.IGNORECASE)
 _REDACTED = r"\1<redacted>@"
-_STATUS_LETTERS = frozenset("ADMT")
 _ORIGIN = "origin"
 ORIGIN_MAIN = f"refs/remotes/{_ORIGIN}/{MAIN}"  # origin's `main` as the last fetch left it
 
@@ -134,7 +135,6 @@ def git_environment(inherited: Mapping[str, str], profile: Profile) -> dict[str,
 class Origin:
     """origin's `main` as fetched, pinned by its full sha, against HEAD (#98 rules 1, 3)."""
 
-    url: str  # the effective fetch URL, credentials redacted
     sha: str
     short: str
     head: str  # HEAD's short sha
@@ -156,24 +156,8 @@ def standing_of(ahead: int, behind: int) -> Standing:
 
 
 @dataclass(frozen=True)
-class Commit:
-    short: str
-    subject: str  # escaped onto one line
-
-
-@dataclass(frozen=True)
-class ChangedFile:
-    status: str  # A, D, M or T, as `diff --name-status` says
-    path: str  # relative to the checkout, a byte that is no UTF-8 as `\\xNN`
-
-    @property
-    def shown(self) -> str:
-        return printable(self.path)
-
-
-@dataclass(frozen=True)
 class Git:
-    """The questions `edge apply` asks of a checkout; only the fetch writes, and only to `.git`."""
+    """The questions `hal apply` asks of a checkout; only the fetch writes, and only to `.git`."""
 
     tree: Path
     run: Runner = run_git
@@ -209,12 +193,6 @@ class Git:
         status = ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
         return _porcelain_paths(self.call(status).stdout)
 
-    def fetch_url(self) -> str:
-        """origin's effective fetch URL, rewritten as the global configuration says, credentials
-        redacted (#98 rule 1)."""
-        answer = self.call(["remote", "get-url", _ORIGIN], profile=Profile.TRANSFER)
-        return without_credentials(printable(_text(answer.stdout).strip()))
-
     def fetch_main(self) -> str:
         """Fetch origin's `main` through the operator's credential helper and pin it: the full sha
         FETCH_HEAD now names (#98 rule 1). Writes only objects, FETCH_HEAD and `origin/main`."""
@@ -230,26 +208,6 @@ class Git:
         if len(counts) != 2 or not all(count.isdigit() for count in counts):
             raise GitError(f"`git rev-list` answered '{printable(answer.strip())}'")
         return int(counts[0]), int(counts[1])
-
-    def waiting_commits(self, sha: str) -> list[Commit]:
-        """Every commit `sha` has that HEAD lacks, newest first, subjects escaped (#98 rule 4)."""
-        log = ["log", "--no-color", "--no-show-signature", "-z", "--format=%h%x00%s"]
-        fields = _nul_fields(self.call([*log, f"HEAD..{sha}"]).stdout, "log")
-        return [
-            Commit(_sha(_text(short), "log"), printable(_text(subject)))
-            for short, subject in zip(fields[::2], fields[1::2], strict=True)
-        ]
-
-    def waiting_files(self, sha: str) -> list[ChangedFile]:
-        """Every file that differs between HEAD and `sha`, with its status (#98 rule 4)."""
-        diff = ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "-z", "--name-status"]
-        fields = _nul_fields(self.call([*diff, "HEAD", sha]).stdout, "diff")
-        changed = []
-        for status, path in zip(fields[::2], fields[1::2], strict=True):
-            if _text(status) not in _STATUS_LETTERS:
-                raise GitError(f"`git diff` answered '{printable(_text(status))}'")
-            changed.append(ChangedFile(_text(status), _text(path)))
-        return changed
 
     def call(
         self,
@@ -274,10 +232,9 @@ class Git:
 
 def fetch_origin(git: Git) -> Origin:
     """origin's `main`, fetched and pinned, and how HEAD stands to it; raises GitError."""
-    url = git.fetch_url()
     sha = git.fetch_main()
     ahead, behind = git.divergence(sha)
-    return Origin(url, sha, git.short(sha), git.short(), ahead, behind)
+    return Origin(sha, git.short(sha), git.short(), ahead, behind)
 
 
 def without_credentials(text: str) -> str:
@@ -297,16 +254,6 @@ def _sha(answer: str, verb: str) -> str:
     if not answer or not all(digit in "0123456789abcdef" for digit in answer):
         raise GitError(f"`git {verb}` answered '{printable(answer)}'")
     return answer
-
-
-def _nul_fields(output: bytes, verb: str) -> list[bytes]:
-    """The fields of a `-z` answer that pairs each entry with one more field."""
-    if not output:
-        return []
-    fields = output.removesuffix(b"\0").split(b"\0")
-    if not output.endswith(b"\0") or len(fields) % 2:
-        raise GitError(f"`git {verb}` answered no NUL-separated pairs")
-    return fields
 
 
 def _text(output: bytes) -> str:
@@ -367,19 +314,24 @@ def not_on_main(git: Git) -> str | None:
     return None
 
 
-def not_clean_main(git: Git) -> list[str]:
-    """Why `git` is not a born `main` with nothing changed, as lines; none when it is (#95 rules
-    5, 6). A git that fails is a line too, so the caller refuses rather than guesses."""
+@dataclass(frozen=True)
+class Refusal:
+    """Why a checkout is not a born `main` with nothing changed; `paths` are the changed paths of
+    a dirty tree, in git's order."""
+
+    message: str
+    paths: tuple[str, ...] = ()
+
+
+def not_clean_main(git: Git) -> Refusal | None:
+    """Why `git` is not a born `main` with nothing changed; None when it is (#95 rules 5, 6). A
+    git that fails is a refusal too, so the caller refuses rather than guesses."""
     try:
         if reason := not_on_main(git):
-            return [f"runs only on {MAIN} ({reason})"]
+            return Refusal(f"runs only on {MAIN} ({reason})")
         changed = git.changed_paths()
     except GitError as error:
-        return [f"cannot read the live checkout, {error}"]
+        return Refusal(f"cannot read the live checkout, {error}")
     if not changed:
-        return []
-    return [
-        "the live checkout has local changes, nothing changed; a change reaches it through "
-        "a pull request and `git pull --ff-only`:",
-        *(f"  {path}" for path in changed),
-    ]
+        return None
+    return Refusal(DIRTY_TREE, tuple(changed))

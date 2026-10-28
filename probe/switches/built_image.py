@@ -160,8 +160,8 @@ class Drive:
         self.guard.expect(edge_copy.copy_compose_command(self.copy), once=False)
 
     def hal(self, typed: bytes = b"yes\n", exit_code: int = 0) -> str:
-        return edge_copy.run_edge(
-            self.copy, self.environment, "apply", "--closed",
+        return edge_copy.run_hal(
+            self.copy, self.environment, "apply", "--local",
             terminal=True, exit_code=exit_code, typed=typed,
         )  # fmt: skip
 

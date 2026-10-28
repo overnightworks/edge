@@ -3,7 +3,7 @@
 
 from enum import StrEnum
 
-from edge import checkout, core, switches
+from edge import checkout, core, environment, switches
 from edge.appkit_step import APPKIT_UNIT, TARGETS, AppkitPlan
 from edge.apps import AppKind, AppPlan, AppsPlan, OffPlan, SkippedNote, StaysStoppedNote
 from edge.built_image import ENDS_RUNS, BuiltRecreate
@@ -11,7 +11,7 @@ from edge.legal_step import BlockChange, LegalPlan, PageChange
 from edge.plan import Plan
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan
 from edge.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-from hal_output import Glyph, Group, Row, TrailingNoun
+from hal_output import Glyph, Group, Noun, Row, TrailingNoun, counted
 
 _SEPARATOR = " · "
 _DIGEST_SHOWN = 4
@@ -49,6 +49,22 @@ class CheckoutEvent(StrEnum):
     BEHIND = "behind"
 
 
+class GuardEvent(StrEnum):
+    """What a guard of the apply found or did before any plan."""
+
+    LOCAL_CHANGES = "local changes"
+    WRITTEN = "written"
+    STILL_RUNS = "still runs"
+
+
+class ChangeNoun(Noun):
+    CHANGE = "change"
+
+
+class FileNoun(Noun):
+    FILE = "file"
+
+
 class PlanGroup(StrEnum):
     CORE = "core"
     UNITS = "units"
@@ -70,6 +86,33 @@ def checkout_row(origin: checkout.Origin) -> Row:
     return Row(
         Glyph.DONE, CHECKOUT, CheckoutEvent.CURRENT, f"{origin.short} · origin/{checkout.MAIN}"
     )
+
+
+def local_changes_row(paths: tuple[str, ...]) -> Row:
+    """The live checkout refused for local changes, each changed path under it."""
+    return Row(
+        Glyph.FAILED, CHECKOUT, GuardEvent.LOCAL_CHANGES, counted(len(paths), FileNoun.FILE),
+        details=paths,
+    )  # fmt: skip
+
+
+def environment_row(written: environment.Settings) -> Row:
+    """The `.env` the guard wrote, with the values it derived."""
+    facts = _SEPARATOR.join(f"{key}={value}" for key, value in written.assignments)
+    return Row(Glyph.DONE, environment.ENVIRONMENT_FILE, GuardEvent.WRITTEN, facts)
+
+
+def still_runs_row(key: str, fact: str) -> Row:
+    """A unit or app that is switched off and whose containers still run."""
+    return Row(Glyph.FAILED, key, GuardEvent.STILL_RUNS, fact)
+
+
+_CHANGING_GLYPHS = frozenset({Glyph.ADD, Glyph.CHANGE, Glyph.REMOVE})
+
+
+def changes_in(plan: Plan) -> int:
+    """The number of printed `+ ~ -` rows: what the plan's yes counts."""
+    return sum(row.glyph in _CHANGING_GLYPHS for group in plan_groups(plan) for row in group.rows)
 
 
 def plan_groups(plan: Plan) -> tuple[Group, ...]:

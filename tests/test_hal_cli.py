@@ -25,6 +25,7 @@ from git_support import (
 
 from hal import backup_commands, check_commands, cli, legal_commands, stack_commands
 from hal.grammar import Asks, Command, ExitCode
+from hal_output.command import Verb
 
 LOCK = SOURCE.parent / "uv.lock"
 DEADLINE_SECONDS = 30
@@ -129,11 +130,11 @@ def test_a_command_without_json_refuses_the_flag(tmp_path, command):
 
 def test_a_command_that_declares_json_offers_the_flag():
     report = Command(
-        "report", "print a report", lambda arguments: ExitCode.OK, lambda p: None,
+        Verb.CHECK, "print a report", lambda arguments: ExitCode.OK, lambda p: None,
         json=True, asks=Asks.NEVER,
     )  # fmt: skip
 
-    parsed = cli.build_parser([report]).parse_args(["report", "--json"])
+    parsed = cli.build_parser([report]).parse_args(["check", "--json"])
 
     assert parsed.json is True
 
@@ -235,14 +236,28 @@ def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     their stdin cells run on fakes in test_hal_stack_commands. The backup commands would reach the
     real repository; their stdin cell runs on the fake host in test_edge_backup. `hal check` would
     run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal` needs a key;
-    its stdin cell runs with its own arguments in test_hal_legal."""
+    its stdin cell runs with its own arguments in test_hal_legal. `hal secrets` runs `--by-service`,
+    the one form that reads no home and starts no probe."""
     tree = main_checkout(tmp_path)
 
-    arguments = ("former", "current") if command.name == "rename" else ()
+    extra_arguments = {"rename": ("former", "current"), "secrets": ("--by-service",)}
+    arguments = extra_arguments.get(command.name, ())
 
     result = run_hal(tmp_path, hal_program(tree, before=FORBIDDEN_STDIN), command.name, *arguments)
 
     assert result.returncode == ExitCode.OK
+
+
+def test_hal_secrets_has_no_setup_option_and_names_its_own_help(tmp_path):
+    """The wizard has one door, `hal setup`; `hal secrets` only views."""
+    result = run_hal(tmp_path, hal_program(), "secrets", "--setup")
+
+    assert result.returncode == ExitCode.USAGE
+    assert result.stdout == ""
+    assert error_lines(result) == [
+        "error: unrecognized arguments: --setup",
+        "next: hal secrets --help",
+    ]
 
 
 def test_no_package_of_the_lock_is_named_hal():

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from edge import cli, switches, tunnel
+from edge import switches, tunnel
 
 TUNNEL_FILES = Path(__file__).resolve().parents[1] / "tunnel"
 BASE_UNIT = TUNNEL_FILES / tunnel.CLOUDFLARED_UNIT
@@ -44,7 +44,6 @@ EFFECTIVE_UNIT_WITHOUT_EXEC_START = frozenset(
         "PrivateTmp=yes",
     }
 )
-EDGE_SUBCOMMANDS = "{apply,stop,start,external}"
 
 
 def render(text: str, values: dict[str, str]) -> str:
@@ -137,10 +136,3 @@ def test_the_base_unit_and_20_are_todays_effective_unit_with_the_clean_exec_star
 def test_no_tunnel_file_asks_for_sudo(path):
     """#76 rule 4, cell 9: the files are content; installing them is home-tools#9's one sudo."""
     assert "sudo" not in path.read_text()
-
-
-def test_edge_gains_no_command_to_render_or_install_the_tunnel_files(capsys):
-    """#76 rule 4, cell 9: no `edge system render` or any other new command."""
-    with pytest.raises(SystemExit):
-        cli.main(["--help"])
-    assert EDGE_SUBCOMMANDS in capsys.readouterr().out

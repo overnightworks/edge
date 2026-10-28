@@ -23,6 +23,7 @@ from types import MappingProxyType
 from enum import StrEnum
 
 from hal_output import Glyph, Noun, Row, Verdict, printable, write_error, write_row, write_verdict
+from hal_output.command import Verb, command
 from home_tools import backup_check, exposure_check, hook_check, logs_check, mail, platform_check, secrets_view
 from home_tools.exposure_check import ExposureReader, ExposureRule
 from home_tools.logs_check import LOG_DIRECTORY
@@ -156,7 +157,7 @@ def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     total = sum(len(result.finding_identities) for result in results)
     failed = [result.name for result in results if result.error]
     failed_clause = f" | failed: {', '.join(failed)}" if failed else ""
-    header = f"# hal check {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
+    header = f"# {command(Verb.CHECK)} {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
 
@@ -224,9 +225,9 @@ def _container_report(sentence: str, problem: str, resolved: str) -> RuleReport:
 
 
 ACTION, NOTE = Level.ACTION, Level.NOTE
-HOME_NEXT = "Run `home next`."
-BACKUP_NOW = "Run `hal backup`."
-SETUP_APPLY = "Run `hal setup --apply`."
+SECRETS_VIEW = f"Run `{command(Verb.SECRETS)}`."
+BACKUP_NOW = f"Run `{command(Verb.BACKUP)}`."
+SETUP_APPLY = f"Run `{command(Verb.SETUP)}`."
 HOOK_BROKEN = RuleReport(
     ACTION, "The protection that checks every commit for secrets is not working.", SETUP_APPLY,
     resolved="The protection that checks every commit for secrets is working again.",
@@ -260,13 +261,13 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "quality"): HOOK_BROKEN,
     ("hook", "engines"): HOOK_BROKEN,
     ("hook", "hidden-hook"): RuleReport(NOTE, "A repo's own commit step is hidden.", area_note="a repo's own commit step is hidden"),
-    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", HOME_NEXT, resolved="A secret is no longer readable by others."),
-    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", HOME_NEXT, resolved="A secret no longer sits behind a link."),
+    ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", SECRETS_VIEW, resolved="A secret is no longer readable by others."),
+    ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", SECRETS_VIEW, resolved="A secret no longer sits behind a link."),
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
-        ACTION, "A retired key is not yet confirmed as revoked.", HOME_NEXT, resolved="A retired key is confirmed as revoked."
+        ACTION, "A retired key is not yet confirmed as revoked.", SECRETS_VIEW, resolved="A retired key is confirmed as revoked."
     ),
-    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "A login is no longer valid; what uses it fails.", HOME_NEXT, resolved="The check of a login reports no error any more."),
-    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "The backup password is missing; without it nothing can be restored.", HOME_NEXT, resolved="The backup password is no longer reported missing."),
+    ("secrets", FindingRule.VERIFICATION_FAILED.value): RuleReport(ACTION, "A login is no longer valid; what uses it fails.", SECRETS_VIEW, resolved="The check of a login reports no error any more."),
+    ("secrets", MISSING_PASSWORD_RULE): RuleReport(ACTION, "The backup password is missing; without it nothing can be restored.", SECRETS_VIEW, resolved="The backup password is no longer reported missing."),
     ("secrets", FindingRule.MISSING.value): RuleReport(NOTE, "Credentials{readers} are still missing."),
     ("secrets", FindingRule.NOT_A_FOLDER.value): SECRET_UNFIT_FOLDER,
     ("secrets", FindingRule.CLOSED_FOLDER.value): SECRET_UNFIT_FOLDER,
@@ -288,7 +289,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
         resolved="The routing name of {subject} can be used again.",
     ),
 }
-BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", "Run `hal check`.", resolved="The {area} check runs again.")
+BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", f"Run `{command(Verb.CHECK)}`.", resolved="The {area} check runs again.")
 # The areas in the order the mail names them, by the check that owns each.
 AREAS = (
     ("platform", "Services"),
@@ -505,7 +506,7 @@ def mail_body(current: frozenset[str], previous: frozenset[str] | None, report_f
         sections.append("Done\n\n" + "\n".join(gone))
     area_lines = "\n".join(_area_line(items, name, facts, now) for name, _ in AREAS)
     sections.append(f"How the PC stands ({now:%Y-%m-%d %H:%M})\n\n{area_lines}")
-    hint = "Notes are not urgent; home next shows what you can do.\n" if any(item.level is Level.NOTE for item in items) else ""
+    hint = "Notes are not urgent.\n" if any(item.level is Level.NOTE for item in items) else ""
     sections.append(f"{hint}Everything in detail: {report_file}")
     return "\n\n".join(sections) + "\n"
 

@@ -1,4 +1,4 @@
-"""`edge apply --closed` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
+"""`hal apply --local` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
 step after the units and the realm, on the scripted boundaries of `test_edge_apply` and the real
 origin and scripted Docker of `app_support`."""
 
@@ -31,6 +31,7 @@ from test_edge_apply import (
     at_terminal,  # noqa: F401 the fixture, requested by name below
     home,  # noqa: F401 the fixture, requested by name below
     ingress,  # noqa: F401 the fixture, requested by name below
+    missing_setup,  # noqa: F401 the fixture, requested by name below
     realm_backup,  # noqa: F401 the fixture, requested by name below
     repository,  # noqa: F401 the fixture, requested by name below
     scripted,  # noqa: F401 the fixture, requested by name below
@@ -39,8 +40,10 @@ from test_edge_apply import (
     setup_run,  # noqa: F401 the fixture, requested by name below
     state,  # noqa: F401 the fixture, requested by name below
     switch,  # noqa: F401 the fixture, requested by name below
+    switch_off,
     write_fleet,
 )
+from test_edge_plan_rows import plain
 
 from edge import apps, barrier, checkout, compose, emergency, switches
 
@@ -156,7 +159,7 @@ def test_an_app_is_planned_and_started_after_one_yes_and_the_next_apply_changes_
     assert exit_code == 0, err
     assert "switch on      " in out
     assert "v2026.10.22.1 · into ~/srv/hopin" in out
-    assert "edge apply --closed: hopin is on at v2026.10.22.1" in out
+    assert "\nhopin is on at v2026.10.22.1\n" in out
     again = app_world.apply()
     assert again[0] == 0
     assert "nothing to change" in again[1]
@@ -389,7 +392,7 @@ def test_hal_start_starts_the_stopped_containers_ends_the_switch_and_says_so(app
     exit_code, out, _ = hal.start()
 
     assert exit_code == 0
-    assert "edge start: hopin is on" in out
+    assert "hal start: hopin is on" in out
     assert switches.Switches(app_world.state).mark(KEY) is None
     assert {row["Health"] for row in app_world.docker.rows} == {"healthy"}
 
@@ -404,7 +407,7 @@ def test_hal_start_waits_for_health_only_where_a_container_has_a_healthcheck(app
     exit_code, out, _ = hal.start()
 
     assert exit_code == 0
-    assert "edge start: hopin is on" in out
+    assert "hal start: hopin is on" in out
     assert {row["Service"]: row["Health"] for row in app_world.docker.rows} == {
         "web": "healthy",
         "worker": "",
@@ -552,6 +555,12 @@ def test_a_stopped_app_with_a_newer_tag_waiting_stays_stopped_and_its_switch_sta
     assert checkout.Git(app_world.srv).call(mirrored).stdout == b""  # nothing fetched
 
 
+STILL_RUNNING = [
+    "error: switched off but still running, nothing switched",
+    "next: hal stop hopin",
+]
+
+
 @pytest.mark.parametrize("kept_off_by", ["marker", "barrier"])
 def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_world, kept_off_by):
     deployed(app_world)
@@ -566,12 +575,38 @@ def test_an_app_kept_off_whose_containers_still_run_refuses_the_whole_apply(app_
     exit_code, _, err = app_world.apply()
 
     assert exit_code == 1
-    assert (
-        "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
-    )
+    assert err.splitlines() == STILL_RUNNING
     assert app_world.docker.verbs == ["ps"]
     assert app_world.scripted.changing_verbs() == changes_before
     assert {row["State"] for row in app_world.docker.rows} == {"running"}
+
+
+def test_a_unit_and_an_app_kept_off_that_still_run_are_one_row_each_then_one_error(
+    app_world,
+    missing_setup,  # noqa: F811 the fixture, imported by name above
+    setup_run,  # noqa: F811 the fixture, imported by name above
+):
+    """E6: one failed row per switched-off unit or app that still runs, then the error pair."""
+    deployed(app_world)
+    with_a_setup = FLEET.replace("services:\n", ENABLED)
+    write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{with_a_setup}")
+    app_world.scripted.containers["step-ca"] = "running"
+    switch_off(app_world.state)
+    switches.Switches(app_world.state).record(KEY, NOW)
+    changes_before = app_world.scripted.changing_verbs()
+
+    exit_code, out, err = app_world.apply()
+
+    assert exit_code == 1
+    rows = [line for line in plain(out).splitlines() if "still runs" in line]
+    assert [row.split()[:2] for row in rows] == [["✗", "step-ca"], ["✗", KEY]]
+    assert missing_setup.line in rows[0]
+    assert err.splitlines() == [
+        "error: switched off but still running, nothing switched",
+        "next: hal stop step-ca",
+    ]
+    assert setup_run.commands == []
+    assert app_world.scripted.changing_verbs() == changes_before
 
 
 def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_replanned_apply(
@@ -583,7 +618,7 @@ def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_re
     deployed(app_world)
     with_a_setup = FLEET.replace("services:\n", ENABLED)
     write_fleet(app_world.repository, f"cloudflare:\n  zone: {ZONE}\n{with_a_setup}")
-    setup_check.exit_code, setup_check.line = 1, "step-ca/init --check: not set up"
+    setup_check.exit_code, setup_check.line = 1, "password is not done"
     setup_run.meanwhile = lambda: switches.Switches(app_world.state).record(KEY, NOW)
     changes_before = app_world.scripted.changing_verbs()
 
@@ -591,9 +626,7 @@ def test_an_app_switched_off_while_a_setup_runs_and_still_running_refuses_the_re
 
     assert exit_code == 1
     assert len(setup_run.commands) == 1
-    assert (
-        "hopin is switched off but still runs; nothing switched; run `edge stop hopin` again" in err
-    )
+    assert err.splitlines() == STILL_RUNNING
     assert "nothing to change" not in out
     assert "stays stopped" not in out
     assert app_world.scripted.changing_verbs() == changes_before
@@ -637,9 +670,7 @@ def test_a_stop_that_comes_in_while_apply_holds_the_lock_waits_for_it_then_stops
     assert app_world.runtime.health.clock() < apps.HEALTH_SECONDS  # the wait ended early
     assert exit_code == 1
     assert "hopin was switched off meanwhile (since 18.10. 08:00); not started" in err
-    assert "`edge start hopin` switches it back on" in err
-    assert "hal start" not in err
-    assert "`edge apply` again" not in err
+    assert err.splitlines()[-1] == "next: hal start hopin"
     assert not any(row["State"] == "running" for row in app_world.docker.rows)
     assert not (app_world.state / "deployed").exists()
     assert marks.mark(KEY) is not None

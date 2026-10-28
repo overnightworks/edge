@@ -393,7 +393,7 @@
 
 <section aria-labelledby="s-setup">
   <div class="head">
-    <h2 id="s-setup"><code>hal setup --apply</code>: das Passwort fragt dein System, nicht Ansible</h2>
+    <h2 id="s-setup"><code>hal setup</code>: das Passwort fragt dein System, nicht Ansible</h2>
     <p class="sub">Links dein Lauf von heute, rechts derselbe Lauf neu, einmal gut, einmal kaputt.</p>
   </div>
   <div class="pair">
@@ -431,7 +431,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <div class="stack">
       <figure>
         <figcaption><span class="tag new">neu</span> derselbe Rechner (sudo-rs), es läuft durch</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
@@ -443,12 +444,13 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu, kaputt</span> Docker antwortet nicht: hal merkt es vor dem Passwort</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
-<span class="r">  ✗</span> system          not started    <span class="d">Docker does not answer `docker info`</span>
+<span class="r">  ✗</span> system          failed         <span class="d">Docker does not answer `docker info`</span>
 <span class="d">  · secrets         not run</span>
-<span class="rw">error:</span> setup stopped at system · /etc unchanged
+<span class="rw">error:</span> setup stopped at system · /etc may be partial
 <span class="c">next:</span> systemctl status docker</pre>
       </figure>
     </div>
@@ -460,10 +462,78 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Docker-Neustart</b> wird nur angesagt, wenn er kommt: <code>docker info</code> zeigt den Log-Treiber ohne sudo. Dann steht vor dem Passwort <code>! docker  restarts  all containers stop · 2 stay down</code> (die zwei ohne Restart-Policy). Antwortet Docker gar nicht, endet der Schritt dort, ohne Passwort.</li>
     <li><b>Scheitert der Play selbst,</b> ist sein Grund der Fakt der roten Zeile. Die <code>fail_msg</code> im Playbook werden dafür kurz, ohne <code>; nothing was written</code>: was geschrieben wurde, sagt die <code>error:</code>-Zeile.</li>
     <li><b>Vier Zeilen statt acht Schritten:</b> quality, Engines, Hook-Dateien und Aktivierung sind für dich ein Ding, der Commit-Hook; Ansible gehört zu system. Scheitert einer, nennt die rote Zeile ihn.</li>
-    <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  not started  sudo refused</code> und <code>error:</code> mit <code>/etc unchanged</code>.</li>
+    <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  failed  sudo refused</code> und <code>error:</code> mit <code>/etc may be partial</code>.</li>
+  </ul>
+</section>
+<section aria-labelledby="s-yes">
+  <div class="head">
+    <h2 id="s-yes"><span class="tag new">neu für H5q</span> <code>hal setup</code>: Plan, yes, Lauf</h2>
+    <p class="sub">Kandidat zum Segnen (#633). Ein Befehl macht, was sein Name sagt, nach einem yes; <code>--dry-run</code> zeigt nur. Das System-Passwort fragt erst das yes ab: vor dem yes liest hal nichts mit sudo. Namen und Zeiten sind Beispielwerte.</p>
+  </div>
+  <div class="pair">
+    <div class="stack">
+      <figure id="f-setup-yes">
+        <figcaption><span class="tag new">neu H5q</span> am Terminal: Plan, yes, Lauf, Urteil</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="b">  ~</span> commit hook     will change
+<span class="d">  · timers          unchanged</span>
+<span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
+<span class="d">  · secrets         complete</span>
+Type <span class="w">yes</span> to set up 2 open rows: yes
+<span class="g">  ✓</span> commit hook     changed
+<span class="d">  · timers          unchanged</span>
+<span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
+<span class="sys">[sudo: authenticate] Passwort:</span>  <span class="n">← der Prompt deines sudo, erst nach dem yes</span>
+<span class="d">  · system          unchanged</span>
+<span class="d">  · secrets         complete</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+      </figure>
+      <figure id="f-setup-declined">
+        <figcaption><span class="tag fail">neu H5q, abgelehnt</span> alles außer genau <code>yes</code>, auch Enter und Ctrl-D</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="b">  ~</span> commit hook     will change
+<span class="d">  · timers          unchanged</span>
+<span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
+<span class="d">  · secrets         complete</span>
+Type <span class="w">yes</span> to set up 2 open rows: no
+<span class="rw">error:</span> aborted, nothing changed</pre>
+        <p class="was">Exit 1, kein <code>next:</code>: der Befehl steht schon da. Ctrl-C an der Frage: Exit 130, keine Zeile.</p>
+      </figure>
+    </div>
+    <div class="stack">
+      <figure id="f-setup-no-terminal">
+        <figcaption><span class="tag fail">neu H5q, kein Terminal</span> Pipe, Timer, Agent ohne Terminal: der Plan steht, das yes fehlt, nichts läuft</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span> <span class="d">&lt; /dev/null</span>
+<span class="b">  ~</span> commit hook     will change
+<span class="d">  · timers          unchanged</span>
+<span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
+<span class="d">  · secrets         complete</span>
+<span class="rw">error:</span> setup asks yes at a terminal · nothing changed
+<span class="c">next:</span> hal setup in your own terminal window</pre>
+        <p class="was">Exit 4. Es läuft auch kein Schritt, der kein sudo braucht; ohne offene Zeile gilt das Bild darunter, Exit 0.</p>
+      </figure>
+      <figure id="f-setup-up-to-date">
+        <figcaption><span class="tag new">neu H5q</span> nichts offen (Konto des Agenten): keine Frage, kein sudo</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="d">  · timers          skipped        the operator&#x27;s step</span>
+<span class="d">  · system          skipped        the operator&#x27;s step</span>
+<span class="d">  · secrets         skipped        the operator&#x27;s step</span>
+<span class="w">✓ setup up to date</span> <span class="d">· 1 unchanged, 3 skipped · 4s</span></pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Ein yes, ein sudo.</b> Der Plan liest nichts mit Root. Die Zeile <code>system</code> steht darin als <code>!</code> „nicht geprüft“ und zählt als offen; Ansibles Prüfung läuft erst nach dem yes, unter dem einen sudo des Laufs. Die Zahl im Satz ist die Zahl der offenen Zeilen (<code>~</code>, <code>+</code>, <code>-</code>, <code>!</code>).</li>
+    <li><b>Der echte Unterschied vorher:</b> <code>hal setup --dry-run</code> fragt ein sudo für Ansibles Prüfung (am Terminal) und zeigt die ganze Änderung, ohne zu fragen und ohne zu ändern; dort steht am Ende <code>run hal setup</code>.</li>
+    <li><b>Ohne Terminal:</b> der Plan druckt, <code>error:</code> mit <code>next:</code>, Exit 4. Ist nichts offen, gibt es weder Frage noch Fehler, Exit 0; das trifft nur das Konto des Agenten, dessen Schritte des Operators übersprungen sind. Das Konto des Agenten fragt dasselbe yes an seinem Terminal; es gibt keine Ausnahme.</li>
+    <li><b>Exit-Codes:</b> 0 fertig oder aktuell, 1 abgelehnt, 3 ein Schritt ist gescheitert (auch eine Prüfung des Plans, ohne Frage), 4 braucht ein Terminal. <code>--apply</code> gibt es nicht mehr: <code>error: unrecognized arguments: --apply</code>, Exit 2.</li>
+    <li><b>Der Preis von A:</b> am Terminal des Operators ist <code>system</code> vor dem yes immer <code>! not checked</code>, also offen. Jeder Lauf dort fragt einmal yes und einmal sudo, auch wenn sich nichts ändert; „nichts offen“ ohne Frage gibt es nur für das Konto des Agenten.</li>
+    <li><b>Das Urteil nach dem Lauf</b> bleibt das aus „Zeilenform“ unten; ein gescheiterter Schritt endet wie dort in <code>error:</code> und <code>next: hal setup</code>.</li>
   </ul>
 </section>
 
+<section aria-labelledby="s-s2">
   <div class="head">
     <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>
     <p class="sub">Kandidat zum Segnen (Plan <code>#296 S2</code>). Die Zeilen sind die, die S2a druckt. Das Zielbild oben bleibt das Ende von S2; dieser Abschnitt zeigt den Weg dorthin und die Fälle, die das Zielbild nicht zeigt. Alle Terminalzeilen Englisch, Namen erfunden.</p>
@@ -473,7 +543,8 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <div class="stack">
       <figure>
         <figcaption><span class="tag new">neu S2a</span> gut, so druckt S2c es, bevor S2d und S2f dazukommen</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="d">  · system          unchanged</span>
@@ -481,13 +552,18 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
       </figure>
       <figure>
-        <figcaption><span class="tag new">neu S2</span> Agent-Lauf: der Schritt des Operators bleibt aus (nur <code>timers</code> ist im Plan benannt, die übrigen Zeilen sind meine Annahme)</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+        <figcaption><span class="tag new">neu H5q</span> Agent-Lauf an seinem Terminal: dasselbe yes, die Schritte des Operators bleiben aus, kein sudo</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="b">  ~</span> commit hook     will change
+<span class="d">  · timers          skipped        the operator&#x27;s step</span>
+<span class="d">  · system          skipped        the operator&#x27;s step</span>
+<span class="d">  · secrets         skipped        the operator&#x27;s step</span>
+Type <span class="w">yes</span> to set up 1 open row: yes
 <span class="g">  ✓</span> commit hook     changed
 <span class="d">  · timers          skipped        the operator&#x27;s step</span>
 <span class="d">  · system          skipped        the operator&#x27;s step</span>
 <span class="d">  · secrets         skipped        the operator&#x27;s step</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 skipped · 47s</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 skipped · 4s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu S2</span> Geheimnis fehlt, vor dem Assistenten (Namen erfunden)</figcaption>
@@ -500,55 +576,47 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     </div>
     <div class="stack">
       <figure>
-        <figcaption><span class="tag new">neu S2, Vorschlag</span> Probelauf ohne <code>--apply</code>: nichts wird geändert</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+        <figcaption><span class="tag new">neu H5q</span> <code>--dry-run</code>: nur zeigen, nichts ändern, kein yes</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --dry-run</span>
 <span class="b">  ~</span> commit hook     will change
 <span class="y">  !</span> system          not checked    <span class="d">needs sudo at a terminal</span>
-<span class="b">~ setup plan</span> <span class="d">· 2 open, 2 unchanged · 3s · run hal setup --apply</span></pre>
+<span class="b">~ setup plan</span> <span class="d">· 2 open, 2 unchanged · 3s · run hal setup</span></pre>
       </figure>
       <figure>
-        <figcaption><span class="tag new">neu S2, Vorschlag</span> Probelauf, alles aktuell</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+        <figcaption><span class="tag new">neu S2, Vorschlag</span> <code>--dry-run</code>, alles aktuell</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup --dry-run</span>
 <span class="w">✓ setup up to date</span> <span class="d">· 4 unchanged · 21s</span></pre>
       </figure>
       <figure>
-        <figcaption><span class="tag fail">neu S2, kaputt</span> nicht gestartet: abgelehnt, bevor sich etwas geändert hat</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
-<span class="d">  · commit hook     unchanged</span>
-<span class="g">  ✓</span> timers          changed
-<span class="r">  ✗</span> system          not started    <span class="d">needs sudo in your own terminal window</span>
-<span class="d">  · secrets         not run</span>
-<span class="rw">error:</span> setup stopped at system · /etc unchanged
-<span class="c">next:</span> hal setup --apply</pre>
-      </figure>
-      <figure>
         <figcaption><span class="tag fail">neu S2, kaputt</span> gescheitert: Ansible lief und brach ab, sein Text steht darüber</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="n">… Plan, dann das yes</span>
 <span class="d">… Ansible: PLAY RECAP, fatal …</span>
 <span class="r">  ✗</span> system          failed         <span class="d">Ansible did not finish · its output above says why</span>
 <span class="d">  · secrets         not run</span>
 <span class="rw">error:</span> setup stopped at system · /etc may be partial
-<span class="c">next:</span> hal setup --apply</pre>
+<span class="c">next:</span> hal setup</pre>
       </figure>
     </div>
   </div>
   <ul class="why">
-    <li><b>Probelauf (Vorschlag des Kopfs):</b> <code>hal setup</code> ohne <code>--apply</code> ändert nichts. <code>~</code> heißt „würde sich ändern“, <code>!</code> heißt „nicht geprüft, du musst an ein Terminal“. Das Urteil zählt offene und unveränderte Zeilen und nennt den nächsten Befehl.</li>
-    <li><b>Nicht gestartet oder gescheitert:</b> „not started“ heißt vor jeder Änderung abgelehnt, <code>/etc unchanged</code>. „failed“ heißt, es lief und brach ab, <code>/etc may be partial</code>. <code>next:</code> ist der verschluckte Befehl oder <code>hal setup --apply</code>.</li>
+    <li><b>Probelauf (Vorschlag des Kopfs):</b> <code>hal setup --dry-run</code> ändert nichts und fragt nicht. <code>~</code> heißt „würde sich ändern“, <code>!</code> heißt „nicht geprüft, du musst an ein Terminal“. Das Urteil zählt offene und unveränderte Zeilen und nennt den nächsten Befehl.</li>
+    <li><b>Gescheitert:</b> „failed“ heißt, ein Schritt brach ab; in einem gescheiterten Plan oder bei <code>--dry-run</code> steht <code>/etc unchanged</code>, nach dem yes, im Lauf des System-Schritts (auch wenn Docker oder sudo ihn verweigert), <code>/etc may be partial</code>. Ohne Terminal kommt es nicht so weit, das zeigt „setup: Plan, yes, Lauf“. <code>next:</code> ist der verschluckte Befehl oder <code>hal setup</code>.</li>
     <li><b>Agent-Lauf:</b> der Schritt, der einen Menschen braucht, wird übersprungen und gezählt, nicht als Fehler gemeldet.</li>
   </ul>
 </section>
 
 <section aria-labelledby="s-s2g">
   <div class="head">
-    <h2 id="s-s2g"><span class="tag new">neu für S2g</span> der Secrets-Assistent in <code>hal setup --apply</code></h2>
+    <h2 id="s-s2g"><span class="tag new">neu für S2g</span> der Secrets-Assistent in <code>hal setup</code></h2>
     <p class="sub">Gesegnet 27.10.2026, eingefroren mit S2g1a. Heute druckt der Assistent rund 60 deutsche Rohzeilen an hal_output vorbei. Hier jeder Fall, den er kennt, in der Zeilenform. Die Cloudflare-Figur unter „Alle anderen Befehle“ ist mit angepasst. Namen erfunden.</p>
   </div>
   <div class="pair">
     <div class="stack">
       <figure>
         <figcaption><span class="tag new">neu S2g</span> GitHub: der Link füllt vor, du prüfst nur; ein Passwort wird erzeugt</figcaption>
-<pre class="term"><span class="p">$</span> <span class="u">hal setup --apply</span>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="n">… Plan, dann das yes</span>
 <span class="d">  …</span>
 <span class="y">  !</span> secrets         2 missing      <span class="d">github/fleet-admin, opentofu/passphrase</span>
 <span class="c">  ›</span> github/fleet-admin  new token  <span class="d">the link fills name, owner, expiry and rights</span>
@@ -575,7 +643,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <span class="d">  · cloudflare/fleet-write  skipped    nothing stored</span>
 <span class="y">  !</span> secrets         1 open         <span class="d">cloudflare/fleet-write</span>
 <span class="rw">error:</span> setup stopped at secrets · 1 secret still open
-<span class="c">next:</span> hal setup --apply</pre>
+<span class="c">next:</span> hal setup</pre>
         <p class="was">heute: <code>abgelehnt: Cloudflare antwortet 403; nichts gespeichert. Noch einmal einfügen oder leer lassen.</code></p>
       </figure>
       <figure>
@@ -607,18 +675,18 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
         <figcaption><span class="tag fail">neu S2g, kaputt</span> Ctrl-C beim Einfügen</figcaption>
 <pre class="term">    paste the token (hidden, empty skips): ^C
 <span class="rw">error:</span> interrupted at cloudflare/fleet-write · no file half written
-<span class="c">next:</span> hal setup --apply</pre>
+<span class="c">next:</span> hal setup</pre>
         <p class="was">heute: <code>abgebrochen; keine Datei halb geschrieben. Weiter mit: hal setup --apply</code></p>
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu S2g, kaputt</span> das Terminal kann die Eingabe nicht verbergen</figcaption>
 <pre class="term"><span class="rw">error:</span> this terminal cannot hide what you type · nothing read
-<span class="c">next:</span> hal setup --apply in another terminal window</pre>
+<span class="c">next:</span> hal setup in another terminal window</pre>
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu S2g, kaputt</span> unerwarteter Fehler mitten im Eintrag</figcaption>
 <pre class="term"><span class="rw">error:</span> stopped at github/read · unexpected OSError · github/read is not stored
-<span class="c">next:</span> hal setup --apply</pre>
+<span class="c">next:</span> hal setup</pre>
         <p class="was">heute: <code>abgebrochen bei github/read: unerwarteter Fehler (OSError); für github/read nichts gespeichert. Weiter mit: hal setup --apply</code></p>
       </figure>
     </div>
@@ -629,7 +697,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Ein Warum vor der Eingabe:</b> <code>why:</code> ist der Zweck aus dem Manifest. Er wird Englisch, wie jede Terminalzeile. Bei GitHub wird er auch die Beschreibung des Tokens.</li>
     <li><b>Enter, dann Browser:</b> du liest die Liste, bevor der Browser das Terminal verdeckt. Die Cloudflare-Figur unten ist darauf angepasst.</li>
     <li><b>Das Ende sagt <code>setup</code>:</b> der Assistent druckt kein eigenes „noch offen“ und kein eigenes <code>next:</code> mehr. Die <code>secrets</code>-Zeile und das Urteil von <code>hal setup</code> sagen es. Ist alles gespeichert, zeigt <code>next: hal apply</code> den Plan statt des alten Plan-Befehls.</li>
-    <li><b>Nicht in diesem Bild:</b> der Bericht des Geheimnis-Befehls ohne <code>--setup</code>, mit seinem Hilfetext. Er kommt, wenn er einen <code>hal</code>-Befehl bekommt.</li>
+    <li><b>Nicht in diesem Bild:</b> der Bericht von <code>hal secrets</code>, der nur zeigt und keinen Assistenten startet; der Assistent hat eine einzige Tür, <code>hal setup</code>.</li>
   </ul>
 </section>
 
@@ -787,11 +855,12 @@ Type <span class="w">yes</span> to apply 8 changes: yes
   <ul class="why">
     <li><b>Kein <code>edge apply --closed:</code> vor jeder Zeile.</b> Du hast <code>hal apply</code> getippt; die Zeilen brauchen keinen Absender.</li>
     <li><b>Nach Kategorie gruppiert, darin in der Reihenfolge, in der hal arbeitet:</b> erst appkit und die Rechtsseiten, dann core, die Einheiten mit dem Realm, die Apps, zuletzt Cloudflare. So steht das Ergebnis Zeile für Zeile wie der Plan. Die Plan-Zeichen <code>+ ~ -</code> kennst du von tofu.</li>
-    <li><b>Was der Plan schon weiß, steht im Plan.</b> Keycloak antwortet nicht: heute erfährst du das erst nach dem yes als „partial“, neu steht es gelb vor dem yes.</li>
+    <li><b>Was der Plan schon weiß, steht im Plan.</b> Keycloak antwortet nicht: heute erfährst du das erst nach dem yes als „partial“, neu steht es gelb vor dem yes; ist es die einzige Änderung, fragt hal gar nicht und endet mit <code>error:</code> und <code>next: hal apply</code>.</li>
     <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
     <li><b>Rechtsseiten:</b> eine Zeile je Art; die Abschnitte geänderter Seiten stehen eingerückt darunter, die einer neuen zeigt <code>-v</code>.</li>
     <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>; die Zeile wird einmal gleich nach dem Abruf gedruckt, auch wenn der Plan danach scheitert.</li>
     <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; „the plan“ und die Ergebniszeilen bleiben Text.</li>
+    <li><b>Das yes zählt die gedruckten <code>+ ~ -</code>-Zeilen</b> (gebaut mit #620): <code>Type yes to apply 8 changes:</code>; nur das genaue <code>yes</code> gilt, bei Setup, start, online und extern fragt derselbe Besitzer. Jede Weigerung endet in einer <code>error:</code>-Zeile mit <code>next:</code>, wo ein Befehl hilft; „nothing to change“ endet im ✓-Urteil mit der Laufzeit, ohne cloudflare, bis A5-3 es dazunimmt. Die Zeilen nach dem yes behalten ihre Worte, ohne Absender, bis A5-2 und A5-3.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
   </ul>
 </section>
@@ -922,7 +991,7 @@ Type <span class="w">yes</span> to reopen the tunnel: yes
       <p class="was">heute: 272 mal <code>listener-beyond-loopback  python3  udp  *  32985</code>, je ein Port</p>
     </figure>
     <figure>
-      <figcaption><span class="tag new">neu</span> ein fehlendes Geheimnis in <code>hal setup --apply</code> <span class="tag new">angepasst für S2g</span></figcaption>
+      <figcaption><span class="tag new">neu</span> ein fehlendes Geheimnis in <code>hal setup</code> <span class="tag new">angepasst für S2g</span></figcaption>
 <pre class="term"><span class="y">  !</span> secrets         1 missing      <span class="d">cloudflare/fleet-write</span>
 <span class="c">  ›</span> cloudflare/fleet-write  new token  <span class="d">tick each box in the browser</span>
     why: edge's tunnel and DNS writes need it
@@ -954,7 +1023,7 @@ hal c280a80 <span class="d">· main · clean · up to date with origin/main</spa
       <p class="was">heute: <code>hal version</code> vier Zeilen <code>commit: c280a80</code>, <code>branch: main</code>, …</p>
     </figure>
     <figure>
-      <figcaption><span class="tag new">neu</span> <code>hal rename</code> zeigt erst, und Ctrl-C mitten im Apply</figcaption>
+      <figcaption><span class="tag new">neu H5q-2</span> <code>hal rename</code>: Plan, yes, fertig, und Ctrl-C mitten im Apply</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal rename songmaker-web songmaker</span>
 <span class="b">  ~</span> clone           move           <span class="d">~/git/songmaker-web → ~/git/songmaker</span>
 <span class="b">  ~</span> worktrees       move           <span class="d">~/git/songmaker-web-worktrees → ~/git/songmaker-worktrees</span>
@@ -963,15 +1032,25 @@ hal c280a80 <span class="d">· main · clean · up to date with origin/main</spa
 <span class="b">  ~</span> memory          move           <span class="d">Claude project memory of the clone</span>
 <span class="b">  ~</span> origin          set url        <span class="d">https://github.com/overnightworks/songmaker.git · deploy checkout ~/songmaker-live</span>
 <span class="b">  ~</span> venv            uv sync        <span class="d">in ~/git/songmaker</span>
-<span class="w">· plan only, nothing changed</span>
-<span class="c">next:</span> hal rename songmaker-web songmaker --apply
+Type <span class="w">yes</span> to apply 7 changes: yes
+<span class="g">  ✓</span> clone           moved          <span class="d">~/git/songmaker</span>
+<span class="g">  ✓</span> worktrees       moved          <span class="d">~/git/songmaker-worktrees</span>
+<span class="g">  ✓</span> origin          url set        <span class="d">git@github.com:overnightworks/songmaker.git</span>
+<span class="g">  ✓</span> worktrees       repaired       <span class="d">3 in ~/git/songmaker-worktrees</span>
+<span class="g">  ✓</span> memory          moved          <span class="d">Claude project memory of the clone</span>
+<span class="g">  ✓</span> origin          url set        <span class="d">https://github.com/overnightworks/songmaker.git · deploy checkout ~/songmaker-live</span>
+<span class="g">  ✓</span> venv            synced         <span class="d">in ~/git/songmaker · 14s</span>
+<span class="w">✓ rename done</span> <span class="d">· 7 changed · 19s</span>
+
+<span class="p">$</span> <span class="u">hal rename songmaker-web songmaker --dry-run</span>   <span class="n">… dieselben Zeilen, kein yes</span>
+<span class="w">· plan only, nothing changed</span> <span class="d">· run hal rename songmaker-web songmaker</span>
 
 <span class="p">$</span> <span class="u">hal apply</span>   <span class="n">… nach dem yes</span>
 <span class="live">  <span class="spin"></span> traefik         recreate · 4s</span>
 ^C
 <span class="rw">error:</span> interrupted while recreating traefik · its state may be partial
 <span class="c">next:</span> hal apply</pre>
-      <p class="was">Angepasst an den Lauf: die Zeilen stehen in der Reihenfolge, in der die Schritte laufen (Umzüge, origin, repair, Memory, origin des Deploy-Checkouts, uv sync), zusätzlich worktrees move, Deploy-Checkout und uv sync; die Anzahl von repair steht im Fakt; die URL steht so, wie git sie speichert, nicht gekürzt wie im ersten Bild.</p>
+      <p class="was">Das yes zählt die gedruckten <code>~</code>-Zeilen (7), ein <code>!</code> zählt nicht. Angepasst an den Lauf: die Zeilen stehen in der Reihenfolge, in der die Schritte laufen (Umzüge, origin, repair, Memory, origin des Deploy-Checkouts, uv sync), zusätzlich worktrees move, Deploy-Checkout und uv sync; die Anzahl von repair steht im Fakt; die URL steht so, wie git sie speichert, nicht gekürzt wie im ersten Bild.</p>
       <p class="was">heute: <code>edge apply --closed: interrupted while changing traefik (recreate traefik); its state may be partial, run `edge apply --closed` to see</code></p>
     </figure>
   </div>

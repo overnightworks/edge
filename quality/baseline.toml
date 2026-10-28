@@ -9,14 +9,14 @@
 [file_lines]
 "probe/keycloak/probe.py" = 2829
 "probe/step-ca/probe.py" = 1052
-"src/home_tools/secrets_view.py" = 855
-"tests/home/test_secrets_view.py" = 1088
-"tests/test_edge_apply.py" = 4504
+"src/home_tools/secrets_view.py" = 841
+"tests/home/test_secrets_view.py" = 1085
+"tests/test_edge_apply.py" = 4486
 "tests/test_edge_backup.py" = 1232
 "tests/test_edge_cloudflare_read.py" = 906
-"tests/test_edge_external.py" = 2792
+"tests/test_edge_external.py" = 2708
 "tests/test_edge_host_check.py" = 817
-"tests/test_keycloak_go_live.py" = 1737
+"tests/test_keycloak_go_live.py" = 1729
 "tests/test_keycloak_probe.py" = 1038
 "tests/test_realm_reconcile.py" = 999
 
@@ -34,7 +34,7 @@
 "hallucinai" = 96
 
 [function_lines."tests/test_edge_external.py"]
-"terminal" = 72
+"terminal" = 71
 
 [clones."probe/agent-service/egress.py"]
 "Client.main" = [["probe/agent-service/unit.py", "Inside.main"]]
@@ -45,9 +45,6 @@ write_dummy_token = [["probe/agent-service/image.py", "write_dummy_token"]]
 
 [clones."probe/keycloak/probe.py"]
 claims = [["probe/keycloak/test_rp.py", "token_claims"]]
-
-[clones."src/home_tools/secrets_setup.py"]
-register = [["src/home_tools/setup.py", "register"]]
 
 [clones."tests/test_agent_service_setup.py"]
 setup_module = [["tests/test_keycloak_go_live.py", "golive"]]

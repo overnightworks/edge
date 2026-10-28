@@ -32,13 +32,6 @@ its container's label, and what is done with a changed one depends on its unit, 
 and passes in as a gate: while the unit is on, a follower with a container is recreated on its own
 and one without starts with its unit; while the unit is off or switched off it is only named and
 nothing starts. A follower whose profile is no catalog unit is not planned at all.
-
-What a change to a checkout path does once the checkout is updated is read from the same binds
-(#98 rule 4): a directory the core or a planned follower binds is live through Traefik's watch, a
-file they bind is recreated by edge apply, and any bind of another service, a follower whose
-profile is no catalog unit included, is not applied by edge apply (block 6); the realm files
-`keycloak/realm.yaml` and `keycloak/master.yaml` alone are applied by its realm step (#242),
-`keycloak/entrypoint.sh` stays not applied.
 """
 
 import hashlib
@@ -157,38 +150,6 @@ def follows(config: Mapping[str, Any], service: str, checkout: Path) -> bool:
 def file_binds(service: Mapping[str, Any], checkout: Path) -> tuple[Path, ...]:
     """The bind sources of a resolved service that lie in the checkout and are no directory."""
     return tuple(source for source in _checkout_sources(service, checkout) if not _is_dir(source))
-
-
-@dataclass(frozen=True)
-class CheckoutBinds:
-    """The checkout paths the resolved configuration binds, relative to the checkout, by what
-    edge apply does once one of them changes (#98 rule 4)."""
-
-    live: frozenset[str]  # the core's and the planned followers' directory binds: Traefik watches
-    recreated: frozenset[str]  # the core's and the planned followers' file binds
-    units: frozenset[str]  # every bind of any other service, a follower with no unit included
-
-
-def checkout_binds(
-    config: Mapping[str, Any], checkout: Path, catalog_units: Collection[str]
-) -> CheckoutBinds:
-    applied = {*core_services(config), *follower_units(config, catalog_units)}
-    live, recreated, units = set(), set(), set()
-    for name, service in config["services"].items():
-        for source in _checkout_sources(service, checkout):
-            path = source.relative_to(checkout).as_posix()
-            if name not in applied:
-                units.add(path)
-            elif _is_dir(source):
-                live.add(path)
-            else:
-                recreated.add(path)
-    return CheckoutBinds(frozenset(live), frozenset(recreated), frozenset(units))
-
-
-def is_bound(path: str, binds: Collection[str]) -> bool:
-    """Whether the checkout path is bound by a bind of itself or of a directory it lies in."""
-    return any(bind in (".", path) or path.startswith(f"{bind}/") for bind in binds)
 
 
 def _checkout_sources(service: Mapping[str, Any], checkout: Path) -> tuple[Path, ...]:

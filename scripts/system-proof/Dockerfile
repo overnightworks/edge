@@ -1,4 +1,4 @@
-# A throwaway Ubuntu 26.04 with systemd as PID 1, dbus and polkitd, for the container proof of `home setup`'s
+# A throwaway Ubuntu 26.04 with systemd as PID 1, dbus and polkitd, for the container proof of `hal setup`'s
 # system step (#40). cloudflared comes from Cloudflare's apt repository; its config names a fake tunnel id, and
 # the credential beside it is a dummy that only lets the unit try to start. No real secret is ever in here.
 # python3 and python3-apt supply Ansible's interpreter and apt module binding in this fixture.

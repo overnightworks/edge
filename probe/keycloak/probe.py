@@ -579,7 +579,7 @@ class Stack:
         return result
 
     def observe(self, digest_key: str, *, keep_as: str = "") -> subprocess.CompletedProcess[str]:
-        """One observe as `edge apply` runs it; `keep_as` names and keeps the container, so its
+        """One observe as `hal apply` runs it; `keep_as` names and keeps the container, so its
         Config.Env and hardening can be inspected, instead of `--rm`."""
         options = ["--name", keep_as] if keep_as else ["--rm"]
         return self.compose("run", "-T", *options, OBSERVER_SERVICE, stdin=digest_key + "\n")
@@ -2402,7 +2402,7 @@ class Probe:
         return stand
 
     def the_realm_step(self, stand: RealmStepStand) -> None:
-        """Proof 12 (#242): the realm step of `edge apply` against this stack, with hal
+        """Proof 12 (#242): the realm step of `hal apply` against this stack, with hal
         under a scratch HOME and its own apps.toml. The same Keycloak, its database and its
         config-cli answer; only the repository, the HOME and the project are the probe's."""
         expect(stand.hal("backup", "--init").returncode == 0, "hal backup --init failed")

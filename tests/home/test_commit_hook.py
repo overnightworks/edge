@@ -10,9 +10,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import FAKE_KEY, Sandbox
+from conftest import FAKE_KEY, Sandbox, run_hal_setup
 
-from home_tools.cli import main
+from hal.grammar import ExitCode
 from home_tools.setup import HOOK_NAMES
 
 REFUSAL_LINE = "quality: secret.txt fake-key sha256=0000"
@@ -36,7 +36,7 @@ def write_repository_hook(repo: Path, body: str, name: str = "pre-commit") -> Pa
 
 @pytest.fixture
 def hooked(sandbox: Sandbox) -> Sandbox:
-    assert main(["setup", "--apply"], home=sandbox.home) == 0
+    assert run_hal_setup(home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries) == ExitCode.OK
     return sandbox
 
 
@@ -219,7 +219,7 @@ def test_missing_quality_gives_exit_2_and_the_setup_hint(repo: Path, hooked: San
     refused = git(repo, "commit", "-m", "x")
 
     assert checked.returncode == 2
-    missing_line = f"pre-commit: quality fehlt ({hooked.layout.quality_executable}), Commit gesperrt. Einrichten: hal setup --apply"
+    missing_line = f"pre-commit: quality fehlt ({hooked.layout.quality_executable}), Commit gesperrt. Einrichten: hal setup"
     assert missing_line in refused.stderr
     assert refused.returncode != 0
     assert head(repo) == before

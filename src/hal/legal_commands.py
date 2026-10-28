@@ -10,6 +10,7 @@ from edge import compose, legal_step
 from edge.legal_section import LegalError
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import Glyph, Row, write_error, write_row
+from hal_output.command import Verb, command
 
 
 class LegalEvent(StrEnum):
@@ -53,8 +54,9 @@ def _legal(arguments: argparse.Namespace) -> ExitCode:
 
 COMMANDS = (
     Command(
-        "legal",
-        "check an app's legal files the way `hal apply` would, before the app is tagged",
+        Verb.LEGAL,
+        f"check an app's legal files the way `{command(Verb.APPLY)}` would, "
+        "before the app is tagged",
         _legal,
         _configure,
         json=False,

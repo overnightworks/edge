@@ -1,4 +1,4 @@
-"""The legal step of `edge apply --closed`: the three pages built from `legal/frame` and
+"""The legal step of `hal apply --local`: the three pages built from `legal/frame` and
 `legal/sections`, compared with `legal/built`, and written there after the operator's `yes`.
 
 The step runs only while `services.legal` is in the catalog and enabled. Every refusal comes at
@@ -193,7 +193,7 @@ def app_blocks(directory: Path, key: str, zone: str, written: date) -> list[Bloc
 
 def check_app(repository: Path, key: str, directory: Path, today: date) -> tuple[str, ...]:
     """Builds the pages with the app's files in place of the checkout's own block for `key`;
-    returns the files that were valid, and raises LegalError for what `edge apply` would refuse."""
+    returns the files that were valid, and raises LegalError for what `hal apply` would refuse."""
     zone = catalog.zone(catalog.read(repository / catalog.FLEET_FILE))
     others = _catalog_keys(repository) - {key}
     blocks = read_blocks(repository, others, lambda _path: today)

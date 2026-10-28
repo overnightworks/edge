@@ -1,4 +1,4 @@
-"""`edge stop <unit>` and `edge start <unit>`: the emergency switch of one unit; with `--all`, of
+"""`hal stop <unit>` and `hal start <unit>`: the emergency switch of one unit; with `--all`, of
 the tunnel (`stop_all`, `start_all`).
 
 Stop records the switch, then stops the unit's services; it needs no terminal, so an agent may
@@ -21,7 +21,6 @@ from pathlib import Path
 
 from edge import (
     app_compose,
-    apply,
     apps,
     barrier,
     catalog,
@@ -35,9 +34,11 @@ from edge import (
 )
 from edge.apply import ApplyExit
 from edge.switch_events import BarrierPart, CannotPlan, Closing, Interruption, StopPart
+from hal_output import confirmed
+from hal_output.command import Verb, command
 
-STOP = "edge stop"
-START = "edge start"
+STOP = command(Verb.STOP)
+START = command(Verb.START)
 ABORTED_UNCHANGED = "aborted, nothing changed"
 
 
@@ -341,7 +342,8 @@ def start_unit(
     if not target.enabled:
         _complain(
             START,
-            f"refused, {key} is disabled in the catalog; enable it by PR and `{apply.COMMAND}`",
+            f"refused, {key} is disabled in the catalog; enable it by PR and "
+            f"`{command(Verb.APPLY)}`",
         )
         return ApplyExit.REFUSED
     if not barrier.switched_off(read, target.ingress):
@@ -359,7 +361,7 @@ def start_unit(
         return ApplyExit.REFUSED
     services = fleet.profile_services[key]
     _say(START, f"{key}: start services {', '.join(services)}; {_ending(read)}")
-    if not terminal.confirmed(f"start {key}"):
+    if not confirmed(f"start {key}"):
         _complain(START, ABORTED_UNCHANGED)
         return ApplyExit.REFUSED
     return _open(engine, marks, target.ingress, key, services, read, fleet.config, watch)
@@ -387,7 +389,7 @@ def _start_app(
     marker cleared; a stop that came in wins and stops the containers again, under the lock."""
     key = target.key
     _say(START, f"{key}: start its containers; {_ending(read)}")
-    if not terminal.confirmed(f"start {key}"):
+    if not confirmed(f"start {key}"):
         _complain(START, ABORTED_UNCHANGED)
         return ApplyExit.REFUSED
 
@@ -458,7 +460,7 @@ def _end_app_switch(
     if existed:
         _say(START, f"{key} is on")
     else:
-        _say(START, f"{key}: no container of it exists; `{apply.COMMAND}` starts it")
+        _say(START, f"{key}: no container of it exists; `{command(Verb.APPLY)}` starts it")
     return ApplyExit.APPLIED_OR_NOTHING
 
 
@@ -536,8 +538,8 @@ def _open(
     return ApplyExit.APPLIED_OR_NOTHING
 
 
-STOP_ALL = f"{STOP} --all"
-START_ALL = f"{START} --all"
+STOP_ALL = command(Verb.OFFLINE)
+START_ALL = command(Verb.ONLINE)
 
 
 def _record_global(
@@ -639,7 +641,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
         _complain(
             STOP_ALL,
             "incomplete: a reboot would reopen the tunnel (the boot drop-in is not installed "
-            "yet; `hal setup --apply` installs it)",
+            f"yet; `{command(Verb.SETUP)}` installs it)",
         )
         return ApplyExit.REFUSED
     _say(
@@ -746,7 +748,7 @@ def start_all(
         _complain(START_ALL, unproven)
         return ApplyExit.REFUSED
     _say(START_ALL, "host check not built yet (#50 SW3)")
-    if not terminal.confirmed("reopen the tunnel"):
+    if not confirmed("reopen the tunnel"):
         _complain(START_ALL, ABORTED_UNCHANGED)
         return ApplyExit.REFUSED
     return _reopen(marks, now, door, read)
