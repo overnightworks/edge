@@ -47,10 +47,10 @@ WILDCARD_CHARACTERS = frozenset("*?[")
 LOOSEST_FILE_MODE = 0o600
 LOOSEST_DECLARABLE_FILE_MODE = 0o644  # a container user reads the file; the 0700 folder keeps everyone else out
 LOOSEST_DIRECTORY_MODE = 0o700
-EXPIRY_UNKNOWN = "Ablauf unbekannt"
-REVOCATION_UNCONFIRMED = "Widerruf unbestätigt"
-REVOCATION_CONFIRMED = "Widerruf bestätigt {date:%d.%m.%Y}"
-RETIRED = "zurückgezogen"
+EXPIRY_UNKNOWN = "expiry unknown"
+REVOCATION_UNCONFIRMED = "revocation unconfirmed"
+REVOCATION_CONFIRMED = "revocation confirmed {date:%d.%m.%Y}"
+RETIRED = "retired"
 OPTIONAL = "{presence} (optional)"
 
 
@@ -75,28 +75,28 @@ class SecretKind(Enum):
 
 
 KIND_LABELS = {
-    SecretKind.HUMAN_PASSWORD: "Passwort (Mensch)",
-    SecretKind.TOOL_LOGIN: "Tool-Login",
+    SecretKind.HUMAN_PASSWORD: "human password",
+    SecretKind.TOOL_LOGIN: "tool login",
     SecretKind.TOKEN: "Token",
-    SecretKind.SERVICE_PASSWORD: "Dienstpasswort",
-    SecretKind.UNVERIFIED_TOKEN: "Token, ungeprüft",
-    SecretKind.DERIVED_MIRROR: "abgeleitete Kopie",
-    SecretKind.CONFIGURATION: "Konfiguration",
-    SecretKind.DOCUMENTATION: "Dokumentation",
+    SecretKind.SERVICE_PASSWORD: "service password",
+    SecretKind.UNVERIFIED_TOKEN: "token, unverified",
+    SecretKind.DERIVED_MIRROR: "derived copy",
+    SecretKind.CONFIGURATION: "configuration",
+    SecretKind.DOCUMENTATION: "documentation",
 }
 
 
 class Presence(Enum):
-    PRESENT = "vorhanden"
-    MISSING = "fehlt"
-    UNKNOWN = "unbekannt"
+    PRESENT = "present"
+    MISSING = "missing"
+    UNKNOWN = "unknown"
 
 
 class Verification(Enum):
-    PASSED = "geprüft: gültig"
-    FAILED = "geprüft: ungültig"
-    UNREACHABLE = "Prüfung nicht möglich"
-    NOT_CHECKED = "nicht geprüft"
+    PASSED = "checked: valid"
+    FAILED = "checked: invalid"
+    UNREACHABLE = "check not possible"
+    NOT_CHECKED = "not checked"
 
 
 class Verifier(Enum):
@@ -553,7 +553,7 @@ class FindingRule(Enum):
 
     MISSING = "missing"
     PRESENCE_UNKNOWN = "presence-unknown"
-    UNKNOWN_FILE = ("unknown-file", Tally("unbekannte Datei in ~/.secrets", "unbekannte Dateien in ~/.secrets"))
+    UNKNOWN_FILE = ("unknown-file", Tally("unknown file in ~/.secrets", "unknown files in ~/.secrets"))
     LOOSE_MODE = "loose-mode"
     SYMLINKED_FOLDER = "symlinked-folder"
     NOT_A_FOLDER = "not-a-folder"
@@ -565,15 +565,15 @@ class FindingRule(Enum):
 
 # The generic remedy per rule; a rule whose remedy depends on the finding names it in SecretFinding.fix instead.
 RECOMMENDATIONS = {
-    FindingRule.MISSING: "neu anlegen, siehe Tabelle",
-    FindingRule.PRESENCE_UNKNOWN: "Rechte des Elternordners prüfen",
-    FindingRule.REVOCATION_UNCONFIRMED: "beim Anbieter widerrufen, siehe Tabelle",
-    FindingRule.VERIFICATION_FAILED: "neu anmelden, siehe Tabelle",
-    FindingRule.VERIFICATION_UNREACHABLE: "Prüfbefehl hing oder fehlt; später erneut",
+    FindingRule.MISSING: "recreate it, see the table",
+    FindingRule.PRESENCE_UNKNOWN: "check the parent folder's permissions",
+    FindingRule.REVOCATION_UNCONFIRMED: "revoke it at the provider, see the table",
+    FindingRule.VERIFICATION_FAILED: "log in again, see the table",
+    FindingRule.VERIFICATION_UNREACHABLE: "the check command hung or is missing; retry later",
 }
 
 # A remedy that depends on the entry's kind: a human's password is fetched back, because a new one locks out what the old one protected.
-KIND_RECOMMENDATIONS = {(FindingRule.MISSING, SecretKind.HUMAN_PASSWORD): "zurückholen, siehe Tabelle"}
+KIND_RECOMMENDATIONS = {(FindingRule.MISSING, SecretKind.HUMAN_PASSWORD): "fetch it back, see the table"}
 
 
 @dataclass(frozen=True)
@@ -672,18 +672,18 @@ class _Flaw:
 
 
 def _symlinked(relative: PurePosixPath, mode: int) -> _Flaw | None:
-    return _Flaw("ist ein Symlink", symlinked_folder_fix(relative)) if stat.S_ISLNK(mode) else None
+    return _Flaw("is a symlink", symlinked_folder_fix(relative)) if stat.S_ISLNK(mode) else None
 
 
 def _not_a_folder(relative: PurePosixPath, mode: int) -> _Flaw | None:
-    return None if stat.S_ISDIR(mode) else _Flaw("ist kein Ordner", _moved_aside_fix(relative))
+    return None if stat.S_ISDIR(mode) else _Flaw("is not a folder", _moved_aside_fix(relative))
 
 
 def _closed(relative: PurePosixPath, mode: int) -> _Flaw | None:
     if not closed_to_owner(mode):
         return None
     needed = LOOSEST_DIRECTORY_MODE
-    return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, der Besitzer braucht {needed:o}", mode_fix(relative, needed))
+    return _Flaw(f"has mode {stat.S_IMODE(mode):o}; its owner needs {needed:o}", mode_fix(relative, needed))
 
 
 def _loose(relative: PurePosixPath, mode: int, declaring: tuple[SecretEntry, ...] = ()) -> _Flaw | None:
@@ -694,7 +694,7 @@ def _loose(relative: PurePosixPath, mode: int, declaring: tuple[SecretEntry, ...
         return None
     reasons = [entry.loosest_mode_reason for entry in declaring if entry.loosest_mode == allowed and entry.loosest_mode_reason]
     reason = f" ({reasons[0]})" if reasons else ""
-    return _Flaw(f"hat Rechte {stat.S_IMODE(mode):o}, höchstens {allowed:o}{reason}", mode_fix(relative, allowed))
+    return _Flaw(f"has mode {stat.S_IMODE(mode):o}; at most {allowed:o} allowed{reason}", mode_fix(relative, allowed))
 
 
 def _declaring_entries(relative: PurePosixPath, manifest: tuple[SecretEntry, ...]) -> tuple[SecretEntry, ...]:
@@ -766,7 +766,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
         SecretFinding(
             FindingRule.UNKNOWN_FILE,
             f"{HOME_PREFIX}{fact.relative}",
-            fix=f"{HOME_PREFIX}{fact.relative} ins Manifest eintragen oder löschen",
+            fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it",
         )
         for fact in observation.tree
         if not _is_named(fact.relative, patterns)
@@ -781,7 +781,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
 
 # --- rendering ------------------------------------------------------------
 
-NO_VALUES_NOTE = "Keine Werte: home secrets liest Geheimnisdateien nur per stat und öffnet sie nie."
+NO_VALUES_NOTE = "No values: home secrets reads secret files by stat only and never opens them."
 
 
 def places(entry: SecretEntry) -> str:
@@ -793,20 +793,20 @@ def _status_row(status: SecretStatus) -> list[str]:
     entry = status.entry
     if entry.retired:
         revocation = REVOCATION_CONFIRMED.format(date=entry.revocation_confirmed) if entry.revocation_confirmed else REVOCATION_UNCONFIRMED
-        return [entry.name, entry.kind.label, RETIRED, revocation, EXPIRY_UNKNOWN, places(entry), f"Widerruf: {entry.revoke_url}"]
+        return [entry.name, entry.kind.label, RETIRED, revocation, EXPIRY_UNKNOWN, places(entry), f"revoke: {entry.revoke_url}"]
     presence = OPTIONAL.format(presence=status.presence.value) if entry.optional else status.presence.value
     return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.recreate]
 
 
 def render_view(view: SecretsView, now: datetime) -> str:
     header = f"# home secrets {now:%d.%m.%Y %H:%M} | {findings_count(len(view.findings))}"
-    status_headers = ["Name", "Art", "Datei", "Prüfung", "Ablauf", "Ort", "Neu anlegen"]
+    status_headers = ["Name", "Kind", "File", "Check", "Expiry", "Place", "Recreate"]
     lines = [header, "", *markdown_table(status_headers, [_status_row(status) for status in view.statuses]), ""]
     if view.findings:
         rows = [[f.rule.value, f.subject, f.detail, f.recommendation] for f in view.findings]
-        lines += ["## Funde", "", *markdown_table(["Regel", "Gegenstand", "Befund", "Empfehlung"], rows), ""]
+        lines += ["## Findings", "", *markdown_table(["Rule", "Subject", "Finding", "Fix"], rows), ""]
     else:
-        lines += ["Keine Funde.", ""]
+        lines += ["No findings.", ""]
     lines.append(NO_VALUES_NOTE)
     return "\n".join(lines) + "\n"
 
@@ -820,16 +820,16 @@ def services_view(manifest: tuple[SecretEntry, ...]) -> dict[str, tuple[str, ...
     return {service: tuple(names) for service, names in sorted(readers.items())}
 
 
-BY_SERVICE_NOTE = "Was das Manifest als Leser nennt; nicht bewiesen vollständig. Ein Leser wird nicht automatisch neu gestartet."
+BY_SERVICE_NOTE = "What the manifest names as readers; not proven complete. A reader is not restarted automatically."
 
 
 def render_by_service(manifest: tuple[SecretEntry, ...]) -> str:
     rows = [[service, ", ".join(names)] for service, names in services_view(manifest).items()]
     mirrors = [[entry.mirror_of, entry.name] for entry in manifest if entry.mirror_of]
-    lines = ["# home secrets --by-service | deklarierte Abhängigkeiten", "", BY_SERVICE_NOTE, ""]
-    lines += [*markdown_table(["Dienst", "liest"], rows), ""]
+    lines = ["# home secrets --by-service | declared dependencies", "", BY_SERVICE_NOTE, ""]
+    lines += [*markdown_table(["Service", "Reads"], rows), ""]
     if mirrors:
-        lines += ["## Abgeleitete Kopien", "", *markdown_table(["Quelle", "Kopie"], mirrors), ""]
+        lines += ["## Derived copies", "", *markdown_table(["Source", "Copy"], mirrors), ""]
     return "\n".join(lines)
 
 

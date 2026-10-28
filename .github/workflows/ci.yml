@@ -77,7 +77,7 @@ jobs:
           home --help
           home check --help
           home secrets --help
-          home secrets --by-service | grep -F "deklarierte Abhängigkeiten"
+          home secrets --by-service | grep -F "declared dependencies"
           hal --help
           version=$(hal version)
           [ "$version" = "no checkout (installed from a wheel)" ]

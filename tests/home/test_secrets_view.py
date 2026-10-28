@@ -103,13 +103,13 @@ def rows_of(output: str) -> dict[str, list[str]]:
 
 def findings_of(output: str, rule: str) -> dict[str, list[str]]:
     """The findings of one rule, keyed by subject: [detail, recommendation]."""
-    table = output.split("## Funde\n\n", 1)[1].split("\n\n")[0] if "## Funde" in output else ""
+    table = output.split("## Findings\n\n", 1)[1].split("\n\n")[0] if "## Findings" in output else ""
     return {cells[1]: cells[2:] for cells in cells_of(table) if cells[0] == rule}
 
 
 def finding_subjects(output: str) -> set[str]:
     """The subject of every finding, whatever its rule."""
-    table = output.split("## Funde\n\n", 1)[1].split("\n\n")[0] if "## Funde" in output else ""
+    table = output.split("## Findings\n\n", 1)[1].split("\n\n")[0] if "## Findings" in output else ""
     return {cells[1] for cells in cells_of(table)}
 
 
@@ -120,12 +120,12 @@ def test_a_complete_home_lists_every_entry_and_writes_only_its_report(clean_home
     rows = rows_of(output)
     assert code == 0
     assert set(rows) == {"gitlab", "cloudflared", "gh"}
-    assert {name: row[2] for name, row in rows.items()} == dict.fromkeys(rows, "vorhanden")
-    assert {name: row[3] for name, row in rows.items()} == {"gitlab": "nicht geprüft", "cloudflared": "nicht geprüft"} | {
-        "gh": "geprüft: gültig"
+    assert {name: row[2] for name, row in rows.items()} == dict.fromkeys(rows, "present")
+    assert {name: row[3] for name, row in rows.items()} == {"gitlab": "not checked", "cloudflared": "not checked"} | {
+        "gh": "checked: valid"
     }
-    assert all(row[4] == "Ablauf unbekannt" for row in rows.values())
-    assert "Keine Funde." in output
+    assert all(row[4] == "expiry unknown" for row in rows.values())
+    assert "No findings." in output
     assert Layout(clean_home).secrets_report_file.read_text() == output
     assert probe.calls == [("gh", "auth", "status")]
 
@@ -227,10 +227,10 @@ def put_a_file_where_a_directory_belongs(home: Path) -> None:
 @pytest.mark.parametrize(
     ("damage", "expected"),
     [
-        (remove_gitlab, {"gitlab": "fehlt", "cloudflared": "vorhanden"}),
-        (remove_the_wildcard_match, {"gitlab": "vorhanden", "cloudflared": "fehlt"}),
-        (remove_every_secret, {"gitlab": "fehlt", "cloudflared": "fehlt"}),
-        (put_a_file_where_a_directory_belongs, {"gitlab": "vorhanden", "cloudflared": "unbekannt"}),
+        (remove_gitlab, {"gitlab": "missing", "cloudflared": "present"}),
+        (remove_the_wildcard_match, {"gitlab": "present", "cloudflared": "missing"}),
+        (remove_every_secret, {"gitlab": "missing", "cloudflared": "missing"}),
+        (put_a_file_where_a_directory_belongs, {"gitlab": "present", "cloudflared": "unknown"}),
     ],
     ids=["one file missing", "no file matches the wildcard", "no ~/.secrets at all", "the filesystem cannot say"],
 )
@@ -245,16 +245,16 @@ def test_each_entry_shows_present_missing_or_unknown_and_every_gap_is_a_finding(
     rows = rows_of(output)
     assert code == 1
     assert {name: rows[name][2] for name in expected} == expected
-    gaps = {name for name, presence in expected.items() if presence != "vorhanden"}
+    gaps = {name for name, presence in expected.items() if presence != "present"}
     assert set(findings_of(output, "missing")) | set(findings_of(output, "presence-unknown")) == gaps
 
 
 @pytest.mark.parametrize(
     ("exit_code", "shown", "finding"),
     [
-        (0, "geprüft: gültig", None),
-        (1, "geprüft: ungültig", "verification-failed"),
-        (None, "Prüfung nicht möglich", "verification-unreachable"),
+        (0, "checked: valid", None),
+        (1, "checked: invalid", "verification-failed"),
+        (None, "check not possible", "verification-unreachable"),
     ],
     ids=["the probe passes", "the probe fails", "the probe hangs or is missing"],
 )
@@ -283,7 +283,7 @@ def test_a_file_no_entry_names_is_reported_as_unknown_and_left_alone(clean_home:
     assert code == 1
     unknown = findings_of(output, "unknown-file")
     assert list(unknown) == ["~/.secrets/latest", "~/.secrets/old-backup.env"]
-    assert unknown["~/.secrets/latest"] == ["-", "~/.secrets/latest ins Manifest eintragen oder löschen"]
+    assert unknown["~/.secrets/latest"] == ["-", "add ~/.secrets/latest to the manifest or delete it"]
     assert not findings_of(output, "loose-mode")
     assert stray.read_text() == FAKE_SECRET_VALUE
 
@@ -312,8 +312,8 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
     loose = findings_of(capsys.readouterr().out, "loose-mode")
     assert code == 1
     assert loose == {
-        "~/.secrets/gitlab": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/gitlab`"],
-        "~/.secrets/cloudflared": ["hat Rechte 755, höchstens 700", "`chmod 700 ~/.secrets/cloudflared`"],
+        "~/.secrets/gitlab": ["has mode 644; at most 600 allowed", "`chmod 600 ~/.secrets/gitlab`"],
+        "~/.secrets/cloudflared": ["has mode 755; at most 700 allowed", "`chmod 700 ~/.secrets/cloudflared`"],
     }
     assert (stat.S_IMODE(token.stat().st_mode), stat.S_IMODE(directory.stat().st_mode)) == (0o644, 0o755)
 
@@ -325,23 +325,23 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
         (
             DECLARED_MODE_ENTRY,
             0o666,
-            {"~/.secrets/step-ca/password": ["hat Rechte 666, höchstens 644 (uid 1000 reads it)", "`chmod 644 ~/.secrets/step-ca/password`"]},
+            {"~/.secrets/step-ca/password": ["has mode 666; at most 644 allowed (uid 1000 reads it)", "`chmod 644 ~/.secrets/step-ca/password`"]},
         ),
         (
             DECLARED_MODE_ENTRY.split("loosest_mode")[0],
             0o644,
-            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+            {"~/.secrets/step-ca/password": ["has mode 644; at most 600 allowed", "`chmod 600 ~/.secrets/step-ca/password`"]},
         ),
         (DECLARED_MODE_ENTRY + WILDCARD_ENTRY, 0o644, {}),
         (
             DECLARED_MODE_ENTRY.split("loosest_mode")[0] + WILDCARD_ENTRY,
             0o644,
-            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+            {"~/.secrets/step-ca/password": ["has mode 644; at most 600 allowed", "`chmod 600 ~/.secrets/step-ca/password`"]},
         ),
         (
             DECLARED_MODE_ENTRY.replace("0o644", "0o640") + WILDCARD_ENTRY.replace("0o644", "0o604"),
             0o644,
-            {"~/.secrets/step-ca/password": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/password`"]},
+            {"~/.secrets/step-ca/password": ["has mode 644; at most 600 allowed", "`chmod 600 ~/.secrets/step-ca/password`"]},
         ),
     ],
     ids=[
@@ -370,7 +370,7 @@ def test_a_file_is_judged_against_the_mode_its_entry_declares(
 @pytest.mark.parametrize(
     ("file_name", "loose_findings"),
     [
-        ("root_ca_key", {"~/.secrets/step-ca/.pending-root/root_ca_key": ["hat Rechte 644, höchstens 600", "`chmod 600 ~/.secrets/step-ca/.pending-root/root_ca_key`"]}),
+        ("root_ca_key", {"~/.secrets/step-ca/.pending-root/root_ca_key": ["has mode 644; at most 600 allowed", "`chmod 600 ~/.secrets/step-ca/.pending-root/root_ca_key`"]}),
         ("root_ca.crt", {}),
     ],
     ids=["a pending root key at 0644 is loose", "a pending root certificate at 0644 is fine"],
@@ -431,7 +431,7 @@ def test_a_home_where_neither_unit_is_set_up_has_no_finding_about_their_files(tm
 
 @pytest.mark.parametrize(
     ("recorded", "shown", "findings"),
-    [("", "Widerruf unbestätigt", ["github/token"]), ("revocation_confirmed = 2026-10-15\n", "Widerruf bestätigt 15.10.2026", [])],
+    [("", "revocation unconfirmed", ["github/token"]), ("revocation_confirmed = 2026-10-15\n", "revocation confirmed 15.10.2026", [])],
     ids=["revocation unconfirmed", "revocation confirmed"],
 )
 def test_a_retired_entry_shows_its_revoke_link_and_whether_its_revocation_is_confirmed(
@@ -445,8 +445,8 @@ def test_a_retired_entry_shows_its_revoke_link_and_whether_its_revocation_is_con
     output = capsys.readouterr().out
     retired = rows_of(output)["github/token"]
     assert code == (1 if findings else 0)
-    assert retired[2:5] == ["zurückgezogen", shown, "Ablauf unbekannt"]
-    assert retired[-1] == "Widerruf: https://github.com/settings/tokens"
+    assert retired[2:5] == ["retired", shown, "expiry unknown"]
+    assert retired[-1] == "revoke: https://github.com/settings/tokens"
     assert list(findings_of(output, "revocation-unconfirmed")) == findings
     assert "github/token" not in findings_of(output, "missing")
 
@@ -493,12 +493,12 @@ def test_known_non_secret_files_show_their_kind_and_a_missing_optional_entry_is_
     rows = rows_of(output)
     assert code == 0
     assert {name: rows[name][1:3] for name in ("secrets/README", "runtime.env", "ppk")} == {
-        "secrets/README": ["Dokumentation", "vorhanden"],
-        "runtime.env": ["Konfiguration", "vorhanden"],
-        "ppk": ["abgeleitete Kopie", "fehlt (optional)"],
+        "secrets/README": ["documentation", "present"],
+        "runtime.env": ["configuration", "present"],
+        "ppk": ["derived copy", "missing (optional)"],
     }
     assert rows["ppk"][5] == "~/.secrets/ppk; /etc/example (root)"
-    assert "Keine Funde." in output
+    assert "No findings." in output
 
 
 def close_to(mode: int, folder: str) -> Callable[[Path], None]:
@@ -540,8 +540,8 @@ NOT_AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permiss
             close_to(0, "cloudflared"),
             "closed-folder",
             "~/.secrets/cloudflared",
-            ["hat Rechte 0, der Besitzer braucht 700", "`chmod 700 ~/.secrets/cloudflared`"],
-            "unbekannt",
+            ["has mode 0; its owner needs 700", "`chmod 700 ~/.secrets/cloudflared`"],
+            "unknown",
             id="closed-subfolder",
             marks=NOT_AS_ROOT,
         ),
@@ -549,8 +549,8 @@ NOT_AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permiss
             close_to(0o600, "."),
             "closed-folder",
             "~/.secrets",
-            ["hat Rechte 600, der Besitzer braucht 700", "`chmod 700 ~/.secrets`"],
-            "unbekannt",
+            ["has mode 600; its owner needs 700", "`chmod 700 ~/.secrets`"],
+            "unknown",
             id="closed-secrets-folder",
             marks=NOT_AS_ROOT,
         ),
@@ -558,16 +558,16 @@ NOT_AS_ROOT = pytest.mark.skipif(os.geteuid() == 0, reason="root ignores permiss
             put_a_file_in_place_of,
             "not-a-folder",
             "~/.secrets",
-            ["ist kein Ordner", "`mv -n ~/.secrets ~/.secrets.alt`"],
-            "unbekannt",
+            ["is not a folder", "`mv -n ~/.secrets ~/.secrets.alt`"],
+            "unknown",
             id="file-in-place-of-secrets",
         ),
         pytest.param(
             point_a_dangling_link_from,
             "symlinked-folder",
             "~/.secrets",
-            ["ist ein Symlink", f"`{symlinked_folder_fix('~/.secrets')}`"],
-            "fehlt",
+            ["is a symlink", f"`{symlinked_folder_fix('~/.secrets')}`"],
+            "missing",
             id="dangling-link-in-place-of-secrets",
         ),
     ],
@@ -599,9 +599,9 @@ def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_
 
     output = capsys.readouterr().out
     assert code == 0
-    assert output.splitlines()[0] == "# home secrets --by-service | deklarierte Abhängigkeiten"
+    assert output.splitlines()[0] == "# home secrets --by-service | declared dependencies"
     assert "| .bashrc | gitlab, cloudflared |" in output
-    assert "Abgeleitete Kopien" not in output
+    assert "Derived copies" not in output
     assert probe.calls == []
     assert not Layout(clean_home).state_dir.exists()
 
@@ -680,7 +680,7 @@ def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_wi
     ("state_mode", "loose_findings"),
     [
         (0o600, {}),
-        (0o664, {"~/.secrets/opentofu/fleet.tfstate": ["hat Rechte 664, höchstens 600", "`chmod 600 ~/.secrets/opentofu/fleet.tfstate`"]}),
+        (0o664, {"~/.secrets/opentofu/fleet.tfstate": ["has mode 664; at most 600 allowed", "`chmod 600 ~/.secrets/opentofu/fleet.tfstate`"]}),
     ],
     ids=["owner-only state", "loose state is still reported"],
 )
@@ -770,7 +770,7 @@ def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, 
     view, by_service = capsys.readouterr().out.split("# home secrets --by-service")
     assert set(rows_of(view)) == INVENTORY
     assert findings_of(view, "unknown-file") == {}
-    assert rows_of(view)["github/token"][-1] == "Widerruf: https://github.com/settings/tokens"
+    assert rows_of(view)["github/token"][-1] == "revoke: https://github.com/settings/tokens"
     assert "| ssh/id_ed25519 | ssh/id_ed25519.ppk |" in by_service
     assert "| hal-backup.service | restic/password |" in by_service
 
@@ -795,7 +795,7 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
     setup = capsys.readouterr().out.splitlines()
 
     assert view_code == 1
-    assert findings_of(view, "missing") == {"restic/password": ["-", "zurückholen, siehe Tabelle"]}
+    assert findings_of(view, "missing") == {"restic/password": ["-", "fetch it back, see the table"]}
     assert rows_of(view)["restic/password"][-1] == RESTIC_RECREATE
     assert setup_code == 1
     assert f"! restic/password by hand no wizard yet: {RESTIC_RECREATE}" in [" ".join(line.split()) for line in setup]
