@@ -4,7 +4,7 @@ import json
 import os
 
 import pytest
-from edge_backup_support import (
+from backup_support import (
     SONGMAKER_TOML,
     SQLITE_TOML,
     STATUS_KEYS,

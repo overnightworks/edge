@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from edge_backup_support import (
+from backup_support import (
     DUMP,
     Machine,
     app_history,

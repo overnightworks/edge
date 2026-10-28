@@ -275,7 +275,7 @@ def test_the_repository_units_replace_the_old_links_and_enable_the_hal_timers(
     tmp_path: Path, old_prefix: str, old_names: list[str], new_timers: set[str]
 ) -> None:
     """The old unit names are gone and the hal timers run."""
-    repository_units = Path(__file__).parents[2] / "systemd"
+    repository_units = Path(__file__).parents[1] / "systemd"
     home = tmp_path / "home"
     user_units = home / ".config" / "systemd" / "user"
     wants = user_units / TIMERS_WANTS

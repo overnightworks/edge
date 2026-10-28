@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 
 import pytest
-from test_edge_apply import (
+from test_stack_apply import (
     DISABLED,
     ENABLED,
     PROBE_ENABLED,
@@ -32,8 +32,8 @@ from test_edge_apply import (
     write_fleet,
     writing_environment,
 )
-from test_edge_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
-from test_edge_plan_rows import (
+from test_stack_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
+from test_stack_plan_rows import (
     DIGEST_A,
     DIGEST_B,
     KEYCLOAK,

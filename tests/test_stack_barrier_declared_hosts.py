@@ -5,7 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_edge_apply import (
+from test_hal_stack_commands import (
+    applying,  # noqa: F401 the fixture, requested by name below
+    fakes,  # noqa: F401 the fixture, requested by name below
+    hal,  # noqa: F401 the fixture, requested by name below
+    system_commands,  # noqa: F401 the autouse fixture of the stack tests
+    systemd,  # noqa: F401 the fixture, requested by `fakes`
+)
+from test_stack_apply import (
     PROBE_ENABLED,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     core_files,  # noqa: F401 the fixture, requested by name below
@@ -19,23 +26,16 @@ from test_edge_apply import (
     switch_off,
     write_fleet,
 )
-from test_edge_apply_publish import (
+from test_stack_apply_publish import (
     fake_tofu,  # noqa: F401 the fixture, requested by name below
     repository,  # noqa: F401 the fixture, requested by name below
     world,  # noqa: F401 the fixture, requested by name below
 )
-from test_edge_external import (
+from test_stack_external import (
     home,  # noqa: F401 the fixture, requested by name below
     live_checkout,  # noqa: F401 the fixture, requested by name below
 )
-from test_edge_global_stop import hosts_asked  # noqa: F401 the fixture, requested by `fakes`
-from test_hal_stack_commands import (
-    applying,  # noqa: F401 the fixture, requested by name below
-    fakes,  # noqa: F401 the fixture, requested by name below
-    hal,  # noqa: F401 the fixture, requested by name below
-    system_commands,  # noqa: F401 the autouse fixture of the stack tests
-    systemd,  # noqa: F401 the fixture, requested by `fakes`
-)
+from test_stack_global_stop import hosts_asked  # noqa: F401 the fixture, requested by `fakes`
 
 from hal.grammar import ExitCode
 

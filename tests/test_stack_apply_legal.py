@@ -1,5 +1,5 @@
 """`hal apply --local` with the legal step (#435): the three pages built from the repository's own
-frame and sections on the scripted boundaries of `test_edge_apply`, in a real git repository (the
+frame and sections on the scripted boundaries of `test_stack_apply`, in a real git repository (the
 Stand of a page is a commit date)."""
 
 import os
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from git_support import committed_main
-from test_edge_apply import (
+from test_stack_apply import (
     REPOSITORY,
     ZONE,
     ScriptedCompose,
@@ -35,7 +35,7 @@ from test_edge_apply import (
     unreadable_profile_bind,  # noqa: F401 the fixture, requested by name below
     write_fleet,
 )
-from test_edge_plan_rows import detail_lines, find_row, plain
+from test_stack_plan_rows import detail_lines, find_row, plain
 
 from hal.stack.plan_rows import LegalEvent
 

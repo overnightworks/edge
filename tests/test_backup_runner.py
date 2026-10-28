@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from edge_backup_support import (
+from backup_support import (
     APP_HISTORY_KEYS,
     AUDIO,
     CANARY_PASSWORD,

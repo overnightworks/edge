@@ -1,8 +1,8 @@
 """Plain `hal apply` (#171): the local part (`--local`) and then the publish phase, each
 with its own `yes`, driven through `hal.cli.main` with both real phases.
 
-The local part runs on the scripted boundaries of `test_edge_apply`, the publish on the fake
-tofu, token files and live checkout of `test_edge_external`; one terminal holds the answers in
+The local part runs on the scripted boundaries of `test_stack_apply`, the publish on the fake
+tofu, token files and live checkout of `test_stack_external`; one terminal holds the answers in
 order. The catalog declares no `ready` host, so the publish's ready check asks nothing."""
 
 import functools
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from app_support import KEY, ScriptedDocker, origin_at, runtime_of
-from test_edge_apply import (
+from test_stack_apply import (
     NOT_SET_UP_LINE,
     REPOSITORY,
     apply_lock_held,
@@ -29,7 +29,7 @@ from test_edge_apply import (
     switch_off,
     trusted_environment,
 )
-from test_edge_external import (
+from test_stack_external import (
     CHANGING_PLAN,
     CLEAN_SNAPSHOT,
     EMPTY_PLAN,
@@ -43,7 +43,7 @@ from test_edge_external import (
     live_checkout,  # noqa: F401 the fixture, requested by name below
     plain_git,
 )
-from test_edge_plan_rows import plain
+from test_stack_plan_rows import plain
 
 from hal import cli
 from hal.grammar import ExitCode

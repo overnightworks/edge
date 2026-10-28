@@ -1,5 +1,5 @@
 """`hal apply --local` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
-step after the units and the realm, on the scripted boundaries of `test_edge_apply` and the real
+step after the units and the realm, on the scripted boundaries of `test_stack_apply` and the real
 origin and scripted Docker of `app_support`."""
 
 import io
@@ -23,7 +23,7 @@ from app_support import (
     runtime_of,
     switch_lock_is_held,
 )
-from test_edge_apply import (
+from test_stack_apply import (
     ENABLED,
     NOW,
     WHOAMI,
@@ -43,7 +43,7 @@ from test_edge_apply import (
     switch_off,
     write_fleet,
 )
-from test_edge_plan_rows import plain
+from test_stack_plan_rows import plain
 
 from hal.stack import apps, barrier, checkout, compose, emergency, switches
 

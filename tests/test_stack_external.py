@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 from live_stack import LIVE_STACK_PORTS
-from test_edge_host_probe import RAY, Behaviour, serving
+from test_stack_host_probe import RAY, Behaviour, serving
 
 from hal.stack import catalog, checkout
 from hal.stack.external import apply as external_apply

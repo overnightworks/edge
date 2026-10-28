@@ -33,8 +33,8 @@ from git_support import (
     subjects,
     with_origin,
 )
-from test_edge_core import bind, bind_core_files, sha256
-from test_edge_plan_rows import detail_lines, find_row, plain, row_at
+from test_stack_core import bind, bind_core_files, sha256
+from test_stack_plan_rows import detail_lines, find_row, plain, row_at
 
 from hal.stack import (
     apply,

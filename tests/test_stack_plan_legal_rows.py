@@ -4,7 +4,7 @@ says, from typed fields."""
 from pathlib import Path
 
 import pytest
-from test_edge_plan_rows import (
+from test_stack_plan_rows import (
     REPOSITORY,
     app_plan,
     groups_of,

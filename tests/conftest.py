@@ -10,7 +10,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from edge_backup_support import (
+from backup_support import (
     CANARY_PASSWORD,
     SONGMAKER_TOML,
     Machine,

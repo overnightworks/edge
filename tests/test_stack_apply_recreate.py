@@ -1,8 +1,8 @@
 """Apply recreates a running unit service whose compose definition changed, never its image
-(#376), on the scripted boundaries of `test_edge_apply`."""
+(#376), on the scripted boundaries of `test_stack_apply`."""
 
 import pytest
-from test_edge_apply import (
+from test_stack_apply import (
     APP_EXITED,
     DISABLED,
     ENABLED,
@@ -34,7 +34,7 @@ from test_edge_apply import (
     up_calls,
     write_fleet,
 )
-from test_edge_plan_rows import find_row, plain
+from test_stack_plan_rows import find_row, plain
 
 from hal.stack.plan_rows import PlanEvent
 

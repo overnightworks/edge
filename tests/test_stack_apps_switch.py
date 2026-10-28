@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from app_support import HOSTED_COMPOSE, HOSTED_FLEET, KEY, NOW, SENTINEL, Origin
-from test_edge_apps import (
+from test_stack_apps import (
     EDGE_FLEET,
     FIRST,
     SECOND,

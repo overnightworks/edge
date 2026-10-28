@@ -11,8 +11,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from secrets_support import FakeTerminal, run_wizard
-from test_secrets_setup import (  # noqa: F401 the fixtures, requested by name
+from workstation_secrets_support import FakeTerminal, run_wizard
+from test_workstation_secrets_setup import (  # noqa: F401 the fixtures, requested by name
     PASSPHRASE_FILE,
     PASTED_VALUE,
     files_under,

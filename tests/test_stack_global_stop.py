@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from test_edge_apply import (
+from test_stack_apply import (
     NOW,
     PLAIN_NOT_FOUND,
     SWITCHED_OFF_AT,
