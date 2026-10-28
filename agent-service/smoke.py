@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The operator's smoke of the agent service: one run, its event types and its text on stdout.
 
-    docker compose run --rm -T agent-smoke [--cancel] [--tool NAME:EFFECT ...] | --offer
+    docker compose run --rm -T agent-smoke [--cancel] [--tool NAME:EFFECT ...]
 
 Stdin holds exactly two lines, the person's token and then the workload's, and nothing else
 supplies one: there is no option, no environment variable and no file for a token. Both tokens
@@ -11,8 +11,8 @@ run and prints each event's type and the text of the answer; exit 0 when the run
 the CLI run behind it can be seen, then closes it before any answer, to see that the service
 ends that run; it fails when the run succeeded (docs/agent-service.md, "Proofs"). Each `--tool`
 lists a tool of the app in the request, with the effect the service judges (the probes' option).
-`--offer` asks `GET /offer` once, with both tokens, and prints one line per offered model, or
-the service's refusal; no run starts.
+After `event: run_started` it prints which model and route the service named, as one line that
+starts with `SERVED_BY`.
 `live_smoke.py` runs it with the sign-in.
 
 Only the standard library of the service image is used.
@@ -29,8 +29,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, NoReturn
 
-PROTOCOL_VERSION = 2
-PURPOSE = "chat"
+PROTOCOL_VERSION = 3
+AGENT = "chat"
+SERVED_BY = "served by"
 ROLES = ["admin", "user"]
 WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
@@ -46,7 +47,6 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 TEXT_EVENTS = {"assistant_text", "succeeded"}
 MAX_REFUSAL_BYTES = 65536
 REDACTED = "[token]"
-EMPTY_OFFER = "the offer lists no model"
 
 
 class SmokeFailed(Exception):
@@ -58,7 +58,7 @@ class QuietParser(argparse.ArgumentParser):
 
     def error(self, message: str) -> NoReturn:
         self.exit(
-            2, "smoke: unusable arguments; the options: --timeout, --cancel, --tool, --offer\n"
+            2, "smoke: unusable arguments; the options: --timeout, --cancel, --tool\n"
         )
 
 
@@ -87,7 +87,7 @@ def read_tokens(stream: IO[str]) -> Tokens:
 def request_body(prompt: str, tools: dict[str, str] | None = None) -> bytes:
     document = {
         "v": PROTOCOL_VERSION,
-        "purpose": PURPOSE,
+        "agent": AGENT,
         "roles": ROLES,
         "tools": tools or {},
         "turn": {"system": SYSTEM_PROMPT, "messages": [{"role": "user", "text": prompt}]},
@@ -118,13 +118,6 @@ def text_of(frame: Frame, key: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"a {frame.event} frame whose {key} is no text")
     return value
-
-
-def offer_line(entry: dict) -> str:
-    return (
-        f"{entry['id']}: route {entry['route']}, ready {entry['ready']}, "
-        f"background {entry['background']}"
-    )
 
 
 def refusal_line(response: http.client.HTTPResponse) -> str:
@@ -168,24 +161,6 @@ class Smoke:
             return self.read_run(response, connection, cancel)
         except (OSError, http.client.HTTPException, ValueError) as error:
             self.say(f"the run broke off: {type(error).__name__}")
-            return 1
-        finally:
-            connection.close()
-
-    def offer(self, timeout_seconds: float) -> int:
-        connection = self.connect(SERVICE_HOST, SERVICE_PORT, timeout_seconds)
-        try:
-            connection.request("GET", "/offer", None, self.headers())
-            response = connection.getresponse()
-            if response.status != http.HTTPStatus.OK:
-                self.say(refusal_line(response))
-                return 1
-            models = json.loads(response.read())["data"]
-            for line in [offer_line(entry) for entry in models] or [EMPTY_OFFER]:
-                self.say(line)
-            return 0
-        except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as error:
-            self.say(f"the offer broke off: {type(error).__name__}")
             return 1
         finally:
             connection.close()
@@ -242,6 +217,9 @@ class Smoke:
     def say_text(self, frame: Frame) -> None:
         if frame.event in TEXT_EVENTS:
             self.say(text_of(frame, "text"))
+        elif frame.event == "run_started":
+            model, route = text_of(frame, "model"), text_of(frame, "route")
+            self.say(f"{SERVED_BY} {model} on route {route}")
         elif frame.event == "failed":
             self.say(f"{text_of(frame, 'code')}: {text_of(frame, 'message')}")
 
@@ -264,13 +242,10 @@ def main(
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--cancel", action="store_true")
     parser.add_argument("--tool", type=tool_option, action="append", default=[])
-    parser.add_argument("--offer", action="store_true")
     arguments = parser.parse_args(argv)
     tools = dict(arguments.tool)
     if len(tools) != len(arguments.tool):
         parser.error("a tool named twice")
-    if arguments.offer and (arguments.cancel or tools):
-        parser.error("the offer starts no run")
     try:
         tokens = read_tokens(stdin)
     except SmokeFailed as failure:
@@ -278,8 +253,6 @@ def main(
         return 1
     prompt = LONG_ANSWER_PROMPT if arguments.cancel else ANSWER_PROMPT
     smoke = Smoke(tokens, out, connect, pause, tools)
-    if arguments.offer:
-        return smoke.offer(arguments.timeout)
     return smoke.run(arguments.timeout, prompt, arguments.cancel)
 
 

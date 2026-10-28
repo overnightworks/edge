@@ -33,7 +33,7 @@ smoke = load_smoke()
 
 def stream_of(*events: tuple[str, dict]) -> bytes:
     frames = (
-        (number, name, json.dumps({"v": 2, "type": name, **data}))
+        (number, name, json.dumps({"v": 3, "type": name, **data}))
         for number, (name, data) in enumerate(events)
     )
     return b"".join(
@@ -103,20 +103,8 @@ def run_events(*events: tuple[str, dict]) -> FakeResponse:
     return FakeResponse(200, stream_of(*events))
 
 
-def offer_answer(*models: dict, status: int = 200) -> FakeResponse:
-    document = {"v": 2, "object": "list", "data": list(models)}
-    return FakeResponse(status, json.dumps(document).encode())
-
-
-def offered(model_id: str, **changes) -> dict:
-    return {
-        "id": model_id, "object": "model", "created": 0, "owned_by": "claude",
-        "route": "cli", "background": False, "ready": True, "reason": None, **changes,
-    }  # fmt: skip
-
-
 SUCCESS = (
-    ("run_started", {"heartbeat_interval_s": 15}),
+    ("run_started", {"heartbeat_interval_s": 15, "model": "anthropic/opus", "route": "cli"}),
     ("assistant_text", {"text": "ok"}),
     ("succeeded", {"text": "ok"}),
 )
@@ -128,58 +116,13 @@ def test_a_successful_run_prints_the_event_types_and_the_text_and_exits_0():
     assert exit_code == 0
     assert out.splitlines() == [
         "event: run_started",
+        "served by anthropic/opus on route cli",
         "event: assistant_text",
         "ok",
         "event: succeeded",
         "ok",
     ]
     assert connection.closed
-
-
-def test_the_offer_option_asks_for_the_offer_once_and_prints_a_line_per_model():
-    """A1, cell 8: the offer option asks once and prints a line per model."""
-    answer = offer_answer(offered("claude/haiku"), offered("claude/opus", ready=False))
-
-    exit_code, out, connection = drive(answer, "--offer")
-
-    assert exit_code == 0
-    assert out.splitlines() == [
-        smoke.offer_line(offered("claude/haiku")),
-        smoke.offer_line(offered("claude/opus", ready=False)),
-    ]
-    ((method, path, body, headers),) = connection.requests
-    assert (method, path, body) == ("GET", "/offer", None)
-    assert headers["Authorization"] == f"Bearer {PERSON_TOKEN}"
-    assert headers[smoke.WORKLOAD_TOKEN_HEADER] == WORKLOAD_TOKEN
-
-
-def test_an_offer_without_a_model_prints_that_and_exits_0():
-    """A1, cell 8: an empty offer is said so."""
-    exit_code, out, _ = drive(offer_answer(), "--offer")
-
-    assert (exit_code, out.splitlines()) == (0, ["the offer lists no model"])
-
-
-def test_a_refused_offer_prints_the_refusal_and_exits_1():
-    """A1, cell 8: a refused offer prints the refusal."""
-    refusal = json.dumps({"code": "forbidden", "message": "not a member"}).encode()
-
-    exit_code, out, _ = drive(FakeResponse(403, refusal), "--offer")
-
-    assert (exit_code, out.splitlines()) == (1, ["refused with 403 forbidden: not a member"])
-
-
-@pytest.mark.parametrize(
-    "answer",
-    [FakeResponse(200, b"not json"), FakeResponse(200, b'{"data": [{}]}'), OSError("down")],
-    ids=["no json", "entry without its fields", "connection error"],
-)
-def test_an_offer_that_cannot_be_read_fails_as_broken_off(answer):
-    """A1, cell 8: an unreadable offer fails in one line."""
-    exit_code, out, _ = drive(answer, "--offer")
-
-    assert exit_code == 1
-    assert out.startswith("the offer broke off: ")
 
 
 def test_the_tokens_go_to_the_service_as_headers_and_nowhere_else():
@@ -193,12 +136,21 @@ def test_the_tokens_go_to_the_service_as_headers_and_nowhere_else():
     assert WORKLOAD_TOKEN.encode() not in body
 
 
-def test_the_run_is_asked_for_in_wire_v2_with_no_tools_and_both_roles():
+def test_the_run_is_asked_for_in_wire_v3_naming_an_agent_and_no_model():
     _, _, connection = drive(run_events(*SUCCESS))
 
     ((_, _, body, _),) = connection.requests
     document = json.loads(body)
-    assert (document["v"], document["tools"], document["roles"]) == (2, {}, ["admin", "user"])
+    assert (document["v"], document["tools"], document["roles"]) == (3, {}, ["admin", "user"])
+    assert document["agent"] == "chat"
+    assert "purpose" not in document
+    assert "model" not in document
+
+
+def test_a_run_started_without_model_and_route_prints_a_route_line_that_names_neither():
+    _, out, _ = drive(run_events(("run_started", {"heartbeat_interval_s": 15})))
+
+    assert out.splitlines()[:2] == ["event: run_started", "served by  on route "]
 
 
 def test_each_tool_option_names_a_tool_and_its_effect_in_the_request():
@@ -220,7 +172,7 @@ def test_a_failed_run_prints_its_code_and_message_and_exits_1():
 
 
 def test_a_refusal_prints_the_services_code_and_message_and_exits_1():
-    refusal = json.dumps({"v": 2, "code": "unauthorized", "message": "Sign in again."}).encode()
+    refusal = json.dumps({"v": 3, "code": "unauthorized", "message": "Sign in again."}).encode()
 
     exit_code, out, _ = drive(FakeResponse(401, refusal))
 
@@ -240,9 +192,9 @@ def test_a_refusal_that_is_no_typed_body_prints_the_status_only():
     [
         run_events(("assistant_text", {"text": 5})),
         FakeResponse(200, b'event: assistant_text\ndata: ["ok"]\n\n'),
-        FakeResponse(200, b'event: succeeded\ndata: {"v": 1, "type": "succeeded"}\n\n'),
+        FakeResponse(200, b'event: succeeded\ndata: {"v": 2, "type": "succeeded"}\n\n'),
     ],
-    ids=["text of no text", "data of no object", "frame of version 1"],
+    ids=["text of no text", "data of no object", "frame of version 2"],
 )
 def test_a_frame_of_the_wrong_shape_ends_the_run_as_broken_off(answer):
     exit_code, out, _ = drive(answer)
@@ -328,8 +280,7 @@ def test_a_token_in_the_environment_is_not_taken(monkeypatch):
         ["--tool", PERSON_TOKEN],
         ["--tool", f":{PERSON_TOKEN}"],
         ["--tool", f"{PERSON_TOKEN}:read_only", "--tool", f"{PERSON_TOKEN}:mutating"],
-        ["--offer", "--cancel"],
-        ["--offer", "--tool", "read:read_only"],
+        ["--offer"],
     ],
     ids=[
         "unknown option",
@@ -339,8 +290,7 @@ def test_a_token_in_the_environment_is_not_taken(monkeypatch):
         "tool without an effect",
         "tool without a name",
         "tool named twice",
-        "offer with cancel",
-        "offer with a tool",
+        "removed offer option",
     ],
 )
 def test_a_rejected_argument_is_never_printed(argv, capsys):
@@ -359,7 +309,7 @@ def test_a_rejected_argument_is_never_printed(argv, capsys):
     "answer",
     [
         run_events(
-            ("run_started", {"heartbeat_interval_s": 15}),
+            SUCCESS[0],
             ("assistant_text", {"text": f"I was given {PERSON_TOKEN}"}),
             ("failed", {"code": "provider_error", "message": f"{WORKLOAD_TOKEN} failed"}),
         ),
@@ -368,7 +318,7 @@ def test_a_rejected_argument_is_never_printed(argv, capsys):
         FakeResponse(200, b"event: x\ndata: {" + PERSON_TOKEN.encode() + b"\n\n"),
         run_events(("assistant_text", {"text": [PERSON_TOKEN]})),
         FakeResponse(200, f'event: x\ndata: ["{PERSON_TOKEN}"]\n\n'.encode()),
-        offer_answer(offered(PERSON_TOKEN, route=WORKLOAD_TOKEN)),
+        run_events(("run_started", {"model": PERSON_TOKEN, "route": WORKLOAD_TOKEN})),
     ],
     ids=[
         "events",
@@ -377,12 +327,11 @@ def test_a_rejected_argument_is_never_printed(argv, capsys):
         "broken frame",
         "text of no text",
         "data of no object",
-        "offer naming a token",
+        "run_started naming a token",
     ],
 )
-@pytest.mark.parametrize("arguments", [(), ("--offer",)], ids=["run", "offer"])
-def test_no_token_reaches_the_output_whichever_path_a_run_takes(answer, arguments, capsys):
-    _, out, _ = drive(answer, *arguments)
+def test_no_token_reaches_the_output_whichever_path_a_run_takes(answer, capsys):
+    _, out, _ = drive(answer)
 
     captured = capsys.readouterr()
     printed = out + captured.out + captured.err
