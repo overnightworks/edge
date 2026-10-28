@@ -4,6 +4,7 @@ import errno
 import io
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -16,13 +17,13 @@ from git_support import elsewhere, hal_command, hal_environment, hal_program, ru
 
 from edge.external import cloudflare_read, host_probe, tofu
 from edge_check import inspection
-from edge_check.exposure import Finding, Problem
-from hal import check_commands, cli
+from edge_check.exposure import Finding, Problem, Protocol
+from hal import check_commands, cli, exposure_rows
 from home_tools import check
 from home_tools.exposure_check import ExposureRule
 from home_tools.layout import Layout
 
-CLEAN_LINE = "exposure: nothing reaches beyond loopback\n"
+CLEAN_LINE = "✓ nothing reaches beyond loopback\n"
 SSHD_LISTENS_ON_ALL = 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->\n'
 FORBIDDEN_STDIN = """
 class Forbidden:
@@ -86,16 +87,46 @@ def test_a_clean_host_says_so_and_exits_0(run_hal_check):
     assert run_hal_check("exposure", "--allow-list", "ALLOW_LIST") == (0, CLEAN_LINE, "")
 
 
-def test_a_finding_prints_the_table_on_stdout_and_exits_1(run_hal_check):
+def test_sshd_on_all_interfaces_is_one_row_and_a_verdict_and_exits_1(run_hal_check):
     """E2, cell 3."""
     exit_code, out, err = run_hal_check(
         "exposure", "--allow-list", "ALLOW_LIST", ss=SSHD_LISTENS_ON_ALL
     )
 
     assert (exit_code, err) == (1, "")
-    assert out.splitlines()[1].split() == [
-        "listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", "22",
-    ]  # fmt: skip
+    assert [line.split() for line in out.splitlines()] == [
+        ["!", "sshd", "listens", "1", "TCP", "port", "beyond", "loopback"],
+        ["!", "1", "finding"],
+    ]
+
+
+def test_272_listeners_of_one_process_are_one_row(run_hal_check):
+    """E2, cell 2."""
+    sockets = "".join(
+        f'udp UNCONN 0 0 *:{port} *:* users:(("python3",pid=93017,fd=3)) <->\n'
+        for port in range(32000, 32272)
+    )
+
+    exit_code, out, err = run_hal_check("exposure", "--allow-list", "ALLOW_LIST", ss=sockets)
+
+    assert (exit_code, err) == (1, "")
+    assert [re.split(" {2,}", line.strip().removeprefix("! ")) for line in out.splitlines()] == [
+        ["python3", "listens", "272 UDP ports beyond loopback"],
+        ["1 finding · 272 ports · --json lists each"],
+    ]
+
+
+def test_a_process_named_with_an_escape_prints_as_text(run_hal_check):
+    """E2, cell 11: the JSON subject keeps the byte, the terminal never gets it."""
+    socket = 'tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("\x1b[31mx",pid=900,fd=3)) <->\n'
+    arguments = ("exposure", "--allow-list", "ALLOW_LIST")
+
+    _, out, _ = run_hal_check(*arguments, ss=socket)
+    _, json_out, _ = run_hal_check(*arguments, "--json", ss=socket)
+
+    assert "\x1b" not in out
+    assert "\\x1b[31mx" in out
+    assert json.loads(json_out)["exposure"][0]["subject"] == "\x1b[31mx"
 
 
 def test_json_is_one_object_keyed_by_the_area(run_hal_check):
@@ -214,13 +245,29 @@ def test_every_problem_the_scan_reports_has_an_exposure_rule_with_a_level():
     assert {("exposure", rule.value) for rule in ExposureRule} <= set(check.RULE_REPORTS)
 
 
-@pytest.mark.parametrize("problem", list(Problem))
-def test_every_kind_of_finding_shows_in_the_table_and_in_json(problem):
-    """E3, done when: every finding kind shows in text and JSON."""
-    finding = Finding(problem, "subject")
+def finding_of(problem: Problem) -> Finding:
+    """A finding as the scan builds it: a socket problem names a protocol, a routing one a name."""
+    socket_problems = {
+        Problem.PUBLICATION_BEYOND_LOOPBACK,
+        Problem.PUBLICATION_WITHOUT_HOST_IP,
+        Problem.LISTENER_BEYOND_LOOPBACK,
+    }
+    if problem in socket_problems:
+        return Finding(problem, "subject", Protocol.TCP)
+    return Finding(problem, "subject", edge_name="name")
 
-    assert problem.value in inspection.render_table([finding])
+
+@pytest.mark.parametrize("problem", list(Problem))
+def test_every_kind_of_finding_shows_in_the_rows_and_in_json(problem):
+    """E3, done when: every finding kind shows in text and JSON."""
+    finding = finding_of(problem)
+
+    assert [row.subject for row in exposure_rows.rows_of([finding])] == ["subject"]
     assert inspection.as_json_objects([finding])[0]["problem"] == problem.value
+
+
+def test_every_protocol_has_a_port_label():
+    assert set(exposure_rows.PORT_LABELS) == set(Protocol)
 
 
 SENTINEL = "sentinel-4b1d-never-print-me"
