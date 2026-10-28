@@ -174,7 +174,7 @@ HOSTS = {
     "publication on a loopback port range": Host(
         docker=inspect_json(container("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
     ),
-    "publication on a 0.0.0.0 port range names the range": Host(
+    "publication on a 0.0.0.0 port range counts the one port Docker picks": Host(
         docker=inspect_json(container("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
         findings=[finding("publication-beyond-loopback", "ranged", "tcp", "0.0.0.0", "8000-8010")],
     ),
@@ -358,7 +358,7 @@ def test_exits_1_exactly_when_something_reaches_beyond_loopback(run_edge_check, 
 ROWS = {
     "publication on 0.0.0.0": [("grafana", "publishes", "1 TCP port beyond loopback")],
     "publication on ::": [("dns", "publishes", "1 UDP port beyond loopback")],
-    "publication on a 0.0.0.0 port range names the range": [
+    "publication on a 0.0.0.0 port range counts the one port Docker picks": [
         ("ranged", "publishes", "1 TCP port beyond loopback")
     ],
     "publish-all publishes every exposed port not bound explicitly": [
