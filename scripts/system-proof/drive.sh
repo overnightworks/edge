@@ -42,7 +42,7 @@ at_terminal() {  # at_terminal <log> <command>: as tester at a pseudo-terminal, 
 at_coloured_terminal() {  # at_coloured_terminal <log> <command>: as tester at a pseudo-terminal, as a person sees it; the exit code is the command's
     local log=$1 command=$2 code=0
     /proof/terminal.exp "$command" >"$EVIDENCE/$log.log" 2>&1 || code=$?
-    # 26.04's su marks each session with an OSC 3008 context sequence that no person sees; it must not sit in front of a row or glue itself to PROMPTS=.
+    # 26.04's systemd profile script (profile.d/80-systemd-osc-context.sh) makes each login shell emit an OSC 3008 context sequence that no person sees; it must not sit in front of a row or glue itself to PROMPTS=.
     sed -i 's/\x1b\]3008;[^\x1b]*\x1b\\//g' "$EVIDENCE/$log.log"
     return "$code"
 }
