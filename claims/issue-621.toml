@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "eadd4eb5c22e661fb6fa551f193a02a0f5801c5c"
 branch = "claude/issue-621-edge-external-goes"
-scope = ["README.md", "docs/architecture.md", "docs/external.md", "docs/home.md", "docs/stack.md", "external/hosts.tf", "external/main.tf", "quality/baseline.toml", "src/edge/cli.py", "src/edge/external/cli.py", "src/edge/external/host_check.py", "src/home_tools/secrets_manifest.toml", "tests/old_names_baseline.toml", "tests/test_edge_external.py", "tests/test_hal_check.py"]
+scope = ["README.md", "docs/architecture.md", "docs/external.md", "docs/home.md", "docs/stack.md", "external/hosts.tf", "external/main.tf", "quality/baseline.toml", "src/edge/cli.py", "src/edge/external/cli.py", "src/edge/external/host_check.py", "src/home_tools/secrets_manifest.toml", "tests/old_names_baseline.toml", "tests/test_edge_apply_publish.py", "tests/test_edge_external.py", "tests/test_edge_tunnel_files.py", "tests/test_hal_check.py"]
 opened_commit = "9422c10ecd41aa50730f410cec1ca4cb32ce4712"
 whole_reason = "The plan path, its parser and every hint and reader that names it go in one commit; split, a hint names a missing command or the deleted plan strands its tests."
