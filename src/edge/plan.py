@@ -40,6 +40,3 @@ class Plan:
             and self.appkit.changes_nothing
             and self.legal.changes_nothing
         )
-
-    def describe(self) -> list[str]:
-        return self.appkit.describe()

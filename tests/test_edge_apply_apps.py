@@ -163,15 +163,6 @@ def test_an_app_is_planned_and_started_after_one_yes_and_the_next_apply_changes_
     assert app_world.docker.verbs.count("create") == 1
 
 
-def test_the_app_rows_print_after_the_remaining_plan_strings(app_world):
-    app_world.origin.release("v2026.10.22.1")
-
-    exit_code, out, err = app_world.apply("no")
-
-    assert exit_code == 1, err
-    assert out.index("appkit ") < out.index("switch on      ")
-
-
 def test_declining_the_plan_leaves_the_checkout_the_containers_and_the_record_alone(app_world):
     app_world.origin.release("v2026.10.22.1")
 

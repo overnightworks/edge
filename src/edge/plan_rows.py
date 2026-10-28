@@ -4,6 +4,7 @@
 from enum import StrEnum
 
 from edge import core, switches
+from edge.appkit_step import APPKIT_UNIT, TARGETS, AppkitPlan
 from edge.apps import AppKind, AppPlan, AppsPlan, OffPlan, SkippedNote, StaysStoppedNote
 from edge.built_image import ENDS_RUNS, BuiltRecreate
 from edge.legal_step import BlockChange, LegalPlan, PageChange
@@ -32,6 +33,8 @@ class PlanEvent(StrEnum):
     REALM_HELD = "realm held"
     REALM_LATER = "realm later"
     REALM_SKIPPED = "realm skipped"
+    NEW_FILES = "new files"
+    OLD_FILES = "old files"
 
 
 class LegalEvent(TrailingNoun):
@@ -48,11 +51,27 @@ class PlanGroup(StrEnum):
 
 def plan_groups(plan: Plan) -> tuple[Group, ...]:
     return (
-        Group(None, _legal_rows(plan.legal)),
+        Group(None, (*_appkit_rows(plan.appkit), *_legal_rows(plan.legal))),
         Group(PlanGroup.CORE, _core_rows(plan)),
         Group(PlanGroup.UNITS, _unit_rows(plan)),
         Group(PlanGroup.APPS, _app_rows(plan.app_plans)),
     )
+
+
+def _appkit_rows(plan: AppkitPlan) -> tuple[Row, ...]:
+    old_names = ", ".join(sorted({path.name for path in plan.stale}))
+    rows = []
+    if plan.changed:
+        facts = [plan.version]
+        labels = plan.changed_labels
+        if len(labels) < len(TARGETS):
+            facts.append(f"only {', '.join(labels)}")
+        if old_names:
+            facts.append(f"removes {old_names}")
+        rows.append(Row(Glyph.ADD, APPKIT_UNIT, PlanEvent.NEW_FILES, _SEPARATOR.join(facts)))
+    elif old_names:
+        rows.append(Row(Glyph.REMOVE, APPKIT_UNIT, PlanEvent.OLD_FILES, old_names))
+    return tuple(rows)
 
 
 _PAGE_ROWS = (
