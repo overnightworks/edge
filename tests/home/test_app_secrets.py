@@ -599,7 +599,7 @@ def fail_to_verify(_source: TokenSource, _value: str) -> None:
             guided_boundaries(lambda _prompt: "pastedvalue", fail_to_verify),
             [
                 "error: stopped at github/read · unexpected RuntimeError · github/read is not stored",
-                f"next: {RERUN}",
+                "next: hal setup --apply",
             ],
             id="entry failed",
         ),
@@ -618,6 +618,7 @@ def test_hal_setup_apply_ends_a_stop_the_wizard_told_with_the_wizards_pair_alone
     assert not [line for line in lines if "secrets" in line and "✗" in line]
     assert "setup stopped" not in error
     assert "pastedvalue" not in error
+    assert not [line for line in lines if "pastedvalue" in line]
 
 
 def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
