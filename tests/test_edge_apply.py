@@ -3947,7 +3947,8 @@ def test_a_changed_traefik_mcp_yml_while_step_ca_is_disabled_and_gone_is_named_o
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert find_row(out, "traefik-mcp", PlanEvent.NOT_STARTED, held) and "nothing to change" in out
+    assert find_row(out, "traefik-mcp", PlanEvent.NOT_STARTED, held)
+    assert "nothing to change" in out
     assert scripted.changing_verbs() == []
     assert follower_entry(state) == entry
 
