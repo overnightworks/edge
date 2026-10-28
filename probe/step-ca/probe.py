@@ -624,11 +624,12 @@ class Probe(McpNetworks):
         publish(copy, f"probe: step-ca enabled {enabled}")
 
     def hal(
-        self, copy: Path, *arguments: str, terminal: bool, exit_code: int = 0,
+        self, copy: Path, *arguments: str, terminal: bool, fails: bool = False,
         typed: bytes = b"yes\n",
     ) -> str:  # fmt: skip
         if arguments[0] in ("apply", "start"):
             self.guard.expect(edge_copy.copy_compose_command(copy), once=False)
+        exit_code = HAL_FAILURE if fails else 0
         return run_hal(
             copy, self.environment, *arguments, terminal=terminal, exit_code=exit_code, typed=typed
         )
@@ -703,9 +704,7 @@ class Probe(McpNetworks):
         expect("Type" not in out, "apply asked for `yes` with nothing to change")
         expect(not self.containers_of_unit(running_only=True), "apply started a switched-off unit")
 
-        self.hal(
-            copy, "start", "step-ca", terminal=False, exit_code=HAL_FAILURE
-        )  # 4. B x start, no terminal
+        self.hal(copy, "start", "step-ca", terminal=False, fails=True)  # 4. B x start, no terminal
         expect(marker.read_text() == written, "a refused start touched the marker")
 
         self.set_enabled(copy, False)  # 5. B x apply, disabled: to E, marker and volumes stay
@@ -719,9 +718,7 @@ class Probe(McpNetworks):
         expect("nothing of it runs" in out, f"stop in E said: {out[-120:]}")
         expect(marker.read_text() == written, "stop in E touched the marker")
 
-        out = self.hal(
-            copy, "start", "step-ca", terminal=True, exit_code=HAL_FAILURE
-        )  # 7. E x start
+        out = self.hal(copy, "start", "step-ca", terminal=True, fails=True)  # 7. E x start
         expect("disabled in the catalog" in out, f"start in E said: {out[-120:]}")
 
         self.set_enabled(copy, True)  # 8. E x apply, enabled, marker present: to B
@@ -766,9 +763,7 @@ class Probe(McpNetworks):
     def proof_12_apply_runs_the_setup(self) -> None:
         copy = self.start_without_keys()
 
-        out = self.hal(
-            copy, "apply", "--local", terminal=True, exit_code=HAL_FAILURE, typed=b"no\n"
-        )
+        out = self.hal(copy, "apply", "--local", terminal=True, fails=True, typed=b"no\n")
         expect("aborted, nothing changed" in out, f"a no said: {out[-160:]}")  # (i)
         expect(not self.secrets_dir.exists(), "keys exist after a no")
         expect(not self.volumes_that_exist(), "a volume exists after a no")
