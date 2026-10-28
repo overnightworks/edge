@@ -58,7 +58,7 @@ in_log() {
 
 row_in_log() {  # row_in_log <log> <row> <event regex>: a row of hal setup's output, whatever its glyph
     local log=$1 row=$2 event=$3
-    grep -qE -- "^  [^ ]+ $row +$event( |$)" "$EVIDENCE/$log.log"
+    grep -qP -- "^  [^ ]+ $row +$event( |\\r?$)" "$EVIDENCE/$log.log"
     return
 }
 
