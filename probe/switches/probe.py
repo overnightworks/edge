@@ -554,7 +554,7 @@ class Probe:
         )
         expect("Type" not in out, "the kept image asked a question")
         expect(self.container_ids() == before, "the kept image replaced a container")
-        print("#91 Z2 held: probe, hello and both images named; nothing to change; the same ids")
+        print("#91 Z2 held: hello and both images named; nothing to change; the same ids")
 
     def cell_z3_reverted(self) -> None:
         (self.copy / COMPOSE_FILE).write_text(self.compose_before_z2)

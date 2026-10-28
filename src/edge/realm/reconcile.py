@@ -141,9 +141,7 @@ class RealmPlan:
     action: RealmAction = RealmAction.NOTHING
     why: str = ""  # why the realm is applied or held, for RUN and HELD
     error: str = ""  # why Keycloak could not be read, for UNREADABLE
-    restart: RealmRestart | None = (
-        None  # what this run starts of the Keycloak unit, for NOT_CHECKED
-    )
+    restart: RealmRestart | None = None  # the Keycloak unit start of this run, for NOT_CHECKED
     gate: core.Gate | None = None  # the Keycloak unit's gate, for HELD
     entry: dict[str, str] = field(default_factory=dict)  # the inputs as planned, for the record
 
