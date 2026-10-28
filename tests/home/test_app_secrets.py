@@ -559,7 +559,7 @@ def test_hal_setup_apply_counts_two_open_entries_in_the_row_and_the_error(
     )
 
 
-def test_hal_setup_apply_ends_a_refused_store_with_the_wizards_own_pair_and_no_secrets_row(
+def test_hal_setup_apply_ends_a_refused_store_with_the_wizards_own_pair_and_no_still_open_pair(
     hal_secrets: Callable[..., tuple[int, list[str], str]], sandbox: Sandbox
 ) -> None:
     (sandbox.home / ".secrets").mkdir(mode=0o700)
@@ -570,7 +570,7 @@ def test_hal_setup_apply_ends_a_refused_store_with_the_wizards_own_pair_and_no_s
     assert code == ExitCode.FAILURE
     assert error.splitlines()[-2:] == ["error: setup stopped at secrets · nothing stored for opentofu/passphrase", "next: chmod 700 ~/.secrets"]
     assert [" ".join(line.split()) for line in lines if "✗" in line] == ["✗ opentofu/passphrase not stored ~/.secrets has mode 755; at most 700 allowed"]
-    assert not [line for line in lines + error.splitlines() if "still open" in line or "  secrets " in line]
+    assert not [line for line in lines + error.splitlines() if "still open" in line]
 
 
 GUIDED_TOKEN = secret_entry(

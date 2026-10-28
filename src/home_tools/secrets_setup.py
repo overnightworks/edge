@@ -38,6 +38,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from home_tools import secrets_view
 from home_tools.secrets_view import (
+    FindingRule,
     HOME_PREFIX,
     LOOSEST_DIRECTORY_MODE,
     LOOSEST_FILE_MODE,
@@ -260,14 +261,23 @@ def _private_directories(home: Path, directory: Path) -> None:
             raise _refused_below(unfit)
 
 
-def _store_refusal(layout: Layout, place: PurePosixPath) -> StoreRefused | None:
-    """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for."""
+_STRUCTURAL_REFUSALS = frozenset({FindingRule.NOT_A_FOLDER, FindingRule.SYMLINKED_FOLDER})
+
+
+def _store_refusal(layout: Layout, place: PurePosixPath, *, only_structural: bool = False) -> StoreRefused | None:
+    """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for.
+
+    With `only_structural`, a directory that is merely closed or too open ends the look with None: a file or a symlink on
+    the way is the only refusal a walk judges before it can read the entry.
+    """
     for relative in _levels(layout.home, (layout.home / place).parent):
         try:
             mode = (layout.home / relative).lstat().st_mode
         except FileNotFoundError:
             return None  # the store creates this level and every one below it, private
         if unfit := unfit_folder(PurePosixPath(relative), mode):
+            if only_structural and unfit.rule not in _STRUCTURAL_REFUSALS:
+                return None
             return _refused_below(unfit)
     return None
 
@@ -618,6 +628,8 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
             _write_entry_row(Glyph.UNCHANGED, entry.name, WizardEvent.SKIPPED, "optional")
         return None
     if found is Presence.UNKNOWN:
+        if entry.written_by_setup and (refusal := _store_refusal(layout, entry.place, only_structural=True)):
+            raise EntryRefused(entry.name, refusal)
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.NOT_CHECKED, "its folder cannot be read")
         return Step.STILL_MISSING
     return _set_up_or_fail(entry, layout, boundaries, now)
