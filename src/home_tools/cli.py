@@ -52,7 +52,7 @@ Beispiele:
   home setup --apply   richtet quality, die Engines und den Hook ein, then the system step (asks once for sudo)
   home <befehl> --help Einzelheiten zu einem Befehl
 
-Konfiguration: ~/.config/home/config.toml. Anleitung: README.md im Repository home-tools.
+Anleitung: README.md im Repository home-tools.
 """
 
 
@@ -98,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="home",
         add_help=False,
-        description="Zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.",
+        description="Zeigt, was am PC von dir gebraucht wird, und führt durch die Geheimnisse.",
         epilog=EXAMPLES,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

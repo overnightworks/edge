@@ -1,4 +1,4 @@
-"""Tests of `hal check`; the #390 mail tests name the cells of the item's scenario matrix in their docstrings."""
+"""Tests of `hal check`; the mail tests name the cells of the scenario matrix in their docstrings."""
 
 from __future__ import annotations
 

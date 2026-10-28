@@ -1,4 +1,4 @@
-"""`hal check`'s hook check against real git repositories in a sandboxed HOME; the rules are those of overnightworks/home-tools#23."""
+"""`hal check`'s hook check against real git repositories in a sandboxed HOME."""
 
 from __future__ import annotations
 
@@ -289,7 +289,7 @@ def test_git_that_cannot_be_run_makes_the_check_fail_instead_of_clean(machine: M
 
 
 def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_check_as_failed(machine: Machine, capsys) -> None:
-    """#23 rule 1 and 4: `hal check` joins a hook finding into its one report and shows a broken hook check as failed."""
+    """`hal check` joins a hook finding into its one report and shows a broken hook check as failed."""
     delete_quality(machine)
     layout = machine.layout
 

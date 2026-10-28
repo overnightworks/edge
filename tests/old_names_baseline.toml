@@ -115,13 +115,11 @@
 "src/home_tools/cli.py" = 1
 "src/home_tools/secrets_manifest.toml" = 1
 "tests/home/test_commit_hook.py" = 1
-"tests/home/test_hook_check.py" = 1
 "tests/test_edge_global_stop.py" = 1
 "tests/test_edge_tunnel_files.py" = 3
 
 [config-directory]
 "docs/home.md" = 1
-"src/home_tools/cli.py" = 1
 
 [state-directory]
 "docs/home.md" = 2

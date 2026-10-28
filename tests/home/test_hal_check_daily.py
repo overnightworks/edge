@@ -121,7 +121,7 @@ def test_a_bare_hal_check_with_an_invalid_config_names_the_file_once_and_checks_
 
 
 def test_a_tidy_table_in_the_config_is_refused_by_name(hal_check, clean_home) -> None:
-    """#486 D1: the operator's old file holds only a [tidy] table, so the message says to delete it."""
+    """The operator's old file holds only a [tidy] table, so the message says to delete it."""
     config_file = Layout(clean_home).config_file
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text("[tidy]\ntrash_days = 5\n")
