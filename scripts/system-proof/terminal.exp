@@ -9,7 +9,8 @@ set preprompts 0
 set hal_started [expr {![info exists env(PROOF_PREAUTH)]}]
 set interrupted [expr {![info exists env(PROOF_INTERRUPT)]}]
 set interrupt_pattern [expr {[info exists env(PROOF_INTERRUPT)] ? $env(PROOF_INTERRUPT) : "(?!)"}]
-spawn -noecho su - tester -c [join $argv " "]
+# `su -c` alone starts a session without a controlling terminal, so sudo could not read the password; --pty gives the command one.
+spawn -noecho su --pty - tester -c [join $argv " "]
 expect {
     -re {\[sudo[^\]]*\] [Pp]ass[a-z]*[^:\r\n]*: ?} {
         if {$hal_started} { incr prompts } else { incr preprompts }
