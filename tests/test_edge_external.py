@@ -464,7 +464,7 @@ def test_a_cleanup_failure_never_prints_a_token_named_by_the_child(
         assert "PermissionError" in printed.err
         assert write_token not in printed.out + printed.err
     finally:
-        for locked in (home / ".secrets/opentofu/tmp").glob("*/cloudflare-token"):
+        for locked in (home / ".secrets/opentofu/tmp").glob(f"*/{write_token}"):
             locked.chmod(0o700)
 
 
