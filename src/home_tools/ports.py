@@ -37,6 +37,7 @@ class Ports:
 # Looked up per call, so the tests can keep every run's time off this machine's clock.
 MONOTONIC_CLOCK: Callable[[], float] = time.monotonic
 
+
 def build_layout_and_ports(
     home: Path | None = None,
     run: CommandRunner | None = None,
