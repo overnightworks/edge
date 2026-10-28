@@ -766,7 +766,7 @@ def failed_hal_units(runner, *names: str) -> None:
 
 
 def test_a_failed_hal_job_is_an_action_in_services_with_its_words_and_is_remembered_by_unit(clean_home, runner, mail_stub) -> None:
-    """#606 E2: the Services row, the mail, the report and the memory name the unit and nothing else of it."""
+    """The Services row, the mail, the report and the memory name the unit and nothing else of it."""
     failed_hal_units(runner, "hal-backup.service")
 
     code = home_check(clean_home, runner)
@@ -812,6 +812,21 @@ def test_a_failed_backup_unit_and_a_failed_backup_status_are_two_actions(clean_h
     report = Layout(clean_home).check_report_file.read_text()
     assert "job-failed | hal-backup.service" in report
     assert "backup-failed" in report
+
+
+def test_a_container_action_and_a_job_action_are_both_in_services_and_mailed_in_identity_order(clean_home, runner, mail_stub, capsys) -> None:
+    restarting_containers(runner, "edge-a")
+    failed_hal_units(runner, "hal-backup.service")
+
+    home_check(clean_home, runner)
+
+    news = message_of(mail_stub.sent[0]).get_content()
+    assert "! services        2 actions" in capsys.readouterr().out
+    assert "hal-backup.service failed on its last run." in news
+    assert "edge-a" in news
+    assert news.index("edge-a") < news.index("hal-backup.service failed")
+    findings = Layout(clean_home).check_findings_file.read_text()
+    assert findings.index("platform\\tcontainer-") < findings.index("platform\\tjob-failed\\t")
 
 
 def test_systemd_that_cannot_be_read_is_an_action_and_holds_back_container_recoveries(clean_home, runner, mail_stub) -> None:
