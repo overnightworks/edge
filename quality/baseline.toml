@@ -7,7 +7,7 @@
 "Keycloak.admin_api" = 29
 
 [file_lines]
-"probe/keycloak/probe.py" = 2836
+"probe/keycloak/probe.py" = 2831
 "probe/step-ca/probe.py" = 1052
 "src/home_tools/secrets_view.py" = 855
 "tests/home/test_secrets_view.py" = 1088
