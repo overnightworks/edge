@@ -1064,7 +1064,7 @@ def test_a_stopped_run_takes_its_probe_and_everything_it_started_along(
     home = tmp_path / "home"
     home.mkdir()
     environment = {**os.environ, "HOME": str(home), "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"}
-    environment["PYTHONPATH"] = str(Path(secrets_view.__file__).parents[1])
+    environment["PYTHONPATH"] = str(Path(secrets_view.__file__).parents[2])
     run = subprocess.Popen(
         [sys.executable, "-c", HAL_SECRETS_FROM_A_TERMINAL, "secrets"],
         env=environment,
