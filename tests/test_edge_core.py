@@ -2,6 +2,7 @@
 of the core are recorded, their digests, `applied.json`, and which core services a changed compose
 definition recreates in which order, over a `tmp_path` checkout and state directory."""
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -187,24 +188,28 @@ def write_record(record: core.Record, content: str) -> None:
     record.path.write_text(content)
 
 
+def untrusted(sentence: str) -> core.Cause:
+    return core.Cause(core.CauseKind.RECORD_UNTRUSTED, f"RECORD is malformed: {sentence}")
+
+
 @pytest.mark.parametrize(
-    ("content", "problem"),
+    ("content", "expected"),
     [
-        (None, None),
-        ("{}", None),
-        ("not json", "RECORD is malformed: it is not JSON"),
-        ("[]", "RECORD is malformed: it is not an object of services"),
-        ('{"traefik": "abc"}', "RECORD is malformed: the traefik entry is not an object of files"),
+        (None, file_unrecorded(TRAEFIK_FILE)),
+        ("{}", file_unrecorded(TRAEFIK_FILE)),
+        ("not json", untrusted("it is not JSON")),
+        ("[]", untrusted("it is not an object of services")),
+        ('{"traefik": "abc"}', untrusted("the traefik entry is not an object of files")),
         (
             '{"traefik": {"traefik.yml": 1}}',
-            "RECORD is malformed: traefik.yml of traefik is not a digest string",
+            untrusted("traefik.yml of traefik is not a digest string"),
         ),
         ('{"traefik": {"traefik.yml": "0000"}}', file_changed(TRAEFIK_FILE)),
-        ('{"traefik": {"old.yml": "0000"}}', None),
+        ('{"traefik": {"old.yml": "0000"}}', file_unrecorded(TRAEFIK_FILE)),
     ],
 )
 def test_a_record_that_does_not_match_counts_as_changed_and_says_why(
-    content, problem, config, checkout, record
+    content, expected, config, checkout, record
 ):
     """#85 rule 2, cells U1, U3, U4: missing, malformed or other digests count as changed."""
     if content is not None:
@@ -212,15 +217,9 @@ def test_a_record_that_does_not_match_counts_as_changed_and_says_why(
 
     [plan] = plan_of(config, checkout, record)
 
-    if isinstance(problem, core.Cause):
-        expected = problem
-    elif problem:
-        expected = core.Cause(
-            core.CauseKind.RECORD_UNTRUSTED, problem.replace("RECORD", str(record.path))
-        )
-    else:
-        expected = file_unrecorded(TRAEFIK_FILE)
-    assert plan.why == (expected,)
+    assert plan.why == (
+        dataclasses.replace(expected, subject=expected.subject.replace("RECORD", str(record.path))),
+    )
     assert plan.digests == {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}
 
 

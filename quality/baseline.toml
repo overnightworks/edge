@@ -11,7 +11,7 @@
 "probe/step-ca/probe.py" = 1052
 "src/home_tools/secrets_view.py" = 855
 "tests/home/test_secrets_view.py" = 1088
-"tests/test_edge_apply.py" = 4599
+"tests/test_edge_apply.py" = 4597
 "tests/test_edge_backup.py" = 1232
 "tests/test_edge_cloudflare_read.py" = 906
 "tests/test_edge_external.py" = 2792

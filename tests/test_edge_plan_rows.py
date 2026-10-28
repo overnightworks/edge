@@ -566,7 +566,7 @@ def test_a_core_service_that_is_not_running_is_a_row_that_says_it_is_not_started
         ),
     ],
 )
-def test_a_follower_is_one_row_whose_last_fact_is_the_state_of_its_unit(
+def test_a_follower_is_one_row_and_a_waiting_one_ends_with_the_state_of_its_unit(
     action: FollowerAction, gate: Gate, row: Row
 ) -> None:
     assert core_rows_of(followers=(follower_plan(action, gate, FOLLOWER_FILE),)) == (row,)

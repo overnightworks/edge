@@ -2275,7 +2275,7 @@ def test_start_with_any_answer_but_yes_aborts_and_keeps_the_switch(start, script
 
 
 @pytest.mark.usefixtures("agent_service_unit")
-def test_a_row_at_an_agent_service_that_restarts_is_partial_and_never_on(start, scripted, state):
+def test_a_start_of_an_agent_service_that_restarts_is_partial_and_never_on(start, scripted, state):
     """P15, #214: `edge start` decides through the watch, not one look: a login the upstream
     refuses makes the container restart, and the unit stays switched off."""
     switch_off(state, unit="agent-service")
@@ -2318,7 +2318,7 @@ def test_start_keeps_the_running_db_container_whose_image_changed(start, scripte
     assert scripted.container_ids["step-ca"] == db_id
 
 
-def test_row_at_a_disabled_unit_is_refused_and_keeps_its_switch(start, repository, state):
+def test_start_of_a_disabled_unit_is_refused_and_keeps_its_switch(start, repository, state):
     """#60 rule 3 from E: a re-enabled unit stays closed until `edge start`."""
     write_fleet(repository, DISABLED)
     switch_off(state)
@@ -2787,7 +2787,7 @@ def test_start_removes_a_barrier_left_behind_without_a_marker(
     assert not ingress.barrier_file().exists()
 
 
-def test_row_at_a_running_unit_without_marker_or_barrier_changes_nothing(
+def test_start_of_a_running_unit_without_marker_or_barrier_changes_nothing(
     probe_unit, start, scripted, ingress, state
 ):
     """#61 rule 4: nothing recorded and no barrier, so start changes nothing."""
@@ -2903,8 +2903,6 @@ PROBE_STOPPED = DISABLED + "  probe:\n    run: {enabled: true}\n"
 RECREATE_SOCKET_PROXY = [*RECREATE_TRAEFIK[:-1], "socket-proxy"]
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
 SOCKET_PROXY_RECREATED = f"{apply.COMMAND}: socket-proxy is recreated"
-
-
 CORE_CURRENT = "the core is current"
 UNFINISHED = {"traefik": {}}
 
@@ -3425,7 +3423,7 @@ def test_a_failed_socket_proxy_recreate_is_partial_leaves_traefik_unfinished_and
     scripted.failing_verb = None
     _, again, _ = switch("no")
     assert find_row(again, "socket-proxy", PlanEvent.RECREATE, "definition changed")
-    pulled = f"{'the last recreate did not finish'} · socket-proxy is recreated"
+    pulled = "the last recreate did not finish · socket-proxy is recreated"
     assert find_row(again, "traefik", PlanEvent.RECREATE, pulled)
 
 
