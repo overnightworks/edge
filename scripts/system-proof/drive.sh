@@ -1629,6 +1629,12 @@ home_is_untouched() {  # the offenders are listed in the evidence
     return
 }
 
+ansible_tool_has_no_root_bytecode() {  # the offenders are listed in the evidence
+    find /home/tester/.local/share/uv/tools/ansible-core -user root -name __pycache__ >"$EVIDENCE/ansible-bytecode-offenders.txt"
+    [[ ! -s "$EVIDENCE/ansible-bytecode-offenders.txt" ]]
+    return
+}
+
 cell_p_applies() {  # cell_p_applies <cell> <log> <ticket> <prompts>: a successful apply
     local cell=$1 log=$2 ticket=$3 prompts=$4 code announced=true
     at_sudo_terminal "$log" "$ticket" "$APPLY_ARGUMENTS"
@@ -1702,6 +1708,7 @@ cells_sudo() {  # cells_sudo <suffix> <alternative>: P1-P10 under one variant of
     verdict "P0$suffix" "the active sudo is $sudo_alternative" 'active_sudo_is "$sudo_alternative"'
     cell_p_applies "P1$suffix" "p1$suffix" none 1
     verdict "P1$suffix" "the operator's home holds no .ansible and no root-owned file" 'home_is_untouched'
+    verdict "P1$suffix" "the ansible-core tool directory holds no root-owned __pycache__" 'ansible_tool_has_no_root_bytecode'
     cell_p_applies "P2$suffix" "p2$suffix" present 0
     cell_p_fails_in_the_play "P3$suffix" "p3$suffix" none 1
     cell_p_fails_in_the_play "P4$suffix" "p4$suffix" present 0
