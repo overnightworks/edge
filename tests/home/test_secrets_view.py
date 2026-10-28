@@ -120,7 +120,7 @@ def test_a_complete_home_lists_every_entry_and_writes_only_its_report(clean_home
     rows = rows_of(output)
     assert code == 0
     assert set(rows) == {"gitlab", "cloudflared", "gh"}
-    assert {name: row[2] for name, row in rows.items()} == dict.fromkeys(rows, "present")
+    assert {name: row[2] for name, row in rows.items()} == dict.fromkeys(rows, "present") and rows["gitlab"][1] == "token"
     assert {name: row[3] for name, row in rows.items()} == {"gitlab": "not checked", "cloudflared": "not checked"} | {
         "gh": "checked: valid"
     }

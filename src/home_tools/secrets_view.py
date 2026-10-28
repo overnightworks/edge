@@ -77,7 +77,7 @@ class SecretKind(Enum):
 KIND_LABELS = {
     SecretKind.HUMAN_PASSWORD: "human password",
     SecretKind.TOOL_LOGIN: "tool login",
-    SecretKind.TOKEN: "Token",
+    SecretKind.TOKEN: "token",
     SecretKind.SERVICE_PASSWORD: "service password",
     SecretKind.UNVERIFIED_TOKEN: "token, unverified",
     SecretKind.DERIVED_MIRROR: "derived copy",
