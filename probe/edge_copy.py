@@ -1,11 +1,11 @@
-"""What the live-stack probes share: a copy of the repository with its own venv, and `edge` run in
+"""What the live-stack probes share: a copy of the repository with its own venv, and `hal` run in
 it, at a pty or without a terminal (#52 proof 10, #60 proof 11, #61 probe c).
 
-A probe works in the copy so that it flips `fleet.yaml` and lets `edge` write `dynamic/` and the
+A probe works in the copy so that it flips `fleet.yaml` and lets `hal` write `dynamic/` and the
 state under its throwaway HOME without ever touching the checkout it runs from. The copy is the
-live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `edge apply`
+live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `hal apply`
 runs there and never against the operator's HOME (#79 rule 3). It is a clean `main` with a bare
-remote `<scratch>/origin.git`, as `edge apply --closed` requires (its ignored `.env` is written by
+remote `<scratch>/origin.git`, as `hal apply --local` requires (its ignored `.env` is written by
 that apply, #136); a probe publishes every edit it makes there (commit and push) before it
 applies (#95 rule 10). To put the copy behind origin, as a pull request merged elsewhere does, a
 probe advances origin from a work clone `<scratch>/work` (#98 P1). A probe adds this directory and
@@ -238,9 +238,9 @@ def repository_copy(
 ) -> Path:
     """The files of `repository` that git tracks or would track, as the live checkout of `home`: a
     `main` pushed to the bare remote `<scratch>/origin.git`, with its ignored `.env` written by the
-    first `edge apply --closed` and its own venv from `uv sync`. With a `project`, the copy's
+    first `hal apply --local` and its own venv from `uv sync`. With a `project`, the copy's
     compose.yaml names its fixed networks `<project>_...` (namespaced_compose), so the copy's
-    `edge apply` touches no live network. Its fleet.yaml has no app entry (without_inherited_apps),
+    `hal apply` touches no live network. Its fleet.yaml has no app entry (without_inherited_apps),
     with or without a `project`: a probe adds its own fixture apps.
     Copying again over an existing copy publishes what differs."""
     copy = checkout.live_checkout(home)
@@ -308,7 +308,7 @@ def git(tree: Path, *arguments: str) -> None:
     expect(result.returncode == 0, f"git {arguments[0]} exited {result.returncode}: {tail}")
 
 
-def run_edge(
+def run_hal(
     copy: Path,
     environment: Mapping[str, str],
     *arguments: str,
@@ -316,10 +316,10 @@ def run_edge(
     exit_code: int = 0,
     typed: bytes = b"yes\n",
 ) -> str:
-    """`edge <arguments>` in the copy: at a pty with the operator typing `typed`, or with stdin and
+    """`hal <arguments>` in the copy: at a pty with the operator typing `typed`, or with stdin and
     stdout that are no terminal. The whitespace-normalised output of a run that exits
     `exit_code`."""
-    command = [str(copy / ".venv" / "bin" / "edge"), *arguments]
+    command = [str(copy / ".venv" / "bin" / "hal"), *arguments]
     if terminal:
         result = subprocess.run(
             ["script", "-qec", shlex.join(command), DISCARD_OUTPUT],
@@ -335,7 +335,7 @@ def run_edge(
     output = " ".join(ANSI_ESCAPE.sub("", text).split())
     expect(
         result.returncode == exit_code,
-        f"edge {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
+        f"hal {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
         f"{output[-200:]}",
     )
     return output

@@ -58,9 +58,9 @@ class EmergencySwitch:
         return output
 
     def apply_in_background(self) -> subprocess.Popen[bytes]:
-        """`hal apply --closed` at a pty where the operator has typed `yes`."""
+        """`hal apply --local` at a pty where the operator has typed `yes`."""
         probe = self.probe
-        command = shlex.join([str(probe.copy / ".venv" / "bin" / "hal"), "apply", "--closed"])
+        command = shlex.join([str(probe.copy / ".venv" / "bin" / "hal"), "apply", "--local"])
         running = subprocess.Popen(
             ["script", "-qec", command, "/dev/null"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=probe.environment,
