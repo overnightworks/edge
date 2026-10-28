@@ -47,7 +47,7 @@ def hand_written_command_lines(source: str) -> list[int]:
 @pytest.mark.parametrize(
     "source",
     [
-        'MESSAGE = "run hal setup --apply"',
+        'MESSAGE = "run hal setup"',
         'def f(x):\n    return f"hal backup {x}"',
         'NEXT = "run: hal " + verb',
         'NEXT = f"hal {verb}"',
@@ -69,7 +69,7 @@ def test_a_hand_written_command_text_is_found(source):
     "source",
     [
         'def f():\n    """Runs `hal apply` and `hal check`."""',
-        'class C:\n    """hal setup --apply"""',
+        'class C:\n    """hal setup"""',
         'PATH = ".venv/bin/hal"',
         'UNIT = "hal-check.service"',
         'STATE = "~/.local/state/hal"',
@@ -82,7 +82,7 @@ def test_text_that_is_not_a_typed_command_passes(source):
 
 
 def test_a_command_joins_the_program_its_verb_and_its_arguments():
-    assert command(Verb.SETUP, "--apply") == "hal setup --apply"
+    assert command(Verb.SETUP, "--dry-run") == "hal setup --dry-run"
 
 
 def hand_written_command_sites(root: Path, owner: Path) -> list[str]:

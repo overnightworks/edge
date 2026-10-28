@@ -147,13 +147,11 @@ def test_the_run_time_stands_after_the_counts_and_before_the_hint(
 ) -> None:
     """#500: every verdict that knows its run time ends its counts with it."""
 
-    write_verdict(
-        Verdict(Glyph.CHANGE, "setup plan", ((2, Event.CHANGED),), "run hal setup --apply", 3.2)
-    )
+    write_verdict(Verdict(Glyph.CHANGE, "setup plan", ((2, Event.CHANGED),), "run hal setup", 3.2))
     write_verdict(Verdict(Glyph.DONE, "setup done", ((1, Event.CHANGED),), elapsed_seconds=47.9))
 
     assert capsys.readouterr().out.splitlines() == [
-        "~ setup plan · 2 changed · 3s · run hal setup --apply",
+        "~ setup plan · 2 changed · 3s · run hal setup",
         "✓ setup done · 1 changed · 47s",
     ]
 
@@ -179,13 +177,13 @@ def test_a_verdict_is_a_glyph_the_summary_its_counts_and_its_hint_flush_left(
             Glyph.CHANGE,
             "setup plan",
             ((2, Event.CHANGED), (0, Event.SKIPPED), (2, Event.UNCHANGED)),
-            "run hal setup --apply",
+            "run hal setup",
         )
     )
     write_verdict(Verdict(Glyph.DONE, "setup done", ((1, Event.CHANGED),)))
 
     assert capsys.readouterr().out.splitlines() == [
-        "~ setup plan · 2 changed, 2 unchanged · run hal setup --apply",
+        "~ setup plan · 2 changed, 2 unchanged · run hal setup",
         "✓ setup done · 1 changed",
     ]
 

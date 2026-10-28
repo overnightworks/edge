@@ -60,7 +60,7 @@ name = "opentofu/passphrase"
 kind = "service-password"
 paths = ["~/.secrets/opentofu/passphrase"]
 read_by = ["hal apply"]
-recreate = "hal setup --apply"
+recreate = "hal setup"
 purpose = "verschlüsselt den State"
 """
 TOKEN_FILES = (".secrets/cloudflare/read", ".secrets/github/read")
@@ -90,7 +90,7 @@ name = "locked/token"
 kind = "service-password"
 paths = ["~/.secrets/locked/token"]
 read_by = []
-recreate = "hal setup --apply"
+recreate = "hal setup"
 
 [[secret]]
 name = "github/old"
@@ -215,7 +215,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
 
     captured = capsys.readouterr()
     assert end is WalkEnd.ENTRY_FAILED
-    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cloudflare/read is not stored\nnext: hal setup --apply\n")
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cloudflare/read is not stored\nnext: hal setup\n")
     for value in (PASTED_VALUE, *PASTED_VALUE_PARTS):
         assert value not in captured.out + captured.err
     assert files_under(home) == set()
@@ -239,7 +239,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
 
     captured = capsys.readouterr()
     assert end is WalkEnd.ENTRY_FAILED
-    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected PermissionError · cloudflare/read is stored\nnext: hal setup --apply\n")
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected PermissionError · cloudflare/read is stored\nnext: hal setup\n")
     assert PASTED_VALUE not in captured.out + captured.err
     assert (home / TOKEN_FILES[0]).read_text() == PASTED_VALUE
 
@@ -267,7 +267,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
 
     captured = capsys.readouterr()
     assert end is WalkEnd.ENTRY_FAILED
-    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cannot tell whether cloudflare/read is stored\nnext: hal setup --apply\n")
+    assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cannot tell whether cloudflare/read is stored\nnext: hal setup\n")
     assert PASTED_VALUE not in captured.out + captured.err
 
 
@@ -330,7 +330,7 @@ def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
 
     assert end is WalkEnd.ABORTED
     assert files_under(home) == set()
-    assert capsys.readouterr().err == f"\n{expected_error}\nnext: hal setup --apply\n"
+    assert capsys.readouterr().err == f"\n{expected_error}\nnext: hal setup\n"
 
 
 @pytest.fixture
@@ -354,7 +354,7 @@ def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
     end = run_wizard(home, boundaries)
 
     assert end is WalkEnd.ABORTED
-    assert capsys.readouterr().err.endswith("error: interrupted at cloudflare/read · no file half written\nnext: hal setup --apply\n")
+    assert capsys.readouterr().err.endswith("error: interrupted at cloudflare/read · no file half written\nnext: hal setup\n")
     assert {path: (home / path).read_text() for path in files_under(home)} == {TOKEN_FILES[0]: PASTED_VALUE}
 
 
@@ -414,7 +414,7 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     assert end is WalkEnd.STORE_REFUSED
     captured = capsys.readouterr()
     assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read appeared meanwhile and stays unchanged" in squeezed(captured.out)
-    assert captured.err == "error: setup stopped at secrets · nothing stored for cloudflare/read\nnext: hal setup --apply\n"
+    assert captured.err == "error: setup stopped at secrets · nothing stored for cloudflare/read\nnext: hal setup\n"
     assert PASTED_VALUE not in captured.out + captured.err
     assert rival.read_text() == "FAKE-RIVAL-VALUE"
     assert files_under(home) == {".secrets/cloudflare/read"}
@@ -523,15 +523,6 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
 
-def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, capsys) -> None:
-    """#36 rule 2 / #10 line 10: without a terminal --setup is refused and nothing is written."""
-    end = run_wizard(home)
-
-    assert end is WalkEnd.NO_TERMINAL
-    assert capsys.readouterr().err.endswith("error: secrets setup needs your own terminal window · nothing changed\nnext: hal setup --apply in your own terminal window\n")
-    assert list(home.iterdir()) == []
-
-
 def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_read(
     home: Path, verifier: FakeVerifier, capsys
 ) -> None:
@@ -539,7 +530,7 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
     end = run_wizard(home, guided_boundaries(getpass.fallback_getpass, verifier))
 
     assert end is WalkEnd.CANNOT_HIDE_INPUT
-    assert capsys.readouterr().err.endswith("error: this terminal cannot hide what you type · nothing read\nnext: hal setup --apply in another terminal window\n")
+    assert capsys.readouterr().err.endswith("error: this terminal cannot hide what you type · nothing read\nnext: hal setup in another terminal window\n")
     assert verifier.checked == []
     assert files_under(home) == set()
 
@@ -641,3 +632,8 @@ def test_a_service_password_is_generated_fresh_for_each_home(
 
     assert passphrases[0] != passphrases[1]
     assert all(os.path.getsize(tmp_path / name / PASSPHRASE_FILE) >= 64 for name in ("first", "second"))
+
+
+def test_the_real_terminal_fact_is_false_while_stdio_is_captured(capsys: pytest.CaptureFixture[str]) -> None:
+    """A terminal needs both ends: under captured stdio the process the agents run is no terminal, which is what refuses the yes."""
+    assert secrets_setup.TERMINAL_BOUNDARIES.terminal.is_interactive() is False

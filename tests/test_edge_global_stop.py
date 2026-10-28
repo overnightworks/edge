@@ -226,7 +226,7 @@ def test_a_missing_boot_drop_in_is_incomplete_though_the_tunnel_is_stopped(
 
     assert exit_code == 1
     assert "incomplete: a reboot would reopen the tunnel" in output
-    assert "`hal setup --apply`" in output
+    assert "`hal setup`" in output
     assert "home-tools" not in output
     assert not systemd.active
     assert marks.global_mark() is not None

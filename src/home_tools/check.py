@@ -227,7 +227,7 @@ def _container_report(sentence: str, problem: str, resolved: str) -> RuleReport:
 ACTION, NOTE = Level.ACTION, Level.NOTE
 SECRETS_VIEW = f"Run `{command(Verb.SECRETS)}`."
 BACKUP_NOW = f"Run `{command(Verb.BACKUP)}`."
-SETUP_APPLY = f"Run `{command(Verb.SETUP, '--apply')}`."
+SETUP_APPLY = f"Run `{command(Verb.SETUP)}`."
 HOOK_BROKEN = RuleReport(
     ACTION, "The protection that checks every commit for secrets is not working.", SETUP_APPLY,
     resolved="The protection that checks every commit for secrets is working again.",

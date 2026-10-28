@@ -77,7 +77,7 @@ def test_the_runner_shows_ansibles_output_and_reads_its_recap(tmp_path: Path, st
 
 
 def test_the_play_runs_under_sudo_in_its_own_directory_and_sudo_forgets_the_ticket_after_it(tmp_path: Path, stub_sudo: StubSudo) -> None:
-    """Ruled E1: one sudo call runs the play; `sudo -k` follows it, so no ticket outlives `hal setup --apply`."""
+    """Ruled E1: one sudo call runs the play; `sudo -k` follows it, so no ticket outlives `hal setup`."""
     playbook = fake_ansible(tmp_path, "true")
 
     system_step.run_playbook_as_root([str(playbook), "--diff"])

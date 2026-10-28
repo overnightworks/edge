@@ -641,7 +641,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
         _complain(
             STOP_ALL,
             "incomplete: a reboot would reopen the tunnel (the boot drop-in is not installed "
-            f"yet; `{command(Verb.SETUP, '--apply')}` installs it)",
+            f"yet; `{command(Verb.SETUP)}` installs it)",
         )
         return ApplyExit.REFUSED
     _say(

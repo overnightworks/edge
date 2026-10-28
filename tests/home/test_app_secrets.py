@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FakeProbe, Sandbox, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
+from conftest import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
 from secrets_support import FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
 from test_secrets_view import findings_of
 
@@ -73,7 +73,7 @@ def test_hopin_reads_the_keycloak_client_secrets_besides_the_readers_it_joins() 
 def test_the_dry_run_lists_hopins_session_secret_as_missing_and_writes_nothing(
     packaged_home: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    output = run_packaged_setup(packaged_home, capsys)
+    output = run_packaged_setup(packaged_home, capsys, "--dry-run")
 
     assert ["!", "secrets", "missing", "hopin/session-secret"] in [
         line.split() for line in output.splitlines()
@@ -84,7 +84,7 @@ def test_the_dry_run_lists_hopins_session_secret_as_missing_and_writes_nothing(
 def test_apply_generates_hopins_session_secret_unseen_at_0644_in_a_0700_folder_and_a_rerun_keeps_it(
     packaged_home: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    output = run_packaged_setup(packaged_home, capsys, "--apply")
+    output = run_packaged_setup(packaged_home, capsys)
 
     secret = packaged_home.home / HOPIN_SESSION_SECRET
     value = secret.read_text()
@@ -95,7 +95,7 @@ def test_apply_generates_hopins_session_secret_unseen_at_0644_in_a_0700_folder_a
     )
     assert value not in output
 
-    assert value not in run_packaged_setup(packaged_home, capsys, "--apply")
+    assert value not in run_packaged_setup(packaged_home, capsys)
     assert secret.read_text() == value
 
 
@@ -154,7 +154,7 @@ def never_verified(_source: object, _value: str) -> Verdict:
 
 def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: FakeTerminal, disk: FakeSync | None = None) -> tuple[int, str]:
     boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeSync()).sync)
-    code = run_hal_setup("--apply", home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
+    code = run_hal_setup(home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
     captured = capsys.readouterr()
     return code, captured.out + captured.err
 
@@ -285,14 +285,14 @@ name = "opentofu/passphrase"
 kind = "service-password"
 paths = ["~/.secrets/opentofu/passphrase"]
 read_by = []
-recreate = "hal setup --apply"
+recreate = "hal setup"
 
 [[secret]]
 name = "hopin/session-secret"
 kind = "service-password"
 paths = ["~/.secrets/hopin/session-secret"]
 read_by = []
-recreate = "hal setup --apply"
+recreate = "hal setup"
 loosest_mode = 0o644
 loosest_mode_reason = "der Container liest es als eigener Nutzer"
 """
@@ -314,14 +314,14 @@ def run_setup_with_secrets(
         now=datetime(2026, 10, 22, 9, 0),
     )
     captured = capsys.readouterr()
-    return code, captured.out.splitlines(), captured.err
+    return code, lines_of_the_run(captured.out), captured.err
 
 
 def test_the_secrets_step_is_verified_when_the_manifest_has_no_missing_secret(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
-    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
+    run_setup_with_secrets(sandbox, use_manifest, capsys)
+    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--dry-run")
 
     assert (code, lines[-2]) == (0, "  · secrets         complete")
 
@@ -329,7 +329,7 @@ def test_the_secrets_step_is_verified_when_the_manifest_has_no_missing_secret(
 def test_the_dry_run_names_the_missing_secrets_and_writes_nothing(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
+    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--dry-run")
 
     assert (code, lines[-2]) == (
         0,
@@ -342,7 +342,7 @@ def test_apply_names_the_missing_secrets_before_the_wizard_and_says_stored_after
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
     """#491 Lines: ! secrets missing before the wizard, ✓ secrets stored after it."""
-    _, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
+    _, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
 
     secrets_rows = [line for line in lines if "secrets  " in line]
     assert secrets_rows == [
@@ -355,7 +355,7 @@ def test_apply_names_the_missing_secrets_before_the_wizard_and_says_stored_after
 def test_apply_walks_the_missing_secrets_through_the_wizard_and_a_loosest_mode_entry_lands_0644_in_a_0700_folder(
     sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys, "--apply")
+    code, lines, _ = run_setup_with_secrets(sandbox, use_manifest, capsys)
 
     modes = {name: stat.S_IMODE((sandbox.home / name).stat().st_mode) for name in SECRET_FILES}
     folder_modes = {
@@ -372,9 +372,7 @@ def test_apply_stops_at_secrets_with_the_open_count_when_the_wizard_leaves_a_sec
 ) -> None:
     by_hand = '[[secret]]\nname = "gitlab"\nkind = "token"\npaths = ["~/.secrets/gitlab"]\nread_by = []\nrecreate = "von Hand"\n'
     use_manifest(by_hand)
-    code = run_hal_setup(
-        "--apply", home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True)
-    )
+    code = run_hal_setup(home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True))
     captured = capsys.readouterr()
 
     assert code == ExitCode.FAILURE
@@ -383,7 +381,7 @@ def test_apply_stops_at_secrets_with_the_open_count_when_the_wizard_leaves_a_sec
 
 
 def secret_entry(name: str, *, kind: str = "service-password", extra: str = "") -> str:
-    return f'[[secret]]\nname = "{name}"\nkind = "{kind}"\npaths = ["~/.secrets/{name}"]\nread_by = []\nrecreate = "hal setup --apply"\n{extra}\n'
+    return f'[[secret]]\nname = "{name}"\nkind = "{kind}"\npaths = ["~/.secrets/{name}"]\nread_by = []\nrecreate = "hal setup"\n{extra}\n'
 
 
 LIVE = secret_entry("live")
@@ -468,7 +466,7 @@ def test_hal_setup_dry_run_names_only_the_open_secrets(
     for name in present:
         put_secret(sandbox, name)
 
-    code, lines, _ = hal_secrets(entries)
+    code, lines, _ = hal_secrets(entries, "--dry-run")
 
     assert (code, lines[-2]) == (ExitCode.OK, expected)
 
@@ -493,7 +491,7 @@ def closed_folder(sandbox: Sandbox) -> Iterator[None]:
 def test_hal_setup_dry_run_names_an_entry_whose_presence_cannot_be_told_and_does_not_call_it_verified(
     hal_secrets: Callable[..., tuple[int, list[str], str]], entries: str
 ) -> None:
-    code, lines, _ = hal_secrets(entries)
+    code, lines, _ = hal_secrets(entries, "--dry-run")
 
     assert (code, lines[-2]) == (
         ExitCode.OK,
@@ -505,7 +503,7 @@ def test_hal_setup_dry_run_names_an_entry_whose_presence_cannot_be_told_and_does
 def test_hal_setup_apply_fails_the_secrets_step_when_an_entry_cannot_be_checked(
     hal_secrets: Callable[..., tuple[int, list[str], str]],
 ) -> None:
-    code, lines, error = hal_secrets(secret_entry("closed/entry"), "--apply")
+    code, lines, error = hal_secrets(secret_entry("closed/entry"))
 
     assert (
         code,
@@ -517,7 +515,7 @@ def test_hal_setup_apply_fails_the_secrets_step_when_an_entry_cannot_be_checked(
 def test_hal_setup_apply_counts_two_open_entries_in_the_row_and_the_error(
     hal_secrets: Callable[..., tuple[int, list[str], str]],
 ) -> None:
-    code, lines, error = hal_secrets(secret_entry("first", kind="token") + secret_entry("second", kind="token"), "--apply")
+    code, lines, error = hal_secrets(secret_entry("first", kind="token") + secret_entry("second", kind="token"))
 
     assert (code, lines[-1], error.splitlines()[0]) == (
         ExitCode.FAILURE,
@@ -532,7 +530,7 @@ def test_hal_setup_apply_ends_a_refused_store_with_the_wizards_own_pair_and_no_s
     (sandbox.home / ".secrets").mkdir(mode=0o700)
     (sandbox.home / ".secrets").chmod(0o755)
 
-    code, lines, error = hal_secrets(secret_entry("opentofu/passphrase"), "--apply")
+    code, lines, error = hal_secrets(secret_entry("opentofu/passphrase"))
 
     assert code == ExitCode.FAILURE
     assert error.splitlines()[-2:] == ["error: setup stopped at secrets · nothing stored for opentofu/passphrase", "next: chmod 700 ~/.secrets"]
@@ -555,18 +553,10 @@ def fail_to_verify(_source: TokenSource, _value: str) -> None:
     ("boundaries", "expected_error"),
     [
         pytest.param(
-            None,
-            [
-                "error: secrets setup needs your own terminal window · nothing changed",
-                "next: hal setup --apply in your own terminal window",
-            ],
-            id="no terminal",
-        ),
-        pytest.param(
             guided_boundaries(getpass.fallback_getpass, fail_to_verify),
             [
                 "error: this terminal cannot hide what you type · nothing read",
-                "next: hal setup --apply in another terminal window",
+                "next: hal setup in another terminal window",
             ],
             id="cannot hide input",
         ),
@@ -574,7 +564,7 @@ def fail_to_verify(_source: TokenSource, _value: str) -> None:
             guided_boundaries(lambda _prompt: "pastedvalue", fail_to_verify),
             [
                 "error: stopped at github/read · unexpected RuntimeError · github/read is not stored",
-                "next: hal setup --apply",
+                "next: hal setup",
             ],
             id="entry failed",
         ),
@@ -582,12 +572,10 @@ def fail_to_verify(_source: TokenSource, _value: str) -> None:
 )
 def test_hal_setup_apply_ends_a_stop_the_wizard_told_with_the_wizards_pair_alone(
     hal_secrets: Callable[..., tuple[int, list[str], str]],
-    boundaries: Boundaries | None,
+    boundaries: Boundaries,
     expected_error: list[str],
 ) -> None:
-    code, lines, error = hal_secrets(
-        GUIDED_TOKEN, "--apply", at_a_terminal=False, boundaries=boundaries
-    )
+    code, lines, error = hal_secrets(GUIDED_TOKEN, boundaries=boundaries)
 
     assert (code, error.splitlines()[-2:]) == (ExitCode.FAILURE, expected_error)
     assert not [line for line in lines if "secrets" in line and "✗" in line]
@@ -606,7 +594,7 @@ def test_hal_setup_dry_run_reads_no_secret_and_changes_no_mode(
         path: stat.S_IMODE(path.stat().st_mode) for path in (unreadable, unreadable.parent)
     }
 
-    code, lines, _ = hal_secrets(LIVE + secret_entry("absent"))
+    code, lines, _ = hal_secrets(LIVE + secret_entry("absent"), "--dry-run")
 
     assert (code, lines[-2]) == (ExitCode.OK, "  ! secrets         missing        absent")
     assert {path: stat.S_IMODE(path.stat().st_mode) for path in modes_before} == modes_before
@@ -620,7 +608,7 @@ def test_hal_setup_apply_sets_up_the_missing_secrets_and_a_repeated_apply_change
     entries = LIVE + secret_entry(
         "wide", extra='loosest_mode = 0o644\nloosest_mode_reason = "the container reads it"'
     )
-    first_code, first_lines, _ = hal_secrets(entries, "--apply")
+    first_code, first_lines, _ = hal_secrets(entries)
     stored = [sandbox.home / ".secrets" / name for name in ("live", "wide")]
     after_first = [
         (
@@ -632,7 +620,7 @@ def test_hal_setup_apply_sets_up_the_missing_secrets_and_a_repeated_apply_change
         for path in stored
     ]
 
-    second_code, second_lines, _ = hal_secrets(entries, "--apply")
+    second_code, second_lines, _ = hal_secrets(entries)
 
     assert (first_code, first_lines[-3]) == (ExitCode.OK, "  ✓ secrets         stored")
     assert first_lines[-1] == "next: hal apply"
@@ -657,11 +645,11 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(
 
     terminal = secrets_terminal(True)
     code, _, error = hal_secrets(
-        LIVE, "--apply", boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted)
+        LIVE, boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted)
     )
 
     assert code == ExitCode.INTERRUPTED
-    assert "error: interrupted at live · no file half written\nnext: hal setup --apply" in error
+    assert "error: interrupted at live · no file half written\nnext: hal setup" in error
     assert "setup stopped" not in error
     assert "Traceback" not in error
     assert not (sandbox.home / ".secrets" / "live").exists()
@@ -670,7 +658,7 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(
 def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_read(
     hal_secrets: Callable[..., tuple[int, list[str], str]],
 ) -> None:
-    code, lines, error = hal_secrets("secret = 5\n")
+    code, lines, error = hal_secrets("secret = 5\n", "--dry-run")
 
     assert code == ExitCode.FAILURE
     assert lines[-1].startswith("  ✗ secrets         failed")
@@ -711,6 +699,6 @@ def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, bro
     stdout = put_stdout_on_a_terminal(monkeypatch)
     boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeSync().sync)
 
-    run_hal_setup("--apply", home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
+    run_hal_setup(home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
 
     return stdout.getvalue().splitlines()

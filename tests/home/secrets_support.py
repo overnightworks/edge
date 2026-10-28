@@ -83,5 +83,5 @@ def guided_boundaries(ask_hidden: Callable[[str], str], verify: TokenVerifier) -
 
 
 def run_wizard(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES, now: datetime = WIZARD_NOW) -> WalkEnd:
-    """The walk `hal setup --apply` runs for its secrets step, and how it ended."""
+    """The walk `hal setup` runs for its secrets step, and how it ended."""
     return run_setup(Layout(home), boundaries, now)

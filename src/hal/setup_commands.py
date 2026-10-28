@@ -3,21 +3,27 @@
 
 import argparse
 
-from hal.grammar import Asks, Command, ExitCode
+from hal.grammar import Asks, Command, ExitCode, add_dry_run
 from hal_output.command import Verb
 from home_tools import setup
 from home_tools.ports import build_layout_and_ports
+from home_tools.setup import SetupEnd
 
-# `setup` ends 0 or 1, and 1 means a step failed. Naming both keeps a new code from
-# passing as 0.
-EXIT_OF_SETUP: dict[int, ExitCode] = {0: ExitCode.OK, 1: ExitCode.FAILURE}
+EXIT_OF_SETUP: dict[SetupEnd, ExitCode] = {
+    SetupEnd.DONE: ExitCode.OK,
+    SetupEnd.FAILED: ExitCode.FAILURE,
+    SetupEnd.DECLINED: ExitCode.FINDINGS,
+    SetupEnd.NO_TERMINAL: ExitCode.REFUSED,
+}
 
 SETUP_DESCRIPTION = (
-    "Shows what is missing, or with --apply sets up quality, the engines and the hook."
+    "Shows what is missing and asks you to type yes; with --dry-run it only shows."
+    " After the yes it sets up quality, the engines and the hook."
     " Then it links, reloads and enables the checkout's user units"
     " (the backup and hal-check timers), installs Ansible and runs the system step,"
     " edge's cloudflared files and the stop-only polkit rule,"
-    " which asks once for sudo at a terminal; the activation comes before the system step."
+    " which asks once for sudo after the yes; the activation comes before the system step."
+    " Without a terminal it shows what is missing and stops, unless nothing is."
     " The system step makes the journal Docker's default log driver and restarts Docker while its"
     " default driver is not journald: every container stops meanwhile, and one without a restart"
     " policy stays down."
@@ -27,14 +33,12 @@ SETUP_DESCRIPTION = (
 
 def _configure(parser: argparse.ArgumentParser) -> None:
     parser.description = SETUP_DESCRIPTION
-    parser.add_argument(
-        "--apply", action="store_true", help="run the steps instead of only showing them"
-    )
+    add_dry_run(parser)
 
 
 def _setup(arguments: argparse.Namespace) -> ExitCode:
     layout, ports = build_layout_and_ports()
-    return EXIT_OF_SETUP[setup.setup(layout, ports, arguments.apply)]
+    return EXIT_OF_SETUP[setup.setup(layout, ports, arguments.dry_run)]
 
 
 COMMANDS = (

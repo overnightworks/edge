@@ -4,7 +4,7 @@
 # home_tools.system_step runs it as root under one `sudo`, which asks once, and passes `home`,
 # `operator_user`, `edge_tunnel_dir` and `journal_vacuum_days` as extra vars from home's Layout and
 # the running user, and the agents' account name as `agent_user`; nothing here is taken from facts gathered as root. It never starts, stops or
-# restarts cloudflared. Every `--apply` reloads systemd; a dry run does not. An extra reload at the end
+# restarts cloudflared. Every run of `hal setup` reloads systemd; `--dry-run` does not. An extra reload at the end
 # follows only when an edge file or the retired drop-in changed. What it replaces of edge's files is
 # copied to `backup_dir` first, outside /etc/systemd/system, so systemd never loads a backup as a unit
 # or a drop-in; the retention units and rsyslog's conffiles are home's own and are not backed up.

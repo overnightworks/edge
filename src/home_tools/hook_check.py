@@ -19,7 +19,7 @@ from home_tools.setup import HOOK_NAMES, _has_hook_mode, _is_executable, _record
 from home_tools.layout import CommandRunner, Layout, is_git_repo, registered_worktrees
 from hal_output.command import Verb, command
 
-SETUP_APPLY = f"`{command(Verb.SETUP, '--apply')}`"
+SETUP_APPLY = f"`{command(Verb.SETUP)}`"
 HOOKS_PATH_KEY = "core.hookspath"
 SAMPLE_SUFFIX = ".sample"
 

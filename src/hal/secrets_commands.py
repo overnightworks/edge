@@ -1,5 +1,5 @@
 """`hal secrets`: every secret of the manifest, never a value. It only views; the wizard that sets
-up what is missing is `hal setup --apply`. The view is `home_tools.secrets_view`; this module adds
+up what is missing is `hal setup`. The view is `home_tools.secrets_view`; this module adds
 the grammar and the exit code."""
 
 import argparse
@@ -15,7 +15,7 @@ HELP = f"""\
 
 It shows no value and changes nothing except its report file. It needs no terminal; agents
 may run it.
-{command(Verb.SETUP, "--apply")} sets up the missing secrets, at your own terminal.
+{command(Verb.SETUP)} sets up the missing secrets, at your own terminal.
 """
 
 

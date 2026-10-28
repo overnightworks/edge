@@ -1,6 +1,6 @@
 # home-tools
 
-`hal` prüft den PC täglich, zeigt die Geheimnisse (`hal secrets`) und führt mit `hal setup --apply` durch die fehlenden.
+`hal` prüft den PC täglich, zeigt die Geheimnisse (`hal secrets`) und führt mit `hal setup` durch die fehlenden.
 Jeder Befehl erklärt sich mit `hal <command> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
@@ -122,12 +122,12 @@ Korrektur:
   nicht der Scope: lokale Config, Worktree-Config, System-Datei, `include` und
   `includeIf` sind Funde, ebenso ein ungesetzter Wert. Die Korrektur nennt den
   passenden Weg (`git config --local --unset`, `--worktree --unset`, die
-  genannte Datei bearbeiten oder `hal setup --apply`).
+  genannte Datei bearbeiten oder `hal setup`).
 - **Hook-Datei falsch.** `pre-commit` oder `pre-merge-commit` fehlt, hat nicht den Modus 755
-  oder weicht vom gerenderten Text ab (`hal setup --apply`).
+  oder weicht vom gerenderten Text ab (`hal setup`).
 - **quality nicht wie festgelegt.** `~/.local/bin/quality` fehlt, ist nicht ausführbar oder uv hat
-  nicht `QUALITY_SOURCE` aufgezeichnet (`hal setup --apply`).
-- **Engines.** `quality engines verify` scheitert (`hal setup --apply`).
+  nicht `QUALITY_SOURCE` aufgezeichnet (`hal setup`).
+- **Engines.** `quality engines verify` scheitert (`hal setup`).
 - **Verdeckter Repository-Hook.** `.git/hooks` enthält eine Datei außer
   `*.sample`, `pre-commit` und `pre-merge-commit`; der globale Pfad verdeckt sie.
 
@@ -193,7 +193,7 @@ und Treiber jedes Speichers, liest nie einen Nachrichtentext und ändert nichts:
 - **rsyslog-Dateien.** `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err`
   und `ufw.log` samt Archiven unter `/var/log`, nur nach Name und Dasein. Der Fund
   heißt: rsyslog ist zurück (etwa durch ein Paket-Update); der nächste
-  `hal setup --apply` entfernt es und die Dateien wieder.
+  `hal setup` entfernt es und die Dateien wieder.
 
 Lässt sich `docker` oder `journalctl` nicht ausführen oder liefert das Journal
 kein lesbares Ergebnis, ist das ein eigener Fund (`docker-unreadable`,
@@ -215,7 +215,7 @@ hal secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
 `hal secrets` zeigt jedes Geheimnis, das das Manifest
 `src/home_tools/secrets_manifest.toml` nennt, und ändert nichts außer seinem
 Bericht `~/.local/state/home/secrets-report.md`. Es braucht kein Terminal;
-Agenten dürfen es fahren. Einrichten geht nur mit `hal setup --apply` (unten);
+Agenten dürfen es fahren. Einrichten geht nur mit `hal setup` (unten);
 eine Option dafür hat `hal secrets` nicht, ein unbekanntes Argument endet mit Exit 2. Exit-Code: `0` sauber, `1` Funde, `2` das Manifest ist ungültig
 (`error: <Datei>: …`), `3` ein unerwarteter Fehler, `130` unterbrochen.
 
@@ -274,12 +274,12 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 der Assistent das Speichern verweigert. `hal` setzt nie Rechte und ersetzt nichts;
 `chmod` bleibt ein Handgriff.
 
-### Einrichten: `hal setup --apply`
+### Einrichten: `hal setup`
 
 `hal setup` hat dafür den Schritt „Geheimnisse“: Er gilt als erledigt, wenn das Manifest
 auf diesem PC kein offenes Geheimnis hat (nur `stat`); offen ist auch ein Eintrag, dessen
-Vorhandensein sich nicht feststellen lässt. Ohne `--apply` nennt er die offenen in der Zeile
-`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; `--apply` zeigt vor dem Assistenten `! secrets  N missing  a, b` und führt ihn dann aus; er braucht ein eigenes Terminal. Er ist der einzige
+Vorhandensein sich nicht feststellen lässt. Mit `--dry-run` nennt er die offenen in der Zeile
+`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; nach dem yes zeigt `hal setup` vor dem Assistenten `! secrets  N missing  a, b` und führt ihn dann aus; er braucht ein eigenes Terminal. Er ist der einzige
 Weg zum Assistenten; `hal secrets` zeigt nur. Ein Eintrag mit
 `loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
@@ -289,8 +289,8 @@ zuerst die fünf der Publish-Phase von `hal apply`. Gelesen werden davon drei:
 `cloudflare/fleet-write`. `github/fleet-read` und
 `github/fleet-admin` bleiben im Assistenten, aber nichts liest sie, bis
 edge#30 X2/X3 die GitHub-Einstellungen als Code bauen. Es läuft nur am
-eigenen Terminal (stdin und stdout); ohne Terminal endet `hal setup --apply` in der
-Zeile `secrets` mit Exit-Code `3`, bevor der Assistent etwas anfasst. Agenten fahren ihn nie.
+eigenen Terminal (stdin und stdout); ohne Terminal fragt `hal setup` kein yes und endet nach dem Plan mit Exit-Code `4`;
+der Assistent läuft erst nach dem yes. Agenten fahren ihn nie.
 
 Ein Token legt nur an, wer mehr Rechte hat als das Token: GitHub hat für
 Fine-grained-Tokens keine API, und für Cloudflare bräuchte der Assistent
@@ -331,7 +331,7 @@ Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
 `recreate` genannt (`by hand`), ein optionaler, der fehlt, übersprungen (`skipped`, `optional`). Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
 (Exit-Code `130`); der nächste Lauf macht beim ersten fehlenden Eintrag weiter.
-Der Assistent druckt kein eigenes Ende; den Ausgang nennt `hal setup --apply` mit seiner `secrets`-Zeile und seinem Urteil.
+Der Assistent druckt kein eigenes Ende; den Ausgang nennt `hal setup` mit seiner `secrets`-Zeile und seinem Urteil.
 
 Jeder Fall druckt eine Zeile `Zeichen Name Ereignis Tatsache` (Ereignisse: `verified`,
 `generated`, `stored`, `rejected`, `skipped`, `not checked`, `by hand`, `not stored`); ein Eintrag, der
@@ -359,15 +359,15 @@ Beispiel (gekürzt, ein abgelehnter Versuch):
 `opened` zeigt Host und Pfad der Seite, bei einer Abfrage mit `?…`; öffnet kein Browser die
 Seite, steht die ganze Adresse in der gelben Zeile `no browser opened`.
 
-Ist alles gespeichert, folgt dem Urteil von `hal setup --apply` die Zeile
+Ist alles gespeichert, folgt dem Urteil von `hal setup` die Zeile
 `next: hal apply`; es zeigt den Plan vor seinem Ja. Allein gefahren endet
 der Assistent mit der letzten Eintragszeile und dem Exit-Code. Exit-Code: `0` nichts fehlt mehr,
-`1` es fehlt noch etwas, `2` kein Terminal, eines, das die Eingabe nicht
+`1` es fehlt noch etwas, `2` ein Terminal, das die Eingabe nicht
 verbergen kann, Manifest ungültig oder ein unerwarteter Fehler bei einem
 Eintrag, `130` abgebrochen. Strg-C und das Ende der Eingabe nennen den Eintrag, an dem sie trafen.
 Ein unerwarteter Fehler nennt nur seine Art und den Eintrag, nie seine
 Meldung, denn die könnte einen Wert zitieren, dazu, ob dieser
-Eintrag danach gespeichert ist, und `hal setup --apply` zum Weitermachen;
+Eintrag danach gespeichert ist, und `hal setup` zum Weitermachen;
 vorher gespeicherte Einträge bleiben.
 
 `--by-service` dreht `read_by` des Manifests um: je Dienst die Geheimnisse,
@@ -415,9 +415,13 @@ mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it links the checkout's user units and runs the system step.
-Exit: 0 when nothing failed, 3 for a failed step.
-`hal setup` zeigt nur, was es ändern würde; `hal setup --apply` führt es der
-Reihe nach aus und hält beim ersten Fehler an. Both print four rows (below) and a verdict.
+`hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal_output.confirmed`: nur genau `yes`,
+Ende der Eingabe heißt nein, Strg-C wird nicht gefangen) und führt es erst danach der Reihe nach aus; es hält beim ersten Fehler an.
+`hal setup --dry-run` zeigt nur, überspringt das yes und ändert nichts (an einem Terminal fragt sudo trotzdem, um `system` zu prüfen). Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
+als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print four rows (below) and a verdict.
+Exit: 0 fertig oder nichts offen, 1 abgelehnt (`error: aborted, nothing changed`), 3 ein Schritt ist gescheitert (auch eine Prüfung des Plans, ohne Frage), 4 braucht ein Terminal
+(`error: setup asks yes at a terminal · nothing changed`, `next: hal setup in your own terminal window`; der Plan steht, kein Schritt läuft), 130 unterbrochen.
+Ist nichts offen, fragt es nicht und braucht kein Terminal (das trifft nur das Konto des Agenten). `--apply` gibt es nicht: `error: unrecognized arguments: --apply`, Exit 2.
 The activation comes before the user units and the system step, so a wrong
 sudo password never keeps the commit hook from being active; the user units
 come before the system step, which is the one that asks for sudo:
@@ -462,42 +466,41 @@ come before the system step, which is the one that asks for sudo:
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
    restarting Docker while it does not report `journald`.
    It runs as root under one `sudo` call, which asks once; Ansible asks for nothing, and `sudo -k` follows
-   the call, so `hal setup --apply` leaves no cached sudo ticket. Root executes the operator-writable
+   the call, so `hal setup` leaves no cached sudo ticket. Root executes the operator-writable
    `~/.local/bin/ansible-playbook`, the same trust the operator's Ansible had as the producer of root's modules until the
    agents get their own user. sudo logs its whole argv, so the play's extra vars never carry a secret. Ansible keeps its state
    in root's `~/.ansible`, never the operator's; a sudoers that keeps `HOME` would leave a root-owned `~/.ansible`, and
-   `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup --apply` as themselves, never `sudo hal`.
+   `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup` as themselves, never `sudo hal`.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
 (`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
 Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
-and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
-If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 1 with a line saying so.
+and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 3.
+If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 3 with a line saying so.
 
 **The rows.** The eight steps print as four rows, in the form of
 [docs/design/hal-output.html](design/hal-output.html): `commit hook` (quality, Engines,
 Hook-Dateien, Aktivierung), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
 event is its worst step's: failed or not started, then needs you, then changed, then unchanged,
-then skipped. With `--apply` a row says `changed` or `unchanged` (`stored` or `complete` for the
+then skipped. After the yes a row says `changed` or `unchanged` (`stored` or `complete` for the
 secrets), `skipped` for the agent role; a dry run says `will change`, `unchanged`, `not checked`
 (`needs sudo at a terminal`, or `needs Ansible, …` before the Ansible step has installed it) or, for the
 secrets, `missing` with the names (`(by hand)` for an entry only a person can create, `(unknown)` for one whose
 presence `stat` cannot tell). The last line is the verdict, counted over the four rows:
-`✓ setup done · 1 changed, 3 unchanged · 47s`, `~ setup plan · 2 open, 2 unchanged · 3s · run hal setup --apply`
+`✓ setup done · 1 changed, 3 unchanged · 47s`, `~ setup plan · 2 open, 2 unchanged · 3s · run hal setup`
 or `✓ setup up to date · 4 unchanged · 21s`. The run time is whole seconds rounded down (`<1s` under one second, `1m05s` from
 a minute, `1h02m` from an hour) and stands after the counts and before the hint; a failed run ends with the error pair and shows none. A step that fails prints its row as `failed` with its own
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
-the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup --apply`. For the
-system row the error says what /etc is left as: `/etc unchanged` after `not started` (no terminal for
-sudo) or a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup --apply` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. With `--apply` at a terminal the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed when sudo cannot be asked (no terminal, the agent role) or in a dry run. A second
-`--apply` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
+the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup`. For the
+system row the error says what /etc is left as: `/etc unchanged` after a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. After the yes the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed for the agent role or in a dry run. A second
+`--dry-run` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/home_tools/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
 `.git/hooks/<name>` des Repositorys aus (auch im Worktree, über
 `--git-common-dir`) und scannt danach noch einmal, weil ein Repository-Hook
 Dateien stagen kann. Exit `0` heißt sauber, `1` ein Geheimnis gefunden, `2` nicht
 beurteilbar; jeder Wert ungleich `0` bricht den Commit ab. Fehlt `quality`,
-bleibt der Commit gesperrt, bis `hal setup --apply` es wieder einrichtet. Das
+bleibt der Commit gesperrt, bis `hal setup` es wieder einrichtet. Das
 ist gewollt.
 
 ### The system step
@@ -515,7 +518,7 @@ their placeholders filled, to:
 All four are root-owned, mode 644. `@HOME@` and `@OPERATOR_USER@` are your
 home and your user; `@TUNNEL_ID@` is `tunnel:` in `/etc/cloudflared/config.yml`,
 and without it the step fails before writing anything. Once the new base unit
-is in place, `10-root-binary.conf` is deleted. Every `--apply` reloads systemd; a dry run does not.
+is in place, `10-root-binary.conf` is deleted. Every run of `hal setup` reloads systemd; `--dry-run` does not.
 An extra reload at the end follows only when an edge file or the retired drop-in changed;
 cloudflared is never started, stopped or restarted.
 Whatever is replaced or deleted of these files is copied first to
@@ -524,7 +527,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 
 - **Journal retention.** The same run writes `hal-journal-retention.service` and
   `hal-journal-retention.timer` to `/etc/systemd/system` (root, mode 644), enables
-  and starts the timer, and reloads systemd on every `--apply`, so an interrupted run
+  and starts the timer, and reloads systemd on every run, so an interrupted run
   converges on the next. The timer is `OnCalendar=daily` with `Persistent=true`;
   the service runs `journalctl --rotate --vacuum-time=28d`. Nothing restarts
   journald. `LOG_RETENTION_DAYS` (30) in `src/home_tools/system_step.py` is the
@@ -543,14 +546,14 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
     reviewed change to the playbook, in this order: a `systemd_service` task with
     `enabled: false` and `state: stopped` for the timer; an `ansible.builtin.file`
     task with `state: absent` for each of the two units; a reload. Then
-    `hal setup --apply` stops the timer, deletes both units and reloads. Deleted
+    `hal setup` stops the timer, deletes both units and reloads. Deleted
     journal lines do not come back.
 - **rsyslog is removed.** After the refusals below pass, the play purges the package `rsyslog` (apt, no autoremove) and then
   deletes `syslog`, `auth.log`, `kern.log`, `mail.log`, `mail.err` and `ufw.log` with every rotation (`name` and `name.*`
   directly under `/var/log`, files only) **without a copy**, not even to `/var/backups/home-setup`: a copy would outlive the
   30 days. `RSYSLOG_FILE_NAMES` in `src/home_tools/system_step.py` is the one owner of the six names; `hal check` reads the
   same list. The purge comes first, so a running rsyslog cannot recreate a deleted file. Both tasks work by state, so a run
-  interrupted between them is finished by the next `--apply`, and a second one reports `changed=0`. The dry run lists the
+  interrupted between them is finished by the next `hal setup`, and a second one reports `changed=0`. The dry run lists the
   purge and each file it would delete, and changes nothing. `cloud-init.log`, `dpkg.log` and `alternatives.log` stay.
   journald is not changed: it keeps forwarding to a syslog socket nobody listens on, which is harmless.
   - **Where the lines went.** The journal holds the same lines (journald forwards, it does not move them), minus what the
@@ -558,12 +561,12 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
     `journalctl SYSLOG_FACILITY=4 SYSLOG_FACILITY=10`. `mail.log` and `mail.err` held the facility `mail`:
     `journalctl SYSLOG_FACILITY=2`. `kern.log` held the kernel: `journalctl -k -b all`. Narrow any of them with `--since` or
     `-t <identifier>`, for example `journalctl -t sshd --since yesterday`.
-  - **Rollback.** Revert the change, or the next `--apply` purges again; then `sudo apt install rsyslog`. The deleted files do
+  - **Rollback.** Revert the change, or the next `hal setup` purges again; then `sudo apt install rsyslog`. The deleted files do
     not come back. A purge discards a conffile of rsyslog that was modified, and the playbook never copies one first (the
     backup covers edge's files only): `dpkg --verify rsyslog` before the apply names each such file, and a reinstall brings
     back the packaged one.
 - **The mail packages.** After the refusals below pass, the play installs `msmtp` and `ca-certificates` with apt, without
-  Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `--apply` reports `changed=0`.
+  Recommends, so `msmtp-mta` (which would replace the system mailer) stays out; a second `hal setup` reports `changed=0`.
   Postfix is not touched. **Rollback.** `sudo apt-get remove msmtp`; `hal check` then reports "mail failed: msmtp could not deliver via" while
   `~/.secrets/smtp/account.toml` exists.
 - **The agents' account.** The play creates `agent` and nothing runs as it yet. It has its own group only, a
@@ -580,11 +583,11 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   `agent` listed in `/etc/cron.allow`. A `cron.allow` without it denies it already, and `cron.deny` stays as it is.
   The proof checks these file states; that `crontab` itself refuses the agent is not proven, the proof image has no cron.
   A revert keeps the user and its home.
-- **sudo.** At a terminal, both `hal setup` (Ansible's `--check --diff`) and
-  `hal setup --apply` ask once for the sudo password, at the system's own prompt. Without a terminal,
-  the dry run says `! system  not checked  needs sudo at a terminal` and
-  `--apply` ends the row `✗ system  not started` with `error: setup stopped at system · /etc unchanged`
-  and `next: hal setup --apply`; neither waits for a prompt.
+- **sudo.** `hal setup` asks no sudo before its yes. After the yes, at a terminal, the run asks once for the sudo
+  password, at the system's own prompt. `hal setup --dry-run` at a terminal asks once too, for Ansible's `--check --diff`.
+  Without a terminal, `--dry-run` says `! system  not checked  needs sudo at a terminal`, and `hal setup` ends after its plan
+  with `error: setup asks yes at a terminal · nothing changed`, `next: hal setup in your own terminal window` and exit 4, before any step;
+  neither waits for a prompt.
 - **Rollback.** Restore the previous `cloudflared.service`,
   `10-root-binary.conf` and `20-nonroot.conf` from the backup (their content
   before the first run is in the inventory of #9). Restore
@@ -592,13 +595,13 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   has none, because the step created it; until then the global-stop condition
   stays in force. Then run `sudo systemctl daemon-reload`, and remove
   `/etc/polkit-1/rules.d/10-edge-cloudflared-stop.rules`.
-- **A failed `--apply`.** Files are copied in the order above, so some may already be in place, and
+- **A failed `hal setup`.** Files are copied in the order above, so some may already be in place, and
   `10-root-binary.conf` is deleted only after all four are. The `daemon-reload` handler does not run
   after a failure, so systemd may still run its old configuration. Two cases:
   - A failure while copying leaves some files in place and `10-root-binary.conf` still there. Run
-    `hal setup --apply` again: it copies the rest, deletes the drop-in and reloads systemd.
+    `hal setup` again: it copies the rest, deletes the drop-in and reloads systemd.
   - A failure in the reload itself leaves every file in place, `10-root-binary.conf` already deleted
-    and systemd not reloaded. Run `hal setup --apply` again: it reloads systemd on every `--apply`,
+    and systemd not reloaded. Run `hal setup` again: it reloads systemd on every run,
     whatever else it finds to change.
 
   Or roll back as described.
@@ -611,12 +614,12 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   Docker restarts whenever `docker info` does not say `journald`, never while it does, so a run interrupted after the write
   restarts on the next. `live-restore` is off: every container stops with Docker, and one with `unless-stopped` or `always`
   starts again, one without a restart policy or stopped by hand stays down; the apps are unreachable meanwhile and running work
-  is cut. `hal setup` does not wait for it, so run `--apply` at a quiet time. Existing containers keep `json-file` until they are recreated.
+  is cut. `hal setup` does not wait for it, so run `hal setup` at a quiet time. Existing containers keep `json-file` until they are recreated.
   **Rescue.** When the restart fails or Docker does not report `journald`, the run writes `daemon.json` back without `log-driver`
   (`{}` when nothing else remains; the same JSON as before the run, unless the file already carried `journald`), clears the
   unit's start limit with `systemctl reset-failed docker`, restarts Docker again and fails, saying so. No backup is read and
   nothing is deleted. **Rollback.** Revert the change, land a reviewed playbook change that removes `log-driver` and restarts
-  Docker, and run `hal setup --apply`; a plain revert removes nothing. **Residual risks:** Docker stays down, and every app
+  Docker, and run `hal setup`; a plain revert removes nothing. **Residual risks:** Docker stays down, and every app
   with it, when the rescue's restart fails too; and a run interrupted between the write and the rescue with Docker down
   (a hanging restart skips the rescue on Ctrl-C) makes the next apply refuse, because Docker does not answer. Then remove
   `log-driver` from `/etc/docker/daemon.json` by hand; the backup holds the old bytes.
@@ -702,7 +705,7 @@ notify = true
 cd ~/git/edge
 uv sync --locked
 ln -s ~/git/edge/bin/hal ~/.local/bin/hal
-hal setup --apply
+hal setup
 ```
 
 Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
