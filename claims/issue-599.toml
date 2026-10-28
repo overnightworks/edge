@@ -1,8 +1,0 @@
-claim_id = "343c41177ab04ce88b2beaa12ac2dc87"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "c6e12766f2a334dfd07a606f87ef08a76537beba"
-branch = "claude/issue-599-s5-5a-legal-rows"
-scope = ["docs/architecture.md", "docs/design/hal-output.html", "src/edge/legal_step.py", "src/edge/plan.py", "src/edge/plan_rows.py", "src/hal_output/__init__.py", "tests/old_names_baseline.toml", "tests/test_edge_apply_apps.py", "tests/test_edge_apply_legal.py", "tests/test_edge_plan_rows.py", "tests/test_hal_output.py", "tests/test_hal_stop_commands.py"]
-opened_commit = "2ac17413099e4e3c69d5727b2f3aa40072a11031"
-whole_reason = "The legal pages as rows: the typed page and block changes, the counted rows and their detail lines, and the describe strings that die with them land together, so nothing prints twice; the bundled deployed card rides the same lane because it is too small for its own."
