@@ -599,7 +599,7 @@ def test_a_unit_and_an_app_kept_off_that_still_run_are_one_row_each_then_one_err
 
     assert exit_code == 1
     rows = [line for line in plain(out).splitlines() if "still runs" in line]
-    assert [row.split()[1] for row in rows] == ["step-ca", KEY]
+    assert [row.split()[:2] for row in rows] == [["✗", "step-ca"], ["✗", KEY]]
     assert missing_setup.line in rows[0]
     assert err.splitlines() == [
         "error: switched off but still running, nothing switched",

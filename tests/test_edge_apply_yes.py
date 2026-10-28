@@ -11,6 +11,7 @@ from test_edge_apply import (
     DISABLED,
     ENABLED,
     PROBE_ENABLED,
+    TWO_SETUPS,
     ScriptedGit,
     Setup,
     at_terminal,  # noqa: F401 the fixture, requested by name below
@@ -307,13 +308,10 @@ def test_units_still_not_set_up_after_their_setups_ran_end_in_one_error(
     setup_run,  # noqa: F811
     scripted,  # noqa: F811
 ):
-    write_fleet(
-        repository,
-        ENABLED + "  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n",
-    )
+    write_fleet(repository, TWO_SETUPS)
     missing_setup.forgets_after = 4  # two checks asking, two checks after each setup ran
 
-    exit_code, _, err = switch("yes\nyes\nyes")
+    exit_code, _, err = switch("yes\nyes")
 
     assert exit_code == 1
     assert lines_of(err) == [
