@@ -833,7 +833,7 @@ class Probe(McpNetworks):
         intermediate, serial = self.intermediate_now(), self.wait_until_served()["serial_number"]
         self.edit_follower_file(copy)
         out = self.edge(copy, "apply", "--closed", terminal=True)
-        expect("traefik-mcp: recreate (traefik-mcp.yml changed)" in out, f"P13b: {out[-240:]}")
+        expect("traefik-mcp recreate traefik-mcp.yml changed" in out, f"P13b: {out[-240:]}")
         expect("traefik-mcp is recreated and runs the checked-out traefik-mcp.yml" in out, out)
         expect(self.container_id(FOLLOWER) != follower, "P13b: traefik-mcp kept its container")
         expect(self.container_id("step-ca") == step_ca, "P13b: step-ca was recreated")
@@ -870,8 +870,8 @@ class Probe(McpNetworks):
         compose_file.write_text(text)
         publish(copy, "probe: a label on traefik-mcp")
         out = self.edge(copy, "apply", "--closed", terminal=True)
-        expect("traefik-mcp: recreate (its compose definition changed)" in out, out[-240:])
-        expect("step-ca:" not in out, f"P13d: step-ca was named: {out[-240:]}")
+        expect("traefik-mcp recreate definition changed" in out, out[-240:])
+        expect("step-ca recreate" not in out, f"P13d: step-ca was named: {out[-240:]}")
         expect(self.container_id(FOLLOWER) != follower, "P13d: traefik-mcp kept its container")
         expect(self.container_id("step-ca") == step_ca, "P13d: step-ca was recreated")
         self.apply_says_nothing_to_change(copy, "P13d")
@@ -904,7 +904,7 @@ class Probe(McpNetworks):
         self.edit_follower_file(copy)
         out = self.apply_says_nothing_to_change(copy, "P13e")
         expect("step-ca stays stopped" in out, f"P13e: {out[-240:]}")
-        held = "traefik-mcp: traefik-mcp.yml changed; step-ca is switched off, so it is not started"
+        held = "traefik-mcp not started traefik-mcp.yml changed · step-ca is switched off"
         expect(held in out, f"P13e: {out[-240:]}")
         expect(not self.containers_of_unit(running_only=True), "P13e: a container runs")
         expect(marker.read_text() == written, "P13e: apply touched the marker")
@@ -917,11 +917,11 @@ class Probe(McpNetworks):
         print("P13e held: switched off, the held line, nothing to change, nothing running")
 
     def proof_13f_disabled(self, copy: Path) -> None:
-        held = "traefik-mcp: traefik-mcp.yml changed; step-ca is off, so it is not started"
+        held = "traefik-mcp not started traefik-mcp.yml changed · step-ca is off"
         self.set_enabled(copy, False)
         self.edit_follower_file(copy)
         out = self.edge(copy, "apply", "--closed", terminal=True)
-        expect(held in out and "step-ca: off" in out, f"P13f: {out[-240:]}")
+        expect(held in out and "step-ca switch off" in out, f"P13f: {out[-240:]}")
         expect(not self.containers_of_unit(running_only=False), "P13f: containers are left")
         out = self.apply_says_nothing_to_change(copy, "P13f")
         expect(held in out, f"P13f: a second apply said {out[-240:]}")
@@ -931,8 +931,8 @@ class Probe(McpNetworks):
     def proof_13g_switch_on_record(self, copy: Path) -> None:
         self.set_enabled(copy, True)
         out = self.edge(copy, "apply", "--closed", terminal=True)
-        expect("it starts with step-ca" in out, f"P13g: {out[-240:]}")
-        expect("traefik-mcp: recreate" not in out, f"P13g: {out[-240:]}")
+        expect("traefik-mcp starts later" in out and "with step-ca" in out, f"P13g: {out[-240:]}")
+        expect("traefik-mcp recreate" not in out, f"P13g: {out[-240:]}")
         self.wait_until_answering()
         self.wait_until_served()
         entry = self.follower_entry()

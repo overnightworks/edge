@@ -1,6 +1,6 @@
 #!/bin/bash
 # The container proof of `hal setup`'s system step (#40, cells 1-13), of its secrets step (S1) and of the agents'
-# account (#331, cells A1-1 to A1-9), of the mail of `hal check` (#390, cells D1-D8), of rsyslog's removal (#422, cells R0-R7) and of a real Docker engine and the journal as its default log driver (DK1-DK7, #432): a throwaway Ubuntu 24.04 with systemd as PID 1, never the live PC, never the
+# account (#331, cells A1-1 to A1-9), of the mail of `hal check` (#390, cells D1-D8), of rsyslog's removal (#422, cells R0-R7) and of a real Docker engine and the journal as its default log driver (DK1-DK7, #432): a throwaway Ubuntu 26.04 with systemd as PID 1, never the live PC, never the
 # real /etc or ~/.secrets. Cells 14-17 are unit tests (tests/test_next.py).
 #
 #   scripts/system-proof/run.sh <edge checkout> <evidence dir>

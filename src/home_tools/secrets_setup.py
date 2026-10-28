@@ -8,7 +8,7 @@ password is generated and written unseen. A file already present stays untouched
 
 This module also wires the `home secrets` command; its read-only view is `secrets_view`.
 
-Exit code of `--setup`: 0 when nothing is missing any more, 1 when something still is, 2 without a terminal, at one that
+Exit code of `--setup`: 0 when nothing is missing any more, 1 when something still is or the store refuses a place, 2 without a terminal, at one that
 cannot hide the input, with an invalid manifest or after an unexpected error at an entry, 130 after Ctrl-C.
 """
 
@@ -21,6 +21,7 @@ import json
 import os
 import secrets
 import signal
+import stat
 import sys
 import urllib.error
 import urllib.request
@@ -59,10 +60,6 @@ from home_tools.layout import Layout
 
 if TYPE_CHECKING:
     from home_tools.cli import Ports
-
-NO_TERMINAL_EXIT = 2
-ENTRY_FAILED_EXIT = 2
-ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
 
 OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
 PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
@@ -227,8 +224,22 @@ TERMINAL_BOUNDARIES = Boundaries(Terminal(_both_ends_are_a_terminal, input, getp
 # --- the filesystem boundary ------------------------------------------------
 
 
+def as_command(text: str) -> str:
+    """An owner quotes a whole command in backticks; the operator is shown it bare."""
+    inner = text.removeprefix("`").removesuffix("`")
+    return inner if text != inner and "`" not in inner else text
+
+
 class StoreRefused(Exception):
-    """A secret could not be written where the manifest puts it; the message names the place, never a value."""
+    """A secret could not be written where the manifest puts it.
+
+    `reason` names the place, never a value; `fix` is the operator's one bare command, empty when there is none.
+    """
+
+    def __init__(self, reason: str, fix: str = "") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.fix = fix
 
 
 def _levels(home: Path, directory: Path) -> tuple[Path, ...]:
@@ -237,8 +248,8 @@ def _levels(home: Path, directory: Path) -> tuple[Path, ...]:
     return (*reversed(relative.parents[:-1]), relative)
 
 
-def _refused_below(unfit: SecretFinding) -> str:
-    return f"{unfit.subject} {unfit.detail}: first {unfit.fix}"
+def _refused_below(unfit: SecretFinding) -> StoreRefused:
+    return StoreRefused(f"{unfit.subject} {unfit.detail}", as_command(unfit.fix))
 
 
 def _private_directories(home: Path, directory: Path) -> None:
@@ -247,18 +258,27 @@ def _private_directories(home: Path, directory: Path) -> None:
         with contextlib.suppress(FileExistsError):
             (home / relative).mkdir(mode=LOOSEST_DIRECTORY_MODE)
         if unfit := unfit_folder(PurePosixPath(relative), (home / relative).lstat().st_mode):
-            raise StoreRefused(_refused_below(unfit))
+            raise _refused_below(unfit)
 
 
-def _store_refusal(layout: Layout, place: PurePosixPath) -> SecretFinding | None:
-    """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for."""
+_OWNER_SEARCH_BIT = 0o100
+
+
+def _store_refusal(layout: Layout, place: PurePosixPath, *, unless_unsearchable: bool = False) -> StoreRefused | None:
+    """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for.
+
+    With `unless_unsearchable`, a directory its owner cannot search (no owner x bit) ends the look with None: the walk
+    cannot read below it, so it reports the entry as not checked instead of naming a refusal it cannot see through.
+    """
     for relative in _levels(layout.home, (layout.home / place).parent):
         try:
             mode = (layout.home / relative).lstat().st_mode
         except FileNotFoundError:
             return None  # the store creates this level and every one below it, private
         if unfit := unfit_folder(PurePosixPath(relative), mode):
-            return unfit
+            if unless_unsearchable and stat.S_ISDIR(mode) and not mode & _OWNER_SEARCH_BIT:
+                return None
+            return _refused_below(unfit)
     return None
 
 
@@ -405,14 +425,9 @@ def stored_row(entry: SecretEntry) -> Row:
     return Row(Glyph.DONE, entry.name, WizardEvent.GENERATED, f"{where} · never shown")
 
 
-def _stored(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> bool:
-    try:
-        store_new_secret(layout, entry.place, value, boundaries.sync, entry.loosest_mode)
-    except StoreRefused as refused:
-        _write_entry_row(Glyph.FAILED, entry.name, WizardEvent.NOT_STORED, str(refused))
-        return False
+def _store(entry: SecretEntry, layout: Layout, boundaries: Boundaries, value: str) -> None:
+    store_new_secret(layout, entry.place, value, boundaries.sync, entry.loosest_mode)
     write_row(stored_row(entry))
-    return True
 
 
 def _paste_unseen(terminal: Terminal) -> str:
@@ -478,7 +493,10 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
     write_detail(*guide.briefing(entry, source, now))
     _offer_page(boundaries.terminal, guide.page(entry, source))
     value = _accepted_paste(entry, source, boundaries)
-    return value is not None and _stored(entry, layout, boundaries, value)
+    if value is None:
+        return False
+    _store(entry, layout, boundaries, value)
+    return True
 
 
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
@@ -489,7 +507,9 @@ def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Bou
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
         _skipped(entry)
-    return bool(value) and _stored(entry, layout, boundaries, value)
+        return False
+    _store(entry, layout, boundaries, value)
+    return True
 
 
 class Step(Enum):
@@ -522,6 +542,15 @@ class EntryInterrupted(Exception):
         super().__init__(entry_name)
         self.entry_name = entry_name
         self.cause = cause
+
+
+class EntryRefused(Exception):
+    """The store refused the place of one entry; the walk stops there, so one row and one pair say so."""
+
+    def __init__(self, entry_name: str, refusal: StoreRefused) -> None:
+        super().__init__(entry_name)
+        self.entry_name = entry_name
+        self.refusal = refusal
 
 
 class EntryFailed(Exception):
@@ -569,6 +598,8 @@ def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, 
         raise EntryInterrupted(entry.name, Interruption.INPUT_ENDED) from None
     except getpass.GetPassWarning:
         raise
+    except StoreRefused as refusal:
+        raise EntryRefused(entry.name, refusal) from None
     except Exception as error:
         raise EntryFailed(entry.name, error, _presence_on_disk(entry, layout)) from None
 
@@ -578,14 +609,14 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.recreate}")
         return Step.BY_HAND
     if refusal := _store_refusal(layout, entry.place):
-        _write_entry_row(Glyph.FAILED, entry.name, WizardEvent.NOT_STORED, _refused_below(refusal))
-        return Step.STILL_MISSING
+        raise refusal
     if entry.source:
         stored = _set_up_token(entry, entry.source, layout, boundaries, now)
     elif entry.kind is SecretKind.UNVERIFIED_TOKEN:
         stored = _set_up_unverified_token(entry, layout, boundaries)
     else:
-        stored = _stored(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES))
+        _store(entry, layout, boundaries, secrets.token_urlsafe(PASSPHRASE_BYTES))
+        stored = True
     return Step.STORED if stored else Step.STILL_MISSING
 
 
@@ -597,16 +628,34 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
             _write_entry_row(Glyph.UNCHANGED, entry.name, WizardEvent.SKIPPED, "optional")
         return None
     if found is Presence.UNKNOWN:
+        if entry.written_by_setup and (refusal := _store_refusal(layout, entry.place, unless_unsearchable=True)):
+            raise EntryRefused(entry.name, refusal)
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.NOT_CHECKED, "its folder cannot be read")
         return Step.STILL_MISSING
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
-STILL_OPEN_EXIT = 1
+class WalkEnd(Enum):
+    """How the wizard's walk ended: the exit code the command returns, and whether the walk already wrote its own error pair."""
+
+    DONE = (0, False)
+    STILL_OPEN = (1, False)
+    NO_TERMINAL = (2, True)
+    CANNOT_HIDE_INPUT = (2, True)
+    ENTRY_FAILED = (2, True)
+    STORE_REFUSED = (1, True)
+    ABORTED = (130, True)  # the shell's code for a run ended by Ctrl-C
+
+    def __new__(cls, exit_code: int, wrote_its_pair: bool) -> WalkEnd:
+        member = object.__new__(cls)
+        member._value_ = len(cls.__members__)  # equal pairs stay distinct members
+        member.exit_code = exit_code
+        member.wrote_its_pair = wrote_its_pair
+        return member
 
 
-def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
-    """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
+def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
+    """Every live entry in manifest order; the end says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
     by_hand: list[SecretEntry] = []
     for entry in live_entries():
@@ -615,19 +664,19 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    return STILL_OPEN_EXIT if still_open or by_hand else 0
+    return WalkEnd.STILL_OPEN if still_open or by_hand else WalkEnd.DONE
 
 
 SETUP_NEXT_STEP = "hal setup --apply"
 
 
-def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
+def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
         write_error(
             "secrets setup needs your own terminal window · nothing changed",
             "hal setup --apply in your own terminal window",
         )
-        return NO_TERMINAL_EXIT
+        return WalkEnd.NO_TERMINAL
     try:
         return _walk(layout, boundaries, now)
     except EntryInterrupted as interrupted:
@@ -636,16 +685,20 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             SETUP_NEXT_STEP,
             fresh_line=True,
         )
-        return ABORTED_EXIT
+        return WalkEnd.ABORTED
     except getpass.GetPassWarning:
         write_error(
             "this terminal cannot hide what you type · nothing read",
             "hal setup --apply in another terminal window",
         )
-        return NO_TERMINAL_EXIT
+        return WalkEnd.CANNOT_HIDE_INPUT
+    except EntryRefused as refused:
+        _write_entry_row(Glyph.FAILED, refused.entry_name, WizardEvent.NOT_STORED, refused.refusal.reason)
+        write_error(f"setup stopped at secrets · nothing stored for {refused.entry_name}", refused.refusal.fix or SETUP_NEXT_STEP)
+        return WalkEnd.STORE_REFUSED
     except EntryFailed as failed:
         write_error(failed.report(), SETUP_NEXT_STEP)
-        return ENTRY_FAILED_EXIT
+        return WalkEnd.ENTRY_FAILED
 
 
 # --- the `home secrets` command --------------------------------------------
@@ -659,14 +712,14 @@ Examples:
 Without --setup it never shows a value and changes nothing except the report
 ~/.local/state/home/secrets-report.md. It needs no terminal; agents may run it.
 --setup runs only at your own terminal; agents never run it.
-Exit code: 0 clean, 1 findings (with --setup: something is still missing), 2 invalid manifest, no terminal or
+Exit code: 0 clean, 1 findings (with --setup: something is still missing or the store refuses a place), 2 invalid manifest, no terminal or
 an unexpected error at one secret, 3 any other unexpected error, 130 interrupted.
 """
 
 
 def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     if args.setup:
-        return run_setup(layout, ports.secrets_setup, ports.now)
+        return run_setup(layout, ports.secrets_setup, ports.now).exit_code
     return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)
 
 

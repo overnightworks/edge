@@ -7,10 +7,10 @@ from test_edge_apply import (
     DISABLED,
     ENABLED,
     IMAGE,
+    OLD_IMAGE,
     RECREATE_FOLLOWER,
     RECREATE_TRAEFIK,
     STEP_CA_BUMP,
-    STEP_CA_KEPT,
     STEP_CA_ON,
     STEP_CA_SERVICES,
     applied_core,  # noqa: F401 the fixture, requested by name below
@@ -34,12 +34,13 @@ from test_edge_apply import (
     up_calls,
     write_fleet,
 )
+from test_edge_plan_rows import find_row
+
+from edge.plan_rows import PlanEvent
 
 RECREATE_STEP_CA = [*RECREATE_TRAEFIK[:-1], "step-ca"]
 RECREATE_KEYCLOAK_DB = [*RECREATE_TRAEFIK[:-1], "keycloak-db"]
 RECREATE_KEYCLOAK = [*RECREATE_TRAEFIK[:-1], "keycloak"]
-STEP_CA_RECREATE_LINE = "step-ca: recreate step-ca (its compose definition changed)"
-KEYCLOAK_RECREATE_LINE = "keycloak: recreate keycloak (its compose definition changed)"
 LOCAL_TAG = "edge-local:1"
 REBUILT_IMAGE_ID = f"sha256:{'f' * 64}"
 KEYCLOAK_DB_IMAGE = f"postgres:18@sha256:{'5' * 64}"
@@ -103,7 +104,9 @@ def test_a_changed_definition_recreates_a_running_unit_service_alone_then_nothin
 
     assert exit_code == 0
     assert out.count("apply exactly this plan") == 1
-    assert (STEP_CA_RECREATE_LINE in out) == ("step-ca" in drifted)
+    assert bool(find_row(out, "step-ca", PlanEvent.RECREATE, "definition changed")) == (
+        "step-ca" in drifted
+    )
     assert up_calls(scripted) == recreated
     assert {service for service in ids if scripted.container_ids[service] != ids[service]} == set(
         drifted
@@ -127,7 +130,7 @@ def test_a_declined_yes_recreates_nothing(
     exit_code, out, err = switch(answer="no")
 
     assert exit_code == 1
-    assert STEP_CA_RECREATE_LINE in out
+    assert find_row(out, "step-ca", PlanEvent.RECREATE, "definition changed")
     assert "aborted, nothing changed" in err
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids
@@ -149,8 +152,8 @@ def test_keycloak_is_recreated_alone_with_its_database_and_volume_kept_and_its_r
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert KEYCLOAK_RECREATE_LINE in out
-    assert "realm: not checked, Keycloak starts now; the next `hal apply` checks it" in out
+    assert find_row(out, "keycloak", PlanEvent.RECREATE, "definition changed")
+    assert PlanEvent.REALM_LATER in out
     assert up_calls(scripted) == [RECREATE_KEYCLOAK]
     assert scripted.container_ids["keycloak"] != ids["keycloak"]
     assert {s: scripted.container_ids[s] for s in ids if s != "keycloak"} == {
@@ -173,7 +176,7 @@ def test_a_recreate_of_only_the_keycloak_database_holds_the_realm_check_and_says
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "realm: not checked, its database restarts now; the next `hal apply` checks it" in out
+    assert PlanEvent.REALM_LATER in out
     assert "Keycloak starts now" not in out
 
 
@@ -207,8 +210,8 @@ def test_an_image_change_is_named_and_a_definition_change_beside_it_recreates_no
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert STEP_CA_KEPT in out
-    assert "step-ca: recreate" not in out
+    assert OLD_IMAGE in out
+    assert not find_row(out, "step-ca", PlanEvent.RECREATE)
     assert up_calls(scripted) == [RECREATE_FOLLOWER]
 
 
@@ -225,8 +228,8 @@ def test_a_unit_switched_off_by_its_marker_stays_stopped_whatever_its_definition
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert "step-ca stays stopped" in out
-    assert "recreate" not in out
+    assert find_row(out, "step-ca", PlanEvent.STAYS_STOPPED)
+    assert not find_row(out, "step-ca", PlanEvent.RECREATE)
     assert scripted.changing_verbs() == []
 
 
@@ -261,8 +264,8 @@ def test_a_disabled_unit_is_only_switched_off_not_recreated(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "step-ca: off" in out
-    assert "recreate step-ca" not in out
+    assert find_row(out, "step-ca", PlanEvent.SWITCH_OFF)
+    assert not find_row(out, "step-ca", PlanEvent.RECREATE)
     assert up_calls(scripted) == []
 
 
@@ -278,7 +281,7 @@ def test_a_unit_planned_on_is_started_without_recreating_its_running_service(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "recreate step-ca" not in out
+    assert not find_row(out, "step-ca", PlanEvent.RECREATE)
     assert up_calls(scripted) == [
         ["--profile", "step-ca", "up", "-d", "--no-recreate", *STEP_CA_SERVICES]
     ]
@@ -412,6 +415,6 @@ def test_a_local_tag_that_names_another_image_than_the_container_runs_is_named_n
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert (STEP_CA_RECREATE_LINE in out) == recreated
-    assert ("never swaps the image" in out) == rebuilt
+    assert bool(find_row(out, "step-ca", PlanEvent.RECREATE)) == recreated
+    assert (OLD_IMAGE in out) == rebuilt
     assert up_calls(scripted) == ([RECREATE_STEP_CA] if recreated else [])

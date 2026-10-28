@@ -8,11 +8,11 @@ import pytest
 import test_edge_apply as base
 import yaml
 from test_edge_apply import (
+    ENABLED,
     LABELLED_IMAGE_ID,
-    NEVER_SWAPS,
+    OLD_IMAGE,
     RECREATE_TRAEFIK,
     STEP_CA_BUMP,
-    STEP_CA_KEPT,
     SWITCHED_OFF_AT,
     ZONE,
     ScriptedCompose,
@@ -20,10 +20,10 @@ from test_edge_apply import (
     up_calls,
     write_fleet,
 )
+from test_edge_plan_rows import find_row
 
-from edge import core
-from edge.built_image import ENDS_RUNS
-from edge.unit_plans import KEPT_IMAGE_OWNER, stays_stopped_line
+from edge import switches
+from edge.plan_rows import PlanEvent
 
 BUMPED_TAG = "edge-agent-service:9.9.9-2.1.302"
 REBUILT_ID = f"sha256:{'e' * 64}"
@@ -31,7 +31,8 @@ BUMPED_ID = f"sha256:{'d' * 64}"
 OTHER_ID = f"sha256:{'c' * 64}"
 RECREATE_AGENT_SERVICE = [*RECREATE_TRAEFIK[:-1], "agent-service"]
 RECREATE_EGRESS = [*RECREATE_TRAEFIK[:-1], "agent-egress"]
-DEFINITION_LINE = f"agent-service: recreate agent-service ({core.DEFINITION_CHANGED}); {ENDS_RUNS}"
+DEFINITION_FACT = "definition changed"
+SWITCHED_OFF_SINCE = f"switched off since {switches.describe_since(SWITCHED_OFF_AT)}"
 
 
 # The fixtures of `test_edge_apply` this module's tests request by name.
@@ -96,15 +97,12 @@ def bump(scripted: BuildingCompose) -> str:
     return old
 
 
-def bump_line(old: str) -> str:
-    return (
-        f"agent-service: recreate agent-service (image {old} \N{RIGHTWARDS ARROW} {BUMPED_TAG}); "
-        f"{ENDS_RUNS}"
-    )
+def recreate_row(out: str, fact: str = "") -> bool:
+    return find_row(out, "agent-service", PlanEvent.RECREATE, fact) is not None
 
 
-def rebuilt_line(reference: str) -> str:
-    return f"agent-service: recreate agent-service (the image {reference} was rebuilt); {ENDS_RUNS}"
+def bump_fact(old: str) -> str:
+    return f"image {old} \N{RIGHTWARDS ARROW} {BUMPED_TAG}"
 
 
 def show_container_id(scripted: BuildingCompose) -> None:
@@ -124,7 +122,7 @@ def test_a_reference_bump_recreates_agent_service_once_under_the_one_yes(running
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert bump_line(old) in out
+    assert recreate_row(out, bump_fact(old))
     assert out.count("apply exactly this plan") == 1
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
     assert scripted.container_ids["agent-service"] != ids["agent-service"]
@@ -154,10 +152,29 @@ def test_a_rebuilt_tag_names_the_reference_never_an_id(running, switch, scripted
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert rebuilt_line(reference) in out
+    assert recreate_row(out, f"image {reference} rebuilt")
     assert LABELLED_IMAGE_ID not in out
     assert REBUILT_ID not in out
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
+
+
+def test_a_rebuilt_tag_of_a_service_two_enabled_profiles_share_gives_one_old_image_row(
+    step_ca_applied, switch, scripted, repository
+):
+    """Decision 4: each kept image prints as exactly one row."""
+    service = scripted.config["services"]["step-ca"]
+    service["image"] = "step-ca:local"
+    service["profiles"].append("echo")
+    scripted.config["services"]["echo"] = {"profiles": ["echo"]}
+    write_fleet(repository, ENABLED + "  echo:\n    run: {enabled: true}\n")
+    assert switch()[0] == 0
+    scripted.images["step-ca"] = "step-ca:local"
+    scripted.image_ids["step-ca:local"] = REBUILT_ID
+    scripted.change_definition("step-ca")
+
+    _, out, _ = switch()
+
+    assert out.count(OLD_IMAGE) == 1
 
 
 def test_a_bump_beside_a_definition_change_gives_the_bump_line_once(running, switch, scripted):
@@ -167,9 +184,9 @@ def test_a_bump_beside_a_definition_change_gives_the_bump_line_once(running, swi
 
     _, out, _ = switch()
 
-    assert bump_line(old) in out
-    assert out.count("recreate agent-service") == 1
-    assert core.DEFINITION_CHANGED not in out
+    assert recreate_row(out, bump_fact(old))
+    assert out.count(f"  {PlanEvent.RECREATE} ") == 1
+    assert not recreate_row(out, DEFINITION_FACT)
 
 
 def test_a_bump_whose_old_tag_is_gone_gives_the_definition_line_not_an_id(
@@ -181,7 +198,7 @@ def test_a_bump_whose_old_tag_is_gone_gives_the_definition_line_not_an_id(
 
     _, out, _ = switch()
 
-    assert DEFINITION_LINE in out
+    assert recreate_row(out, DEFINITION_FACT)
     assert LABELLED_IMAGE_ID not in out
     assert "image sha256" not in out
 
@@ -193,7 +210,7 @@ def test_a_definition_change_alone_gives_the_definition_line(running, switch, sc
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert DEFINITION_LINE in out
+    assert recreate_row(out, DEFINITION_FACT)
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
 
 
@@ -202,14 +219,16 @@ def test_a_restarting_container_on_the_old_image_is_recreated_before_the_switch_
 ):
     """M6, the incident: the crash-looping 0.7.0 container is replaced, and the unit's `on` keeps
     the new one."""
-    old = bump(scripted)
+    bump(scripted)
     scripted.containers["agent-service"] = "restarting"
     ids = dict(scripted.container_ids)
 
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.index(bump_line(old)) < out.index("agent-service: on (")
+    assert find_row(out, "agent-service", PlanEvent.RECREATE).start() < (
+        find_row(out, "agent-service", PlanEvent.SWITCH_ON).start()
+    )
     assert up_calls(scripted)[0] == RECREATE_AGENT_SERVICE
     assert "--no-recreate" in up_calls(scripted)[1]
     assert scripted.container_ids["agent-service"] != ids["agent-service"]
@@ -230,7 +249,7 @@ def test_an_exited_sibling_switches_the_unit_on_and_recreates_only_a_differing_i
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert ("recreate agent-service" in out) is differing
+    assert recreate_row(out) is differing
     assert [call for call in up_calls(scripted) if "--force-recreate" in call] == (
         [RECREATE_AGENT_SERVICE] if differing else []
     )
@@ -260,7 +279,7 @@ def test_an_agent_service_without_a_container_gets_no_line_and_is_created_as_is(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert "recreate agent-service" not in out
+    assert not recreate_row(out)
     assert "--no-recreate" in switch_on_call(scripted)
     assert scripted.containers["agent-service"] == "running"
 
@@ -278,7 +297,7 @@ def test_a_bump_to_an_unbuilt_tag_is_planned_after_the_setup_ran(
 
     assert exit_code == 0
     assert len(setup_run.commands) == 1
-    assert bump_line(old) in out
+    assert recreate_row(out, bump_fact(old))
     assert up_calls(scripted) == [RECREATE_AGENT_SERVICE]
 
 
@@ -289,8 +308,7 @@ def test_an_image_of_a_unit_that_is_not_built_is_only_named(step_ca_applied, swi
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert STEP_CA_KEPT in out
-    assert f"{NEVER_SWAPS} it does not build" in out
+    assert OLD_IMAGE in out
     assert scripted.changing_verbs() == []
 
 
@@ -305,8 +323,8 @@ def test_a_switched_off_agent_service_stays_stopped_and_is_not_recreated(
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert stays_stopped_line("agent-service", SWITCHED_OFF_AT) in out
-    assert "recreate agent-service" not in out
+    assert find_row(out, "agent-service", PlanEvent.STAYS_STOPPED, SWITCHED_OFF_SINCE)
+    assert not recreate_row(out)
     assert scripted.changing_verbs() == []
 
 
@@ -320,8 +338,8 @@ def test_a_switched_off_agent_service_with_a_running_container_gets_no_kept_imag
     exit_code, out, _ = switch(answer="no")
 
     assert exit_code == 0
-    assert stays_stopped_line("agent-service", SWITCHED_OFF_AT) in out
-    assert KEPT_IMAGE_OWNER not in out
+    assert find_row(out, "agent-service", PlanEvent.STAYS_STOPPED, SWITCHED_OFF_SINCE)
+    assert OLD_IMAGE not in out
     assert scripted.changing_verbs() == []
 
 
@@ -383,7 +401,7 @@ def test_an_up_that_fails_before_replacing_the_container_plans_the_recreate_agai
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert bump_line(old) in out
+    assert recreate_row(out, bump_fact(old))
     assert scripted.image_of("agent-service") == BUMPED_TAG
 
 
@@ -402,8 +420,8 @@ def test_a_new_container_that_crash_loops_is_partial_and_the_next_run_plans_only
     exit_code, out, err = switch()
 
     assert exit_code == 1
-    assert "recreate agent-service" not in out
-    assert "agent-service: on (" in out
+    assert not recreate_row(out)
+    assert find_row(out, "agent-service", PlanEvent.SWITCH_ON)
     assert "agent-service is not on after the change" in err
 
 
@@ -526,5 +544,5 @@ def test_a_tag_removed_by_hand_plans_no_recreate_and_still_asks_the_setup(
 
     assert exit_code == 0
     assert len(setup_run.commands) == 1
-    assert "recreate agent-service" not in out
+    assert not recreate_row(out)
     assert scripted.changing_verbs() == []

@@ -74,6 +74,7 @@ import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
 from edge import apply, checkout, compose, core, tunnel  # noqa: E402
+from edge.plan_rows import PlanEvent  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
@@ -109,7 +110,7 @@ PROBE_SERVICES = ("hello", "hello-mcp")
 WHOAMI_ANCHOR = f"image: &whoami {WHOAMI_IMAGE}"
 WHOAMI_ALIAS = "image: *whoami"
 RESPELLED_WHOAMI = f"docker.io/{WHOAMI_IMAGE}"  # the same digest, so nothing is pulled
-NEVER_SWAPS = "edge apply never swaps the image of a running unit"
+OLD_IMAGE = str(PlanEvent.OLD_IMAGE)
 
 
 class Probe:
@@ -123,6 +124,7 @@ class Probe:
             "COMPOSE_PROJECT_NAME": PROJECT,
             "EDGE_DOMAIN": DOMAIN,
             "DOCKER_GID": str(grp.getgrnam("docker").gr_gid),
+            "NO_COLOR": "1",
         }
         self.environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
         self.copy = checkout.live_checkout(self.home)
@@ -298,7 +300,7 @@ class Probe:
         before = self.container_ids()["traefik"]
         out = self.edge("apply", "--closed", terminal=True)  # also starts hello
         expect(
-            "traefik: recreate (traefik.yml has no applied record)" in out and RECREATED in out,
+            "traefik recreate traefik.yml has no applied record" in out and RECREATED in out,
             f"the first apply said: {out[-200:]}",
         )
         expect(self.container_ids()["traefik"] != before, TRAEFIK_KEPT)
@@ -366,7 +368,7 @@ class Probe:
         self.edit_traefik_yml()
         out = self.edge("apply", "--closed", terminal=True)
         expect(
-            "traefik: recreate (traefik.yml changed)" in out and RECREATED in out,
+            "traefik recreate traefik.yml changed" in out and RECREATED in out,
             f"apply after the edit said: {out[-200:]}",
         )
         expect(self.container_ids()["traefik"] != before, TRAEFIK_KEPT)
@@ -393,7 +395,7 @@ class Probe:
         self.edit_traefik_yml()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         expect(
-            "traefik: traefik.yml changed; it is not running and is not started" in out
+            "traefik not started traefik.yml changed · not running" in out
             and NOTHING_TO_CHANGE in out,
             f"apply with traefik stopped said: {out[-200:]}",
         )
@@ -455,8 +457,9 @@ class Probe:
         self.label_core_service("socket-proxy", "q2")
         before, after, out = self.apply_core_change()
         expect(
-            "socket-proxy: recreate (its compose definition changed)" in out
-            and "socket-proxy is recreated)" in out  # traefik's plan line, P5's edit may join it
+            "socket-proxy recreate definition changed" in out
+            and "traefik recreate" in out
+            and out.count("socket-proxy is recreated") == 2  # the fact of traefik's row, the result
             and out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT),
             f"apply after the socket-proxy label said: {out[-400:]}",
         )
@@ -472,8 +475,8 @@ class Probe:
         self.label_core_service("traefik", "q3")
         before, after, out = self.apply_core_change()
         expect(
-            "traefik: recreate (its compose definition changed)" in out
-            and "socket-proxy: recreate" not in out
+            "traefik recreate definition changed" in out
+            and "socket-proxy recreate" not in out
             and RECREATED in out,
             f"apply after the traefik label said: {out[-300:]}",
         )
@@ -543,11 +546,8 @@ class Probe:
         self.respell_hello_image()
         before = self.container_ids()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
-        named = (
-            f"{UNIT}: hello runs {WHOAMI_IMAGE}, compose.yaml names {RESPELLED_WHOAMI}; "
-            "edge apply never swaps the image of a running unit"
-        )
-        lines = [line for line in out.splitlines() if NEVER_SWAPS in line]
+        named = f"compose.yaml {RESPELLED_WHOAMI.split('@')[0]}@"
+        lines = [line for line in out.splitlines() if OLD_IMAGE in line and "hello" in line]
         print(f"#91 Z2 the line: {lines!r}")
         expect(
             len(lines) == 1 and named in lines[0] and NOTHING_TO_CHANGE in out,
@@ -555,7 +555,7 @@ class Probe:
         )
         expect("Type" not in out, "the kept image asked a question")
         expect(self.container_ids() == before, "the kept image replaced a container")
-        print("#91 Z2 held: probe, hello and both images named; nothing to change; the same ids")
+        print("#91 Z2 held: hello and both images named; nothing to change; the same ids")
 
     def cell_z3_reverted(self) -> None:
         (self.copy / COMPOSE_FILE).write_text(self.compose_before_z2)
@@ -563,7 +563,7 @@ class Probe:
         before = self.container_ids()
         out = self.edge("apply", "--closed", terminal=True, typed=b"no\n")
         expect(
-            NEVER_SWAPS not in out and NOTHING_TO_CHANGE in out,
+            OLD_IMAGE not in out and NOTHING_TO_CHANGE in out,
             f"apply after the revert said: {out[-400:]}",
         )
         expect(self.container_ids() == before, "the revert replaced a container")

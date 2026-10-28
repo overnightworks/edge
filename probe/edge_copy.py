@@ -34,6 +34,7 @@ APPLY_SECONDS = 600
 NOT_RUNNABLE = 3  # a probe's exit when its preconditions fail, before it touches anything
 HAL_OK, HAL_FAILURE = 0, 3  # hal's exits: 3 is every outcome of the stack that is not "done"
 DISCARD_OUTPUT = "/dev/null"
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")  # hal colours its rows at a pty
 REMOTE = "origin.git"
 WORK_CLONE = "work"
 # The probe's own identity, in the copy's config: its git reads no global one (checkout's local
@@ -330,7 +331,8 @@ def run_edge(
             command, stdin=subprocess.DEVNULL, capture_output=True, env=environment,
             cwd=copy, check=False, timeout=APPLY_SECONDS,
         )  # fmt: skip
-    output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
+    text = (result.stdout + result.stderr).decode(errors="replace")
+    output = " ".join(ANSI_ESCAPE.sub("", text).split())
     expect(
         result.returncode == exit_code,
         f"edge {' '.join(arguments)} exited {result.returncode}, wanted {exit_code}: "
