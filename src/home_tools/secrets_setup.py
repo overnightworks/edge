@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote, urlencode, urlsplit
 
 from hal_output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
+from hal_output.command import Verb, command
 from home_tools import secrets_view
 from home_tools.secrets_view import (
     HOME_PREFIX,
@@ -667,14 +668,14 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     return WalkEnd.STILL_OPEN if still_open or by_hand else WalkEnd.DONE
 
 
-SETUP_NEXT_STEP = "hal setup --apply"
+SETUP_NEXT_STEP = command(Verb.SETUP, "--apply")
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
         write_error(
             "secrets setup needs your own terminal window · nothing changed",
-            "hal setup --apply in your own terminal window",
+            f"{SETUP_NEXT_STEP} in your own terminal window",
         )
         return WalkEnd.NO_TERMINAL
     try:
@@ -689,7 +690,7 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     except getpass.GetPassWarning:
         write_error(
             "this terminal cannot hide what you type · nothing read",
-            "hal setup --apply in another terminal window",
+            f"{SETUP_NEXT_STEP} in another terminal window",
         )
         return WalkEnd.CANNOT_HIDE_INPUT
     except EntryRefused as refused:

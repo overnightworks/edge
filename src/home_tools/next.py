@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from hal_output import Row
+from hal_output.command import Verb, command
 from home_tools import hook_check, secrets_setup, secrets_view, setup
 from home_tools.secrets_view import FindingRule, Presence, SecretEntry, SecretFinding, Verification
 from home_tools.layout import Layout
@@ -154,7 +155,7 @@ def _secrets_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep | Book
 
 def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
     for finding in hook_check.collect_findings(layout, ports.run):
-        cleared = f"hal check meldet {finding.rule} für {finding.subject} nicht mehr"
+        cleared = f"{command(Verb.CHECK)} meldet {finding.rule} für {finding.subject} nicht mehr"
         if finding.fix == hook_check.SETUP_APPLY:
             yield _setup_apply_step(ports, cleared)
         else:
@@ -164,8 +165,8 @@ def _hook_steps(layout: Layout, ports: Ports) -> Iterator[OperatorStep]:
 # Most blocking first: a folder state blocks the wizard, the secrets block edge, the hook guards every commit.
 SOURCES = (
     Source("die Geheimnisse", _secrets_steps, "home secrets"),
-    Source("den Stand von hal setup", _setup_steps, "hal setup"),
-    Source("die Hook-Prüfung", _hook_steps, "hal check"),
+    Source(f"den Stand von {command(Verb.SETUP)}", _setup_steps, command(Verb.SETUP)),
+    Source("die Hook-Prüfung", _hook_steps, command(Verb.CHECK)),
 )
 
 
@@ -241,7 +242,7 @@ def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
         "next",
         help="what you need to do now, each step with its exact command",
         description=(
-            "Shows the steps only you can do, from hal setup, home secrets and the hook check,"
+            f"Shows the steps only you can do, from {command(Verb.SETUP)}, home secrets and the hook check,"
             " and counts in one line what an agent sorts out; changes nothing."
         ),
         epilog=NEXT_EXAMPLES,

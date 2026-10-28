@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from edge import checkout, core
+from hal_output.command import Verb, command
 
 
 class Effect(StrEnum):
@@ -12,7 +13,7 @@ class Effect(StrEnum):
 
     LIVE = "live once updated"
     RECREATED = "recreated by edge apply"
-    REALM = "applied by hal apply (the realm step)"
+    REALM = f"applied by {command(Verb.APPLY)} (the realm step)"
     UV_SYNC = "stops for `uv sync`"
     NOT_APPLIED = "not applied by edge apply (block 6)"
     OTHER = "other"

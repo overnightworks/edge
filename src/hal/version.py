@@ -11,6 +11,7 @@ from pathlib import Path
 from edge import checkout
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import printable, write_error
+from hal_output.command import PROGRAM, Verb, command
 
 # The tree this code lives in, looked up when the command runs: an installed wheel has none.
 CODE_TREE = Path(__file__).resolve().parents[2]
@@ -33,7 +34,9 @@ def run(arguments: argparse.Namespace) -> ExitCode:
     try:
         line = describe(checkout.Git(tree, runner))
     except checkout.GitError as error:
-        write_error(f"cannot read the checkout {printable(str(tree))}, {error}", "hal version -v")
+        write_error(
+            f"cannot read the checkout {printable(str(tree))}, {error}", command(Verb.VERSION, "-v")
+        )
         return ExitCode.FAILURE
     print(printable(line))
     return ExitCode.OK
@@ -44,7 +47,7 @@ def describe(git: checkout.Git) -> str:
     commit = git.short()
     branch = git.branch()
     where = branch if branch else f"detached at {commit}"
-    return " · ".join([f"hal {commit}", where, _tree(git.changed_paths()), _standing(git)])
+    return " · ".join([f"{PROGRAM} {commit}", where, _tree(git.changed_paths()), _standing(git)])
 
 
 def _tree(changed: Sequence[str]) -> str:
@@ -77,4 +80,6 @@ def _echoing(runner: checkout.Runner) -> checkout.Runner:
     return echo
 
 
-COMMAND = Command("version", "name the code that runs", run, configure, json=False, asks=Asks.NEVER)
+COMMAND = Command(
+    Verb.VERSION, "name the code that runs", run, configure, json=False, asks=Asks.NEVER
+)

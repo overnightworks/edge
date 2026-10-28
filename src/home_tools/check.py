@@ -23,6 +23,7 @@ from types import MappingProxyType
 from enum import StrEnum
 
 from hal_output import Glyph, Noun, Row, Verdict, printable, write_error, write_row, write_verdict
+from hal_output.command import Verb, command
 from home_tools import backup_check, exposure_check, hook_check, logs_check, mail, platform_check, secrets_view
 from home_tools.exposure_check import ExposureReader, ExposureRule
 from home_tools.logs_check import LOG_DIRECTORY
@@ -156,7 +157,7 @@ def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     total = sum(len(result.finding_identities) for result in results)
     failed = [result.name for result in results if result.error]
     failed_clause = f" | failed: {', '.join(failed)}" if failed else ""
-    header = f"# hal check {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
+    header = f"# {command(Verb.CHECK)} {now:%d.%m.%Y %H:%M} | {findings_count(total)}{failed_clause}"
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
 
@@ -225,8 +226,8 @@ def _container_report(sentence: str, problem: str, resolved: str) -> RuleReport:
 
 ACTION, NOTE = Level.ACTION, Level.NOTE
 HOME_NEXT = "Run `home next`."
-BACKUP_NOW = "Run `hal backup`."
-SETUP_APPLY = "Run `hal setup --apply`."
+BACKUP_NOW = f"Run `{command(Verb.BACKUP)}`."
+SETUP_APPLY = f"Run `{command(Verb.SETUP, '--apply')}`."
 HOOK_BROKEN = RuleReport(
     ACTION, "The protection that checks every commit for secrets is not working.", SETUP_APPLY,
     resolved="The protection that checks every commit for secrets is working again.",
@@ -284,7 +285,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
         resolved="The routing name of {subject} can be used again.",
     ),
 }
-BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", "Run `hal check`.", resolved="The {area} check runs again.")
+BROKEN_CHECK_REPORT = RuleReport(ACTION, "The {area} check did not run.", f"Run `{command(Verb.CHECK)}`.", resolved="The {area} check runs again.")
 # The areas in the order the mail names them, by the check that owns each.
 AREAS = (
     ("platform", "Services"),

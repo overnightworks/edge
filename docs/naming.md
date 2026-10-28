@@ -58,6 +58,8 @@ files.
 A check mark means the name already conforms. The repo and `~/git/<stem>` are
 always the stem.
 
+The `hal` command's name and verbs have one code owner, `hal_output.command`; every command text in `src/` is built from it, and `tests/test_command_texts.py` turns a hand-written `hal <verb>` red.
+
 | Stem (was) | Distribution(s) | Import(s) | CLI | Units / compose | Sonar key | Hosts and Keycloak (unchanged) |
 |---|---|---|---|---|---|---|
 | `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco serve` | none | `overnightworks_aco` | none until AC2, then `/apps/aco` |

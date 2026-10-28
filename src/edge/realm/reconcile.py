@@ -48,6 +48,7 @@ from edge.realm.observe import (
 )
 from edge.unit_plans import Action, Recreate, UnitPlan
 from hal_output import printable
+from hal_output.command import PROGRAM, Verb, command
 
 REALM_UNIT = "keycloak"
 KEYCLOAK_SERVICE = "keycloak"
@@ -301,7 +302,7 @@ class Backup:
     def installed(cls, repository: Path, say: Say) -> "Backup":
         """`say` carries the step's lines while a stopped hal is waited for."""
         return cls(
-            (str(repository / ".venv" / "bin" / "hal"),),
+            (str(repository / ".venv" / "bin" / PROGRAM),),
             partial(run_edge_backup, say=say),
         )
 
@@ -314,7 +315,7 @@ class Backup:
         except (ValueError, KeyError, TypeError):
             snapshot = None
         if not isinstance(snapshot, str):
-            raise RealmError("hal backup named no pre-apply snapshot")
+            raise RealmError(f"{command(Verb.BACKUP)} named no pre-apply snapshot")
         return snapshot
 
     def restore_test(self, snapshot: str) -> None:

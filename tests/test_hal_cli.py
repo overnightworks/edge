@@ -25,6 +25,7 @@ from git_support import (
 
 from hal import backup_commands, check_commands, cli, legal_commands, stack_commands
 from hal.grammar import Asks, Command, ExitCode
+from hal_output.command import Verb
 
 LOCK = SOURCE.parent / "uv.lock"
 DEADLINE_SECONDS = 30
@@ -129,11 +130,11 @@ def test_a_command_without_json_refuses_the_flag(tmp_path, command):
 
 def test_a_command_that_declares_json_offers_the_flag():
     report = Command(
-        "report", "print a report", lambda arguments: ExitCode.OK, lambda p: None,
+        Verb.CHECK, "print a report", lambda arguments: ExitCode.OK, lambda p: None,
         json=True, asks=Asks.NEVER,
     )  # fmt: skip
 
-    parsed = cli.build_parser([report]).parse_args(["report", "--json"])
+    parsed = cli.build_parser([report]).parse_args(["check", "--json"])
 
     assert parsed.json is True
 

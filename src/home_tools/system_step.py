@@ -20,6 +20,7 @@ from pathlib import Path
 
 from home_tools import secrets_setup
 from home_tools.layout import Layout
+from hal_output.command import Verb, command
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
 # The agents' own OS account: the play creates it dormant, and `hal setup` skips the operator's steps for exactly this user.
@@ -50,7 +51,7 @@ class CheckState(Enum):
 
 
 NEEDS_A_TERMINAL = "sudo at a terminal"
-NEEDS_ANSIBLE = "Ansible, which `hal setup --apply` installs first"
+NEEDS_ANSIBLE = f"Ansible, which `{command(Verb.SETUP, '--apply')}` installs first"
 
 
 class Applied(Enum):

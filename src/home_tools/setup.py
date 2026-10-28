@@ -19,6 +19,7 @@ from shlex import quote
 from typing import TYPE_CHECKING
 
 from hal_output import Glyph, Noun, Row, Verdict, counted, write_error, write_row, write_verdict
+from hal_output.command import Verb, command
 from home_tools import secrets_setup
 from home_tools.secrets_setup import WalkEnd
 from home_tools.secrets_view import ManifestError, Presence, SecretEntry
@@ -52,8 +53,8 @@ SYSTEM_WHY = (
 )
 SUDO_WILL_BE_ASKED_FOR = "tunnel, polkit, journal, mail, agent account"
 SKIPPED_FOR_THE_AGENT = "the operator's step"
-RERUN = "hal setup --apply"
-APPLY_PLAN = "hal apply"
+RERUN = command(Verb.SETUP, "--apply")
+APPLY_PLAN = command(Verb.APPLY)
 
 
 class SetupRow(StrEnum):

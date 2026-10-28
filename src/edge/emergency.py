@@ -35,6 +35,7 @@ from edge import (
 )
 from edge.apply import ApplyExit
 from edge.switch_events import BarrierPart, CannotPlan, Closing, Interruption, StopPart
+from hal_output.command import Verb, command
 
 STOP = "edge stop"
 START = "edge start"
@@ -639,7 +640,7 @@ def stop_all(marks: switches.Switches, now: datetime, door: tunnel.Tunnel) -> in
         _complain(
             STOP_ALL,
             "incomplete: a reboot would reopen the tunnel (the boot drop-in is not installed "
-            "yet; `hal setup --apply` installs it)",
+            f"yet; `{command(Verb.SETUP, '--apply')}` installs it)",
         )
         return ApplyExit.REFUSED
     _say(

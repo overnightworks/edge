@@ -15,6 +15,7 @@ from hal import config as hal_config
 from hal import exposure_rows
 from hal.grammar import Asks, Command, ExitCode
 from hal_output import write_error
+from hal_output.command import Verb, command
 from home_tools import check as daily_check
 from home_tools import secrets_view
 from home_tools.cli import build_layout_and_ports
@@ -25,13 +26,14 @@ EXPOSURE = "exposure"
 HOSTS = "hosts"
 
 
+CHECK = command(Verb.CHECK)
 HELP = f"""\
-hal check             the daily check: services, backup, commit hook, secrets, server logs,
+{CHECK}             the daily check: services, backup, commit hook, secrets, server logs,
                       exposure; it writes the report and mails and pops up what is new, as the
                       timer's run does
                       settings: ~/.config/hal/config.toml, table [check] (docs/home.md)
-hal check {EXPOSURE}    what reaches beyond loopback on this PC
-hal check {HOSTS}       what Cloudflare holds against the hosts fleet.yaml declares
+{command(Verb.CHECK, EXPOSURE)}    what reaches beyond loopback on this PC
+{command(Verb.CHECK, HOSTS)}       what Cloudflare holds against the hosts fleet.yaml declares
 """
 
 
@@ -61,7 +63,7 @@ def _run_hosts(as_json: bool) -> ExitCode:
 
     outcome = external.run_host_check(Path.home(), as_json=as_json, emit=emit)
     for line in outcome.cause:
-        write_error(f"hal check: {HOSTS}: cannot check, {line}")
+        write_error(f"{command(Verb.CHECK)}: {HOSTS}: cannot check, {line}")
     return _HOST_CHECK_EXIT[outcome.exit_code]
 
 
@@ -102,11 +104,14 @@ def _run_daily() -> ExitCode:
 
 def _run(arguments: argparse.Namespace) -> ExitCode:
     if arguments.allow_list is not None and arguments.area != EXPOSURE:
-        write_error("--allow-list belongs to one area", f"hal check {EXPOSURE} --allow-list FILE")
+        write_error(
+            "--allow-list belongs to one area",
+            command(Verb.CHECK, EXPOSURE, "--allow-list", "FILE"),
+        )
         return ExitCode.USAGE
     if arguments.area is None:
         if arguments.json:
-            write_error("--json belongs to one area", f"hal check {EXPOSURE} --json")
+            write_error("--json belongs to one area", command(Verb.CHECK, EXPOSURE, "--json"))
             return ExitCode.USAGE
         return _run_daily()
     if arguments.area == HOSTS:
@@ -114,7 +119,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
     try:
         findings = inspection.inspect(arguments.allow_list or inspection.DEFAULT_ALLOW_LIST)
     except inspection.ExposureCheckError as error:
-        write_error(f"hal check: {EXPOSURE}: cannot check, {error}")
+        write_error(f"{command(Verb.CHECK)}: {EXPOSURE}: cannot check, {error}")
         return ExitCode.FAILURE
     if arguments.json:
         print(json.dumps({EXPOSURE: inspection.as_json_objects(findings)}, indent=2))
@@ -125,7 +130,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
 
 COMMANDS = (
     Command(
-        "check",
+        Verb.CHECK,
         "run the daily check, or one area: what reaches beyond loopback, what Cloudflare holds",
         _run,
         _configure,

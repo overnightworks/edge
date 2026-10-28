@@ -13,6 +13,7 @@ from edge_backup.runner import Interrupted, Run, StepFailed
 from edge_backup.settings import Settings
 from edge_backup.status import ExitCategory, first_attempt
 from hal_output import Glyph, Noun, Verdict, counted, format_moment, write_row, write_verdict
+from hal_output.command import Verb, command
 
 # uv installs the project editable, so this file sits in the checkout: src/edge_backup/cli.py.
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,7 +24,7 @@ def init(settings: Settings, _: argparse.Namespace) -> None:
     runner.require_password_file(settings)
     settings.repository.mkdir(mode=0o700, parents=True, exist_ok=True)
     _command(restic.init, settings)
-    print("hal backup: repository created")
+    print(f"{command(Verb.BACKUP)}: repository created")
 
 
 def backup(settings: Settings, arguments: argparse.Namespace) -> None:
@@ -103,7 +104,7 @@ def _name_failed_apps(failure: StepFailed, run: Run, *, rows: bool) -> None:
         failure.error_line = f"{counted_line} · {_last_good_backup_fact(run, failed[0], total)}"
     else:
         failure.error_line = _app_failure_line(run, failure)
-    failure.next_step = f"hal backup {failed[0]}"
+    failure.next_step = command(Verb.BACKUP, failed[0])
 
 
 def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
@@ -131,7 +132,7 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
                     if arguments.snapshot
                     else _failed_apps_line(failed, total, "not proven")
                 )
-                failure.next_step = f"hal restore --test {failed[0]}"
+                failure.next_step = command(Verb.RESTORE, "--test", failed[0])
             raise
 
     def announce(run: Run) -> None:
@@ -165,7 +166,10 @@ def restore(settings: Settings, arguments: argparse.Namespace) -> None:
     snapshot_id = _command(
         runner.restore, settings, apps, app, arguments.target, arguments.snapshot
     )
-    print(f"hal restore: snapshot {snapshot_id[:8]} of {app.name} restored into {arguments.target}")
+    print(
+        f"{command(Verb.RESTORE)}: snapshot {snapshot_id[:8]} of {app.name} "
+        f"restored into {arguments.target}"
+    )
 
 
 def _recorded(

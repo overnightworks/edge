@@ -7,6 +7,7 @@ import argparse
 from edge import apply
 from edge import cli as stack
 from hal.grammar import Asks, Command, ExitCode
+from hal_output.command import Verb
 
 # Every outcome of the stack means "the command could not do its job"; the finer split waits until
 # the owners classify their own outcomes. Naming every member keeps a new one from passing as 0.
@@ -60,7 +61,7 @@ def _online(_arguments: argparse.Namespace) -> ExitCode:
 
 COMMANDS = (
     Command(
-        "apply",
+        Verb.APPLY,
         "switch the units of fleet.yaml on or off, then publish to Cloudflare",
         _apply,
         _configure_apply,
@@ -68,7 +69,7 @@ COMMANDS = (
         asks=Asks.YES,
     ),
     Command(
-        "stop",
+        Verb.STOP,
         "switch a unit or an app off at once and keep it off (no terminal needed)",
         _stop,
         _configure_unit,
@@ -76,7 +77,7 @@ COMMANDS = (
         asks=Asks.NEVER,
     ),
     Command(
-        "start",
+        Verb.START,
         "end the switch of a unit or an app (terminal, `yes`)",
         _start,
         _configure_unit,
@@ -84,7 +85,7 @@ COMMANDS = (
         asks=Asks.YES,
     ),
     Command(
-        "offline",
+        Verb.OFFLINE,
         "stop the tunnel, so the PC is off the internet (no terminal needed)",
         _offline,
         _configure_nothing,
@@ -92,7 +93,7 @@ COMMANDS = (
         asks=Asks.NEVER,
     ),
     Command(
-        "online",
+        Verb.ONLINE,
         "reopen the tunnel once every unit and app barrier is proven (terminal, `yes`)",
         _online,
         _configure_nothing,

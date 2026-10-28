@@ -5,6 +5,7 @@ the steps, the prompts and the lines are home's own; only the exit number is hal
 import argparse
 
 from hal.grammar import Asks, Command, ExitCode
+from hal_output.command import Verb
 from home_tools import cli as home
 from home_tools import setup
 
@@ -26,7 +27,7 @@ def _setup(arguments: argparse.Namespace) -> ExitCode:
 
 COMMANDS = (
     Command(
-        "setup",
+        Verb.SETUP,
         "set up quality, the commit hook, the system step (sudo, terminal) and the missing secrets",
         _setup,
         _configure,

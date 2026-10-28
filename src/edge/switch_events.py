@@ -11,11 +11,12 @@ from enum import StrEnum
 
 from edge import switches
 from hal_output import Glyph, Row, write_error, write_row
+from hal_output.command import Verb, command
 
-COMMAND = "hal stop"
+COMMAND = command(Verb.STOP)
 NOTHING_CHANGED = "nothing changed"
 LOCK_NOT_TAKEN = "lock not taken, a start in progress may reopen it"
-APPLY_WOULD_START_IT = "hal apply would start it again"
+APPLY_WOULD_START_IT = f"{command(Verb.APPLY)} would start it again"
 
 
 class SwitchEvent(StrEnum):

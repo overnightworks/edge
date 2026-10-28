@@ -9,6 +9,7 @@ from pathlib import Path
 
 from edge import apply, emergency, switches, tunnel
 from edge.external import cli as external_cli
+from hal_output.command import Verb, command
 
 COMMAND = "edge apply"
 
@@ -173,7 +174,7 @@ def _exit_after_interrupt(run: _Run) -> int:
         return run.publish_exit
     if run.publish_started:
         print(
-            f"{COMMAND}: interrupted during the publish; run `hal check hosts`",
+            f"{COMMAND}: interrupted during the publish; run `{command(Verb.CHECK, 'hosts')}`",
             file=sys.stderr,
         )
     else:
