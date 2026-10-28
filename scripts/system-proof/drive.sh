@@ -68,12 +68,14 @@ in_log() {
 YES_PROMPT_PATTERN='Type .*yes.* to .*: '
 
 after_the_yes() {  # after_the_yes <log>: the output after the yes prompt; all of it when no yes was asked
-    awk -v pattern="$YES_PROMPT_PATTERN" '{ lines[NR] = $0 } $0 ~ pattern && !asked { asked = NR } END { for (i = asked + 1; i <= NR; i++) print lines[i] }' "$EVIDENCE/$1.log"
+    local log=$1
+    awk -v pattern="$YES_PROMPT_PATTERN" '{ lines[NR] = $0 } $0 ~ pattern && !asked { asked = NR } END { for (i = asked + 1; i <= NR; i++) print lines[i] }' "$EVIDENCE/$log.log"
     return
 }
 
 before_the_yes() {  # before_the_yes <log>: the plan, the output up to the yes prompt; all of it when no yes was asked
-    awk -v pattern="$YES_PROMPT_PATTERN" '{ lines[NR] = $0 } $0 ~ pattern && !asked { asked = NR } END { for (i = 1; i <= (asked ? asked - 1 : NR); i++) print lines[i] }' "$EVIDENCE/$1.log"
+    local log=$1
+    awk -v pattern="$YES_PROMPT_PATTERN" '{ lines[NR] = $0 } $0 ~ pattern && !asked { asked = NR } END { for (i = 1; i <= (asked ? asked - 1 : NR); i++) print lines[i] }' "$EVIDENCE/$log.log"
     return
 }
 
@@ -132,7 +134,8 @@ ANSIBLE_CALL_LOG=/proof/ansible-calls.log
 ANSIBLE_PLAYBOOK=/home/tester/.local/bin/ansible-playbook
 
 ansible_calls_logged() {  # ansible_calls_logged <on|off>: a wrapper that logs every call of the tester's ansible-playbook and runs the real one
-    if [[ $1 == on ]]; then
+    local switch=$1
+    if [[ $switch == on ]]; then
         : >"$ANSIBLE_CALL_LOG"
         mv "$ANSIBLE_PLAYBOOK" "$ANSIBLE_PLAYBOOK.real"
         printf '#!/bin/sh\necho "$*" >>%s\nexec %s.real "$@"\n' "$ANSIBLE_CALL_LOG" "$ANSIBLE_PLAYBOOK" >"$ANSIBLE_PLAYBOOK"
