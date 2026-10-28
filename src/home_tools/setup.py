@@ -6,7 +6,6 @@ The user units come before the system step, which is the one that asks for sudo.
 
 from __future__ import annotations
 
-import argparse
 import os
 import tomllib
 from collections import Counter
@@ -36,7 +35,7 @@ from home_tools.layout import CommandRunner, Layout
 from home_tools.user_units import UnitsApplied, UserUnits
 
 if TYPE_CHECKING:
-    from home_tools.cli import Ports
+    from home_tools.ports import Ports
 
 # Quality v0.5.1. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
 QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@d3a0466fc6dc87898431b722e9488921d729be42"
@@ -179,13 +178,6 @@ class ExecutionRole(Enum):
     @classmethod
     def of(cls, running_user: str) -> ExecutionRole:
         return cls.AGENT if running_user == AGENT_USER else cls.OPERATOR
-
-
-SETUP_EXAMPLES = """\
-Examples:
-  home setup           shows which steps would change something
-  home setup --apply   runs them in order; the activation and the user units come before the system step, which asks once for sudo
-"""
 
 
 @dataclass(frozen=True)
@@ -577,31 +569,3 @@ def setup(layout: Layout, ports: Ports, apply: bool) -> int:
     verdict = verdict_of(outcomes, apply, ports.clock() - started)
     write_verdict(verdict)
     return 0
-
-
-def _setup_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
-    try:
-        return setup(layout, ports, args.apply)
-    except KeyboardInterrupt:
-        # A Ctrl-C in any step ends with 130; only the wizard prints its abort line.
-        return WalkEnd.ABORTED.exit_code
-
-
-def register(add_parser: Callable[..., argparse.ArgumentParser]) -> None:
-    parser = add_parser(
-        "setup",
-        help="set up quality, the engines and the global commit hook, then the user units, the system step and the secrets",
-        description=(
-            "Shows what is missing, or with --apply sets up quality, the engines and the hook."
-            " Then it links, reloads and enables the checkout's user units (the backup and hal-check timers),"
-            " installs Ansible and runs the system step, edge's cloudflared files and the stop-only polkit rule,"
-            " which asks once for sudo at a terminal; the activation comes before the system step."
-            " The system step makes the journal Docker's default log driver and restarts Docker while its default"
-            " driver is not journald: every container stops meanwhile, and one without a restart policy stays down."
-            " Last it walks you through every missing secret at the terminal, never showing a value."
-        ),
-        epilog=SETUP_EXAMPLES,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    parser.add_argument("--apply", action="store_true", help="run the steps instead of only showing them")
-    parser.set_defaults(handler=_setup_from_args)

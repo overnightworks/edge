@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the command this file is called by (edge, or home and hal through the symlinks bin/home, bin/hal) of the checkout
+# Runs the command this file is called by (edge, or hal through the symlink bin/hal) of the checkout
 # this file lives in, with that checkout's locked dependencies, from any directory and through any symlink.
 set -eu
 

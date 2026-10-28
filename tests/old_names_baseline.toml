@@ -72,16 +72,6 @@
 [home-verb]
 "docs/architecture.md" = 11
 "docs/design/hal-output.html" = 1
-"docs/home.md" = 1
-"docs/stack.md" = 1
-"scripts/system-proof/Dockerfile" = 1
-"scripts/system-proof/drive.sh" = 2
-"src/hal/setup_commands.py" = 3
-"src/home_tools/cli.py" = 2
-"src/home_tools/setup.py" = 2
-"src/home_tools/system/playbook.yml" = 1
-"tests/home/test_check.py" = 1
-"tests/home/test_setup.py" = 3
 
 [home-tools]
 "docs/architecture.md" = 40

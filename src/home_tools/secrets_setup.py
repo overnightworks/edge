@@ -627,20 +627,19 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
 
 
 class WalkEnd(Enum):
-    """How the wizard's walk ended: the exit code the command returns, and whether the walk already wrote its own error pair."""
+    """How the wizard's walk ended, and whether the walk already wrote its own error pair."""
 
-    DONE = (0, False)
-    STILL_OPEN = (1, False)
-    NO_TERMINAL = (2, True)
-    CANNOT_HIDE_INPUT = (2, True)
-    ENTRY_FAILED = (2, True)
-    STORE_REFUSED = (1, True)
-    ABORTED = (130, True)  # the shell's code for a run ended by Ctrl-C
+    DONE = False
+    STILL_OPEN = False
+    NO_TERMINAL = True
+    CANNOT_HIDE_INPUT = True
+    ENTRY_FAILED = True
+    STORE_REFUSED = True
+    ABORTED = True
 
-    def __new__(cls, exit_code: int, wrote_its_pair: bool) -> WalkEnd:
+    def __new__(cls, wrote_its_pair: bool) -> WalkEnd:
         member = object.__new__(cls)
-        member._value_ = len(cls.__members__)  # equal pairs stay distinct members
-        member.exit_code = exit_code
+        member._value_ = len(cls.__members__)  # equal flags stay distinct members
         member.wrote_its_pair = wrote_its_pair
         return member
 

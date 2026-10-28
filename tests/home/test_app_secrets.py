@@ -10,16 +10,14 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FakeProbe, Sandbox, plant_secrets, run_hal_secrets
+from conftest import FakeProbe, Sandbox, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
 from secrets_support import FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
 from test_secrets_view import findings_of
-from test_setup import run_hal_setup
 
 from terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
-from home_tools import cli as home_cli
-from home_tools import secrets_setup, secrets_view
-from home_tools.cli import main
+from home_tools import ports as home_ports
+from home_tools import secrets_view
 from home_tools.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
 from home_tools.setup import RERUN
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
@@ -47,7 +45,7 @@ def packaged_home(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
 
 
 def run_packaged_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *flags: str) -> str:
-    main(["setup", *flags], home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True))
+    run_hal_setup(*flags, home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True))
     captured = capsys.readouterr()
     return captured.out + captured.err
 
@@ -156,7 +154,7 @@ def never_verified(_source: object, _value: str) -> Verdict:
 
 def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: FakeTerminal, disk: FakeSync | None = None) -> tuple[int, str]:
     boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeSync()).sync)
-    code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
+    code = run_hal_setup("--apply", home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
     captured = capsys.readouterr()
     return code, captured.out + captured.err
 
@@ -240,7 +238,7 @@ def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(turn_home: S
 def test_an_empty_turn_paste_skips_the_value_and_leaves_it_open(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal())
 
-    assert code == 1
+    assert code == ExitCode.FAILURE
     assert "noch offen" not in output
     assert "· cloudflare/turn-hopin/key-id skipped nothing stored" in [" ".join(line.split()) for line in output.splitlines()]
     assert not any((turn_home.home / relative).exists() for relative in (TURN_KEY_ID, TURN_API_TOKEN))
@@ -251,7 +249,7 @@ def test_a_non_ascii_turn_paste_is_refused_unshown_and_unwritten(turn_home: Sand
 
     code, output = run_turn_setup(turn_home, capsys, FakeTerminal(pastes=[canary]))
 
-    assert code == 1
+    assert code == ExitCode.FAILURE
     assert f"✗ cloudflare/turn-hopin/key-id rejected {UNSENDABLE_PASTE} · paste again or leave empty" in [" ".join(line.split()) for line in output.splitlines()]
     assert canary not in output
     assert not (turn_home.home / TURN_KEY_ID).exists()
@@ -309,8 +307,8 @@ def run_setup_with_secrets(
     at_a_terminal: bool = True,
 ) -> tuple[int, list[str], str]:
     use_manifest(SECRETS_MANIFEST)
-    code = main(
-        ["setup", *flags],
+    code = run_hal_setup(
+        *flags,
         home=sandbox.home,
         secrets_setup_boundaries=secrets_terminal(at_a_terminal),
         now=datetime(2026, 10, 22, 9, 0),
@@ -374,12 +372,12 @@ def test_apply_stops_at_secrets_with_the_open_count_when_the_wizard_leaves_a_sec
 ) -> None:
     by_hand = '[[secret]]\nname = "gitlab"\nkind = "token"\npaths = ["~/.secrets/gitlab"]\nread_by = []\nrecreate = "von Hand"\n'
     use_manifest(by_hand)
-    code = main(
-        ["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True)
+    code = run_hal_setup(
+        "--apply", home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True)
     )
     captured = capsys.readouterr()
 
-    assert code == 1
+    assert code == ExitCode.FAILURE
     assert captured.out.splitlines()[-1] == "  ! secrets         1 open         gitlab (by hand)"
     assert captured.err.splitlines() == ["error: setup stopped at secrets · 1 secret still open", f"next: {RERUN}"]
 
@@ -410,9 +408,9 @@ def hal_secrets(
     ) -> tuple[int, list[str], str]:
         use_manifest(entries)
         monkeypatch.setattr(
-            home_cli, "TERMINAL_BOUNDARIES", boundaries or secrets_terminal(at_a_terminal)
+            home_ports, "TERMINAL_BOUNDARIES", boundaries or secrets_terminal(at_a_terminal)
         )
-        return run_hal_setup(capsys, *flags)
+        return run_captured_hal_setup(capsys, *flags)
 
     return run
 
@@ -665,27 +663,8 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(
     assert code == ExitCode.INTERRUPTED
     assert "error: interrupted at live · no file half written\nnext: hal setup --apply" in error
     assert "setup stopped" not in error
-    assert not (sandbox.home / ".secrets" / "live").exists()
-
-
-def test_home_setup_apply_ended_by_ctrl_c_exits_130_with_the_interrupted_line_and_no_traceback(
-    sandbox: Sandbox, use_manifest: Callable[[str], Path], capsys: pytest.CaptureFixture[str]
-) -> None:
-    def interrupted(_descriptor: int) -> None:
-        raise KeyboardInterrupt
-
-    use_manifest(LIVE)
-    terminal = secrets_terminal(True)
-    code = main(
-        ["setup", "--apply"],
-        home=sandbox.home,
-        secrets_setup_boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted),
-    )
-    error = capsys.readouterr().err
-
-    assert code == secrets_setup.WalkEnd.ABORTED.exit_code
-    assert "error: interrupted at live · no file half written" in error
     assert "Traceback" not in error
+    assert not (sandbox.home / ".secrets" / "live").exists()
 
 
 def test_hal_setup_fails_the_secrets_step_by_name_when_the_manifest_cannot_be_read(
@@ -732,6 +711,6 @@ def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, bro
     stdout = put_stdout_on_a_terminal(monkeypatch)
     boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeSync().sync)
 
-    main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
+    run_hal_setup("--apply", home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
 
     return stdout.getvalue().splitlines()

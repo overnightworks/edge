@@ -145,11 +145,11 @@ def test_finds_its_checkout_through_a_symlink_in_another_directory(machine, tmp_
     assert machine.logged_args("edge.args") == ["--help"]
 
 
-def test_runs_the_command_it_is_called_by_through_a_symlink_named_home(machine, tmp_path):
-    """#142 rule 5, cell L8: a symlink named home starts the checkout's home, not its edge."""
+def test_runs_the_command_it_is_called_by_through_a_symlink_named_hal(machine, tmp_path):
+    """#142 rule 5, cell L8: a symlink named hal starts the checkout's hal, not its edge."""
     (machine.checkout / ".venv/bin/edge").unlink()
-    _executable(machine.checkout / ".venv/bin/home", FAKE_EDGE)
-    link = tmp_path / "tools/home"
+    _executable(machine.checkout / ".venv/bin/hal", FAKE_EDGE)
+    link = tmp_path / "tools/hal"
     link.parent.mkdir()
     link.symlink_to(machine.checkout / "bin/edge")
 

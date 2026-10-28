@@ -23,6 +23,7 @@ from home_tools.secrets_setup import (
     Boundaries,
     Outcome,
     Verdict,
+    WalkEnd,
     github_page,
 )
 from home_tools.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
@@ -210,10 +211,10 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
     verifier.side_effect = quote_the_value
     terminal.pastes = [PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
-    assert code == 2
+    assert end is WalkEnd.ENTRY_FAILED
     assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cloudflare/read is not stored\nnext: hal setup --apply\n")
     for value in (PASTED_VALUE, *PASTED_VALUE_PARTS):
         assert value not in captured.out + captured.err
@@ -234,10 +235,10 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
     monkeypatch.setattr(Path, "unlink", refuse_to_remove_the_fresh_name)
     terminal.pastes = [PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
-    assert code == 2
+    assert end is WalkEnd.ENTRY_FAILED
     assert captured.err.endswith("error: stopped at cloudflare/read · unexpected PermissionError · cloudflare/read is stored\nnext: hal setup --apply\n")
     assert PASTED_VALUE not in captured.out + captured.err
     assert (home / TOKEN_FILES[0]).read_text() == PASTED_VALUE
@@ -262,10 +263,10 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
     verifier.side_effect = hide_the_disk_and_fail
     terminal.pastes = [PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
-    assert code == 2
+    assert end is WalkEnd.ENTRY_FAILED
     assert captured.err.endswith("error: stopped at cloudflare/read · unexpected RuntimeError · cannot tell whether cloudflare/read is stored\nnext: hal setup --apply\n")
     assert PASTED_VALUE not in captured.out + captured.err
 
@@ -282,10 +283,10 @@ def test_a_value_the_provider_does_not_confirm_is_never_written(
     verifier.refusal = refusal
     terminal.pastes = [WRONG_VALUE, "", PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
     lines = squeezed(capsys.readouterr().out)
-    assert code == 1
+    assert end is WalkEnd.STILL_OPEN
     assert f"✗ cloudflare/read rejected {refusal.detail} · paste again or leave empty" in lines
     assert "· cloudflare/read skipped nothing stored" in lines
     assert files_under(home) == {".secrets/github/read", PASSPHRASE_FILE}
@@ -325,9 +326,9 @@ def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
     """#36 rule 2.3 / #10 line 7: Ctrl-C or the end of the input leaves no file, and the next run goes on."""
     interrupt(terminal, disk)
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 130
+    assert end is WalkEnd.ABORTED
     assert files_under(home) == set()
     assert capsys.readouterr().err == f"\n{expected_error}\nnext: hal setup --apply\n"
 
@@ -350,9 +351,9 @@ def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
     terminal.pastes = [PASTED_VALUE]
     disk.ctrl_c = True
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 130
+    assert end is WalkEnd.ABORTED
     assert capsys.readouterr().err.endswith("error: interrupted at cloudflare/read · no file half written\nnext: hal setup --apply\n")
     assert {path: (home / path).read_text() for path in files_under(home)} == {TOKEN_FILES[0]: PASTED_VALUE}
 
@@ -366,9 +367,9 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     before = existing.stat()
     terminal.pastes = [PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 0
+    assert end is WalkEnd.DONE
     assert not [line for line in squeezed(capsys.readouterr().out) if "cloudflare/read" in line and line[0] in "✓✗!·"]
     assert existing.read_text() == "FAKE-OLD-VALUE"
     assert (existing.stat().st_mtime_ns, existing.stat().st_mode) == (before.st_mtime_ns, before.st_mode)
@@ -388,9 +389,9 @@ def test_setup_never_writes_the_passwords_step_ca_init_and_keycloak_go_live_gene
         file.write_text("FAKE-OLD-VALUE")
         file.chmod(0o644)
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 0
+    assert end is WalkEnd.DONE
     assert {path: (home / path).read_text() for path in files_under(home)} == {f".secrets/{name}": "FAKE-OLD-VALUE" for name in generated if present}
 
 
@@ -408,9 +409,9 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     verifier.side_effect = another_run_stores_it_first
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 1
+    assert end is WalkEnd.STORE_REFUSED
     captured = capsys.readouterr()
     assert "✗ cloudflare/read not stored ~/.secrets/cloudflare/read appeared meanwhile and stays unchanged" in squeezed(captured.out)
     assert captured.err == "error: setup stopped at secrets · nothing stored for cloudflare/read\nnext: hal setup --apply\n"
@@ -432,9 +433,9 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     verifier.side_effect = replace_the_directory_by_a_file
     terminal.pastes = ["", PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 1
+    assert end is WalkEnd.STORE_REFUSED
     captured = capsys.readouterr()
     assert "✗ github/read not stored ~/.secrets/github is not a folder" in squeezed(captured.out)
     assert captured.err.splitlines() == [
@@ -448,9 +449,9 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
 def test_a_group_that_is_a_file_when_the_walk_starts_is_refused_before_any_page_opens(home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys) -> None:
     private_directory(home, ".secrets").joinpath("cloudflare").write_text("not a directory")
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
-    assert code == 1
+    assert end is WalkEnd.STORE_REFUSED
     captured = capsys.readouterr()
     assert "✗ cloudflare/read not stored ~/.secrets/cloudflare is not a folder" in squeezed(captured.out)
     assert "not checked" not in captured.out
@@ -489,10 +490,10 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     reason, fix = damage(home)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = run_wizard(home, boundaries)
+    end = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
-    assert code == 1
+    assert end is WalkEnd.STORE_REFUSED
     assert [line for line in squeezed(captured.out) if "not stored" in line] == [f"✗ cloudflare/read not stored {reason}"]
     assert captured.err.splitlines() == ["error: setup stopped at secrets · nothing stored for cloudflare/read", f"next: {fix}"]
     assert PASTED_VALUE not in captured.out + captured.err
@@ -509,12 +510,12 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     private_directory(home, ".secrets/locked").chmod(0o000)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
     try:
-        code = run_wizard(home, boundaries)
+        end = run_wizard(home, boundaries)
     finally:
         (home / ".secrets" / "locked").chmod(0o700)
 
     lines = squeezed(capsys.readouterr().out)
-    assert code == 1
+    assert end is WalkEnd.STILL_OPEN
     assert "! gitlab by hand no wizard yet: https://gitlab.example/-/user_settings/personal_access_tokens" in lines
     assert "! locked/token not checked its folder cannot be read" in lines
     assert not any("github/old" in line or line.startswith(("› gitlab", "› locked")) for line in lines)
@@ -524,9 +525,9 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
 
 def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, capsys) -> None:
     """#36 rule 2 / #10 line 10: without a terminal --setup is refused and nothing is written."""
-    code = run_wizard(home)
+    end = run_wizard(home)
 
-    assert code == 2
+    assert end is WalkEnd.NO_TERMINAL
     assert capsys.readouterr().err.endswith("error: secrets setup needs your own terminal window · nothing changed\nnext: hal setup --apply in your own terminal window\n")
     assert list(home.iterdir()) == []
 
@@ -535,9 +536,9 @@ def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_rea
     home: Path, verifier: FakeVerifier, capsys
 ) -> None:
     """#36 rule 2.3 / #10 line 3: a terminal that cannot hide the paste is refused before anything is read."""
-    code = run_wizard(home, guided_boundaries(getpass.fallback_getpass, verifier))
+    end = run_wizard(home, guided_boundaries(getpass.fallback_getpass, verifier))
 
-    assert code == 2
+    assert end is WalkEnd.CANNOT_HIDE_INPUT
     assert capsys.readouterr().err.endswith("error: this terminal cannot hide what you type · nothing read\nnext: hal setup --apply in another terminal window\n")
     assert verifier.checked == []
     assert files_under(home) == set()
@@ -548,7 +549,7 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 ) -> None:
     """#531 picture s-s2g / #36 rules 2 and 5: a token entry announces itself, says why, briefs and names the page; a generated one prints its row only."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-    assert run_wizard(home, boundaries) == 0
+    assert run_wizard(home, boundaries) is WalkEnd.DONE
     output = capsys.readouterr().out
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
@@ -585,7 +586,7 @@ def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
 ) -> None:
     use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\nrecreate = "https://x.example"\n')
     terminal.pastes = [PASTED_VALUE]
-    assert run_wizard(tmp_path, boundaries) == 0
+    assert run_wizard(tmp_path, boundaries) is WalkEnd.DONE
     output = capsys.readouterr().out
     assert squeezed(output)[0].startswith("› turn new token")
     assert "why:" not in output
@@ -596,7 +597,7 @@ def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_
 ) -> None:
     """#36 rule 2.2: a page no browser opens is named for opening by hand, never reported as opened."""
     terminal.browser_opens, terminal.pastes = False, [PASTED_VALUE, PASTED_VALUE]
-    assert run_wizard(home, boundaries) == 0
+    assert run_wizard(home, boundaries) is WalkEnd.DONE
     lines = capsys.readouterr().out.splitlines()
     assert files_under(home) == set(EVERY_FILE)
     assert f"    {NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines

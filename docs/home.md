@@ -103,7 +103,7 @@ Fundmenge rückt nicht vor, sodass der nächste Lauf erneut meldet. Sie rückt v
 geliefert hat: ein Lauf ohne Sitzung (Linger, 09:00) mit gelieferter Mail genügt. Ohne einen einzigen eingerichteten Kanal
 bleibt sie stehen, ohne Ausgabe. `[check] notify = false` schaltet beide ab.
 
-Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `home` nicht
+Zerbricht eine Prüfung (etwa ein Ordner unter `~/.secrets`, den `hal` nicht
 lesen darf), steht an ihrer Stelle eine Zeile „check secrets failed
 (…)“, die Funde der anderen Prüfung bleiben im Bericht, die Benachrichtigung
 geht trotzdem raus, und der Lauf endet mit Exit-Code `3` — bei einem
@@ -221,7 +221,7 @@ eine Option dafür hat `hal secrets` nicht, ein unbekanntes Argument endet mit E
 
 **Kein Wert, nirgends.** Das Manifest enthält nur Namen, Orte und Links.
 `hal secrets` liest Geheimnisdateien nur per `stat` und öffnet sie nie. Die
-einzige Prüfung der Ansicht ist `gh auth status` (der Keyring-Login von `gh`): `home`
+einzige Prüfung der Ansicht ist `gh auth status` (der Keyring-Login von `gh`): `hal`
 behält davon nur den Exit-Code, verwirft Ausgabe und Fehlerausgabe und bricht
 nach 20 Sekunden ab.
 
@@ -271,7 +271,7 @@ auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn
 den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
 `<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der
-der Assistent das Speichern verweigert. `home` setzt nie Rechte und ersetzt nichts;
+der Assistent das Speichern verweigert. `hal` setzt nie Rechte und ersetzt nichts;
 `chmod` bleibt ein Handgriff.
 
 ### Einrichten: `hal setup --apply`
@@ -318,7 +318,7 @@ Mensch, alles andere der Assistent. Je Token:
    mit einer Zeile abgewiesen und nicht geschrieben; danach darf man noch
    einmal einfügen.
 5. Er schreibt die Datei mit `600` in einen Ordner mit `700` und geht zum
-   nächsten Eintrag. Die Ordner prüft er dabei noch einmal; `home` setzt keine
+   nächsten Eintrag. Die Ordner prüft er dabei noch einmal; `hal` setzt keine
    Rechte.
 
 Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
@@ -415,7 +415,7 @@ mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it links the checkout's user units and runs the system step.
-Exit: 0 when nothing failed, 3 for a failed step (`home setup` keeps 1).
+Exit: 0 when nothing failed, 3 for a failed step.
 `hal setup` zeigt nur, was es ändern würde; `hal setup --apply` führt es der
 Reihe nach aus und hält beim ersten Fehler an. Both print four rows (below) and a verdict.
 The activation comes before the user units and the system step, so a wrong
@@ -646,7 +646,7 @@ Zwei Dateien, beide von Hand angelegt, beide Modus 0600, beide im Geheimnis-Mani
   Passwort.
 - `~/.secrets/smtp/password`: ein App-Passwort nur dafür, sonst nichts.
 
-`msmtp` läuft als du und liest das Passwort beim Senden selbst (`--passwordeval`); `home` öffnet die Datei nie, und das
+`msmtp` läuft als du und liest das Passwort beim Senden selbst (`--passwordeval`); `hal` öffnet die Datei nie, und das
 Passwort steht in keinem Terminal, Log, keiner Mail, keinem Argument und keiner Zustandsdatei. Rotieren heißt die Datei
 ersetzen (neues App-Passwort anlegen, das alte widerrufen); die Kopie in songmakers `.env` ziehst du von Hand nach, bis
 songmaker die Datei selbst liest. Akzeptiertes Risiko: Jeder Prozess, der als du läuft, Agenten eingeschlossen, kann über
@@ -701,22 +701,21 @@ notify = true
 ```
 cd ~/git/edge
 uv sync --locked
-ln -s ~/git/edge/bin/home ~/.local/bin/home
-~/git/edge/bin/hal setup --apply
+ln -s ~/git/edge/bin/hal ~/.local/bin/hal
+hal setup --apply
 ```
 
 Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
-`systemd/` und startet die Timer, darunter `hal-check.timer`. `hal` liegt nicht im PATH; der
-Starter des Checkouts ruft es auf.
+`systemd/` und startet die Timer, darunter `hal-check.timer`.
 
-`uv sync --locked` baut die `.venv` des Checkouts. `bin/home` ist ein Link auf
-den Starter `bin/edge`, der `.venv/bin/home` des Checkouts ausführt; der Link
-unter `~/.local/bin` muss deshalb `home` heißen. Die systemd-Unit ruft
-`~/git/edge/.venv/bin/home` direkt auf und hängt so an keinem Link. `home`
+`uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist ein Link auf
+den Starter `bin/edge`, der `.venv/bin/hal` des Checkouts ausführt; der Link
+unter `~/.local/bin` muss deshalb `hal` heißen. Die systemd-Unit ruft
+`~/git/edge/.venv/bin/hal` direkt auf und hängt so an keinem Link. `hal`
 läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
-ausführen (oder `home` über `bin/home` aufrufen), bevor der Timer läuft.
+ausführen (oder `hal` über `bin/hal` aufrufen), bevor der Timer läuft.
 
 Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
 nach) und fährt nur `hal check`.

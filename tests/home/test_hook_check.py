@@ -11,9 +11,10 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from conftest import Sandbox, home_check
+from conftest import Sandbox, home_check, run_hal_setup
 
-from home_tools import cli, hook_check
+from hal.grammar import ExitCode
+from home_tools import hook_check
 from home_tools.hook_check import HookCheckUnavailable
 from home_tools.setup import HOOK_NAMES
 from home_tools.layout import Layout, run_command
@@ -46,7 +47,7 @@ class Machine:
         return {(f.rule, f.subject): f.fix for f in hook_check.collect_findings(self.layout, run_command)}
 
     def apply_setup(self) -> None:
-        assert cli.main(["setup", "--apply"], home=self.sandbox.home) == 0
+        assert run_hal_setup("--apply", home=self.sandbox.home) == ExitCode.OK
 
 
 @pytest.fixture

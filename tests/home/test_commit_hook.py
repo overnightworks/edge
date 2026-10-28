@@ -10,9 +10,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from conftest import FAKE_KEY, Sandbox
+from conftest import FAKE_KEY, Sandbox, run_hal_setup
 
-from home_tools.cli import main
+from hal.grammar import ExitCode
 from home_tools.setup import HOOK_NAMES
 
 REFUSAL_LINE = "quality: secret.txt fake-key sha256=0000"
@@ -36,7 +36,7 @@ def write_repository_hook(repo: Path, body: str, name: str = "pre-commit") -> Pa
 
 @pytest.fixture
 def hooked(sandbox: Sandbox) -> Sandbox:
-    assert main(["setup", "--apply"], home=sandbox.home) == 0
+    assert run_hal_setup("--apply", home=sandbox.home) == ExitCode.OK
     return sandbox
 
 
