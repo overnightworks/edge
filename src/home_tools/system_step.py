@@ -38,7 +38,6 @@ RECAP = re.compile(
     r"^\S+\s*:\s*ok=\d+\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
     re.MULTILINE,
 )
-NEEDS_SUDO_AT_A_TERMINAL = "needs sudo in your own terminal window"
 
 
 class CheckState(Enum):
@@ -50,7 +49,7 @@ class CheckState(Enum):
 
 
 NEEDS_A_TERMINAL = "sudo at a terminal"
-NEEDS_ANSIBLE = f"Ansible, which `{command(Verb.SETUP, '--apply')}` installs first"
+NEEDS_ANSIBLE = f"Ansible, which `{command(Verb.SETUP)}` installs first"
 
 
 class Applied(Enum):
@@ -60,10 +59,6 @@ class Applied(Enum):
 
 class StepFailed(Exception):
     """A step that did not finish; its message says why."""
-
-
-class StepRefused(StepFailed):
-    """A step refused before it started anything, so nothing it would have changed is touched."""
 
 
 @dataclass(frozen=True)
@@ -98,7 +93,7 @@ def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
     the recap. No `ANSIBLE_*` variable reaches the play, so the packaged `ansible.cfg` there decides. `sudo -k` follows whatever
     the play did, and a failing `sudo -k` fails the step; it never follows a sudo that did not start.
     Root's Python writes no bytecode, which would leave root-owned files in the operator's tool environment.
-    No timeout: a person types the password, and without a terminal the step refuses before it gets here.
+    No timeout: a person types the password; `hal setup` asks its yes at a terminal before it gets here.
     """
     environment = {name: value for name, value in os.environ.items() if not name.startswith("ANSIBLE_")}
     shown: list[str] = []
@@ -162,10 +157,6 @@ class SystemStep:
             "rsyslog_file_names": RSYSLOG_FILE_NAMES,
         }
 
-    def will_ask_for_sudo(self) -> bool:
-        """An apply with a terminal runs the play, and sudo asks for the password there."""
-        return self.boundaries.has_terminal()
-
     def needs_first(self) -> str:
         """What the check needs before it can look, empty when it can: a terminal for sudo, then the engine to check with."""
         if not self.boundaries.has_terminal():
@@ -185,8 +176,6 @@ class SystemStep:
         return CheckState.UNCHANGED
 
     def apply(self) -> Applied:
-        if not self.boundaries.has_terminal():
-            raise StepRefused(NEEDS_SUDO_AT_A_TERMINAL)
         if not (run := self._run_playbook(check=False)).succeeded:
             raise StepFailed("Ansible did not finish · its output above says why")
         return Applied.CHANGED if run.changed else Applied.UNCHANGED

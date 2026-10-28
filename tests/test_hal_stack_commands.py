@@ -590,7 +590,7 @@ def test_offline_without_the_boot_drop_in_is_incomplete(hal, fakes, systemd, mar
 
     assert result.exit_code == ExitCode.FAILURE
     assert "incomplete: a reboot would reopen the tunnel" in result.err
-    assert "`hal setup --apply`" in result.err
+    assert "`hal setup`" in result.err
     assert marks.global_mark() is not None
 
 

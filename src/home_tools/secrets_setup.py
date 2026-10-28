@@ -1,4 +1,4 @@
-"""The wizard of `hal setup --apply` walks every missing secret of the manifest, one at a time, and never shows a value.
+"""The wizard of `hal setup` walks every missing secret of the manifest, one at a time, and never shows a value.
 
 A person stays in the loop on purpose: only someone with more rights than a token can create it, GitHub has no API
 for fine-grained tokens, and on Cloudflare the wizard would need an admin key on disk. So the browser login stays the
@@ -8,7 +8,7 @@ password is generated and written unseen. A file already present stays untouched
 
 Its read-only view is `secrets_view`.
 
-Exit code of the walk: 0 when nothing is missing any more, 1 when something still is or the store refuses a place, 2 without a terminal, at one that
+Exit code of the walk: 0 when nothing is missing any more, 1 when something still is or the store refuses a place, 2 at a terminal that
 cannot hide the input, with an invalid manifest or after an unexpected error at an entry, 130 after Ctrl-C.
 """
 
@@ -631,7 +631,6 @@ class WalkEnd(Enum):
 
     DONE = False
     STILL_OPEN = False
-    NO_TERMINAL = True
     CANNOT_HIDE_INPUT = True
     ENTRY_FAILED = True
     STORE_REFUSED = True
@@ -657,16 +656,10 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     return WalkEnd.STILL_OPEN if still_open or by_hand else WalkEnd.DONE
 
 
-SETUP_NEXT_STEP = command(Verb.SETUP, "--apply")
+SETUP_NEXT_STEP = command(Verb.SETUP)
 
 
 def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
-    if not boundaries.terminal.is_interactive():
-        write_error(
-            "secrets setup needs your own terminal window · nothing changed",
-            f"{SETUP_NEXT_STEP} in your own terminal window",
-        )
-        return WalkEnd.NO_TERMINAL
     try:
         return _walk(layout, boundaries, now)
     except EntryInterrupted as interrupted:

@@ -1,5 +1,7 @@
 """`hal setup`: quality, its engines and the global commit hook, then the user units, Ansible, the system step and the secrets.
 
+It shows its plan, asks one `yes` and only then runs; `--dry-run` only shows. Nothing, and no sudo, comes before the yes.
+
 The activation comes before the user units and the system step, so a wrong sudo password never keeps the commit hook from being active.
 The user units come before the system step, which is the one that asks for sudo.
 """
@@ -17,7 +19,7 @@ from shlex import join as shell_join
 from shlex import quote
 from typing import TYPE_CHECKING
 
-from hal_output import Glyph, Noun, Row, Verdict, counted, write_error, write_row, write_verdict
+from hal_output import Glyph, Noun, Row, TrailingNoun, Verdict, confirmed, counted, write_error, write_row, write_verdict
 from hal_output.command import Verb, command
 from home_tools import secrets_setup
 from home_tools.secrets_setup import WalkEnd
@@ -27,7 +29,6 @@ from home_tools.system_step import (
     Applied,
     CheckState,
     StepFailed,
-    StepRefused,
     SystemStep,
     UnresolvableRunningUser,
 )
@@ -52,7 +53,8 @@ SYSTEM_WHY = (
 )
 SUDO_WILL_BE_ASKED_FOR = "tunnel, polkit, journal, mail, agent account"
 SKIPPED_FOR_THE_AGENT = "the operator's step"
-RERUN = command(Verb.SETUP, "--apply")
+RERUN = command(Verb.SETUP)
+SUDO_CHECKS_AFTER_THE_YES = "sudo checks it after your yes"
 APPLY_PLAN = command(Verb.APPLY)
 
 
@@ -75,7 +77,6 @@ class SetupEvent(StrEnum):
     STORED = "stored"
     COMPLETE = "complete"
     FAILED = "failed"
-    NOT_STARTED = "not started"
     NOT_RUN = "not run"
     NEEDS_SUDO = "needs sudo"
     OPEN = "open"
@@ -101,7 +102,6 @@ class EventLook:
 
 EVENT_LOOK: dict[SetupEvent, EventLook] = {
     SetupEvent.FAILED: EventLook(Glyph.FAILED, 5, None),
-    SetupEvent.NOT_STARTED: EventLook(Glyph.FAILED, 5, None),
     SetupEvent.NOT_CHECKED: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
     SetupEvent.MISSING: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
     SetupEvent.OPEN: EventLook(Glyph.NEEDS_YOU, 4, Tally.OPEN),
@@ -132,6 +132,28 @@ class StillOpenSecret(Noun):
     SECRET = "secret still open"
 
 
+class OpenRow(TrailingNoun):
+    ROW = "open row"
+
+
+class SetupEnd(Enum):
+    """How `hal setup` ended: it ran or showed, a step failed, the person did not say yes, or there was nobody to ask."""
+
+    DONE = "done"
+    FAILED = "failed"
+    DECLINED = "declined"
+    NO_TERMINAL = "no terminal"
+
+
+class Pass(Enum):
+    """`DRY_RUN` is what `--dry-run` shows, with Ansible's check under sudo at a terminal; `PLAN` is the same before the yes
+    except that the root step is not checked; `RUN` is the run after the yes."""
+
+    DRY_RUN = "dry run"
+    PLAN = "plan"
+    RUN = "run"
+
+
 @dataclass(frozen=True)
 class Outcome:
     """What a step, or the worst of a row's steps, found or did; `fact` is the one sentence the row shows."""
@@ -158,10 +180,14 @@ SECRETS_EVENTS = StepEvents(
 )
 
 
-def verdict_of(outcomes: Sequence[Outcome], apply: bool, elapsed_seconds: float) -> Verdict:
+def open_rows_of(outcomes: Sequence[Outcome]) -> int:
+    return sum(EVENT_LOOK[outcome.event].tally is Tally.OPEN for outcome in outcomes)
+
+
+def verdict_of(outcomes: Sequence[Outcome], ran: bool, elapsed_seconds: float) -> Verdict:
     tallies = Counter(EVENT_LOOK[outcome.event].tally for outcome in outcomes)
     counts = tuple((tallies[tally], tally) for tally in Tally)
-    if apply:
+    if ran:
         walk_stored = any(outcome.event is SetupEvent.STORED for outcome in outcomes)
         return Verdict(Glyph.DONE, "setup done", counts, elapsed_seconds=elapsed_seconds, next_step=APPLY_PLAN if walk_stored else "")
     if tallies[Tally.OPEN]:
@@ -477,9 +503,7 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             SYSTEM_WHY,
             "the system step did not finish",
             needs_first=system.needs_first,
-            before_apply=lambda: (
-                Outcome(SetupEvent.NEEDS_SUDO, SUDO_WILL_BE_ASKED_FOR) if system.will_ask_for_sudo() else None
-            ),
+            before_apply=lambda: Outcome(SetupEvent.NEEDS_SUDO, SUDO_WILL_BE_ASKED_FOR),
             operators_only=True,
             may_leave_system_partial=True,
         ),
@@ -512,22 +536,25 @@ class _RowStopped(Exception):
         self.error = error
 
 
-def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, apply: bool) -> Outcome:
+def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, mode: Pass) -> Outcome:
     outcomes: list[Outcome] = []
     for step in (step for step in steps if step.row is row):
         if not step.runs_for(role):
             outcomes.append(Outcome(SetupEvent.SKIPPED, SKIPPED_FOR_THE_AGENT))
             continue
+        if mode is Pass.PLAN and step.may_leave_system_partial:
+            outcomes.append(Outcome(SetupEvent.NOT_CHECKED, SUDO_CHECKS_AFTER_THE_YES))
+            continue
         try:
-            if apply and (announced := step.before_apply()):
+            if mode is Pass.RUN and (announced := step.before_apply()):
                 write_row(announced.row(row))
-            outcomes.append(step.run(apply))
+            outcomes.append(step.run(mode is Pass.RUN))
         except (OSError, StepFailed) as error:
             raise _RowStopped(step, error) from error
     return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity)
 
 
-def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, apply: bool) -> None:
+def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, mode: Pass) -> None:
     step = stopped.step
     match stopped.error:
         case WalkTold():
@@ -536,10 +563,8 @@ def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStoppe
             outcome = Outcome(SetupEvent.OPEN, ", ".join(names), count=len(names))
             detail = f" · {counted(len(names), StillOpenSecret.SECRET)}"
         case error:
-            event = SetupEvent.NOT_STARTED if isinstance(error, StepRefused) else SetupEvent.FAILED
-            outcome = Outcome(event, _failure_sentence(step, error))
-            partial = step.may_leave_system_partial and apply and event is SetupEvent.FAILED
-            leaves = "/etc may be partial" if partial else "/etc unchanged"
+            outcome = Outcome(SetupEvent.FAILED, _failure_sentence(step, error))
+            leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
             detail = f" · {leaves}" if rows[position] is SetupRow.SYSTEM else ""
     write_row(outcome.row(rows[position]))
     for later in rows[position + 1 :]:
@@ -547,25 +572,46 @@ def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStoppe
     _stopped(rows[position], step, detail)
 
 
-def setup(layout: Layout, ports: Ports, apply: bool) -> int:
-    """Stops at the first failed step, so a missing scanner never gets a hook activated; the later rows say `not run`."""
-    try:
-        role = _role(ports)
-    except UnresolvableRunningUser as error:
-        write_error(str(error))
-        return 1
-    started = ports.clock()
-    steps = _steps(layout, ports)
+def _go_through(steps: tuple[Step, ...], role: ExecutionRole, mode: Pass) -> list[Outcome] | None:
+    """Every row in order, printed as it ends; stops at the first failed step, so a missing scanner never gets a hook
+    activated, and the later rows say `not run`. `None` says a step failed and its error pair is written."""
     outcomes: list[Outcome] = []
     rows = list(SetupRow)
     for position, row in enumerate(rows):
         try:
-            outcome = _run_row(row, steps, role, apply)
+            outcome = _run_row(row, steps, role, mode)
         except _RowStopped as stopped:
-            _stop_after_failure(rows, position, stopped, apply)
-            return 1
+            _stop_after_failure(rows, position, stopped, mode)
+            return None
         write_row(outcome.row(row))
         outcomes.append(outcome)
-    verdict = verdict_of(outcomes, apply, ports.clock() - started)
-    write_verdict(verdict)
-    return 0
+    return outcomes
+
+
+def setup(layout: Layout, ports: Ports, dry_run: bool) -> SetupEnd:
+    """Shows the plan, asks one yes and runs; `dry_run` only shows. Without a terminal an open row ends in a refusal before any step."""
+    try:
+        role = _role(ports)
+    except UnresolvableRunningUser as error:
+        write_error(str(error))
+        return SetupEnd.FAILED
+    started = ports.clock()
+    steps = _steps(layout, ports)
+    planned = _go_through(steps, role, Pass.DRY_RUN if dry_run else Pass.PLAN)
+    if planned is None:
+        return SetupEnd.FAILED
+    open_rows = open_rows_of(planned)
+    if dry_run or not open_rows:
+        write_verdict(verdict_of(planned, False, ports.clock() - started))
+        return SetupEnd.DONE
+    if not ports.secrets_setup.terminal.is_interactive():
+        write_error("setup asks yes at a terminal · nothing changed", f"{RERUN} in your own terminal window")
+        return SetupEnd.NO_TERMINAL
+    if not confirmed(f"set up {counted(open_rows, OpenRow.ROW)}"):
+        write_error("aborted, nothing changed")
+        return SetupEnd.DECLINED
+    ran = _go_through(steps, role, Pass.RUN)
+    if ran is None:
+        return SetupEnd.FAILED
+    write_verdict(verdict_of(ran, True, ports.clock() - started))
+    return SetupEnd.DONE

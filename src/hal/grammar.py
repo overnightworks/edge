@@ -32,3 +32,12 @@ class Command:
     configure: Callable[[argparse.ArgumentParser], None]
     json: bool  # only a command whose result a program reads offers `--json`
     asks: Asks
+
+
+def add_dry_run(parser: argparse.ArgumentParser) -> None:
+    """The one `--dry-run` of every command that acts after a yes: it only shows."""
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="only show what would change; ask nothing and change nothing",
+    )

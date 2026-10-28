@@ -158,12 +158,12 @@ def sandboxed_machine(sandbox: Sandbox) -> Machine:
 def setup_apply_lines(
     machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
 ) -> list[str]:
-    """The lines `hal setup --apply` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
+    """The lines `hal setup` prints, systemd answered by the machine's fake and every other tool as in the sandbox."""
 
     def run(argv: Sequence[str]) -> str | None:
         return machine.systemctl(argv) if argv[0] == "systemctl" else run_command(argv)
 
-    assert run_hal_setup("--apply", home=sandbox.home, run=run) == ExitCode.OK
+    assert run_hal_setup(home=sandbox.home, run=run) == ExitCode.OK
 
     return capsys.readouterr().out.splitlines()
 

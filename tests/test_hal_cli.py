@@ -249,7 +249,7 @@ def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
 
 
 def test_hal_secrets_has_no_setup_option_and_names_its_own_help(tmp_path):
-    """The wizard has one door, `hal setup --apply`; `hal secrets` only views."""
+    """The wizard has one door, `hal setup`; `hal secrets` only views."""
     result = run_hal(tmp_path, hal_program(), "secrets", "--setup")
 
     assert result.returncode == ExitCode.USAGE

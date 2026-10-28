@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import email.message
 import email.policy
+import dataclasses
 import fnmatch
 import json
 import os
+import re
 import shlex
 import stat
+import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -21,6 +24,7 @@ from hal import config as hal_config
 from hal.grammar import ExitCode
 from home_tools import backup_check, check, logs_check, platform_check, secrets_view, system_step, tunnel_config
 from home_tools import ports as home_ports
+from home_tools.secrets_setup import TERMINAL_BOUNDARIES as REAL_SECRETS_BOUNDARIES
 from home_tools.secrets_view import load_manifest
 from home_tools.setup import QUALITY_SOURCE
 from home_tools.layout import Layout, run_command
@@ -456,6 +460,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     monkeypatch.setattr(secrets_view, "MANIFEST_PATH", empty_manifest)
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
+    # One terminal fact for the system step, the yes guard and the wizard: `sandbox.system.terminal`.
+    at_the_sandbox_terminal = dataclasses.replace(REAL_SECRETS_BOUNDARIES.terminal, is_interactive=lambda: system.terminal)
+    monkeypatch.setattr(home_ports, "TERMINAL_BOUNDARIES", dataclasses.replace(REAL_SECRETS_BOUNDARIES, terminal=at_the_sandbox_terminal))
     monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
     return Sandbox(home, global_git_config, uv_calls, system)
 
@@ -495,7 +502,7 @@ def quiet_pc(sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: py
     """The check's reporting and news are tested on a PC whose other checks are clean: no pending reboot (this machine's flag is not read), a backup that ran today and a set-up hook."""
     monkeypatch.setattr(check, "REBOOT_REQUIRED_FILE", tmp_path / "reboot-required")
     write_backup_status(clean_home)
-    assert run_hal_setup("--apply", home=clean_home) == ExitCode.OK
+    assert run_hal_setup(home=clean_home) == ExitCode.OK
 
 
 def write_hal_config(home: Path, text: str) -> Path:
@@ -552,22 +559,55 @@ def run_hal_secrets(home: Path, probe: FakeProbe, *options: str, now: datetime |
         return hal_cli.main(["secrets", *options])
 
 
-def run_hal_setup(*flags: str, **port_overrides) -> int:
-    """`hal setup` through `hal.cli.main`, over the given ports (`home`, `run`, `probe`, `now`, `clock`, `secrets_setup_boundaries`, `system_boundaries`) instead of this machine's."""
+class _Typist:
+    """The person at the yes prompt: one typed line, none (EOF), or Ctrl-C."""
+
+    def __init__(self, answer: str | type[BaseException] | None) -> None:
+        self.answer = answer
+
+    def readline(self) -> str:
+        if isinstance(self.answer, type):
+            raise self.answer
+        return "" if self.answer is None else f"{self.answer}\n"
+
+
+def run_hal_setup(*flags: str, answer: str | type[BaseException] | None = "yes", **port_overrides) -> int:
+    """`hal setup` through `hal.cli.main`, over the given ports (`home`, `run`, `probe`, `now`, `clock`, `secrets_setup_boundaries`, `system_boundaries`) instead of this machine's.
+
+    `answer` is what the person types at the yes prompt: a line, `None` for EOF, or an exception class raised as Ctrl-C is.
+    """
 
     def build_ports():
         return home_ports.build_layout_and_ports(**port_overrides)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(setup_commands, "build_layout_and_ports", build_ports)
+        patch.setattr(sys, "stdin", _Typist(answer))
         return hal_cli.main(["setup", *flags])
 
 
+YES_PROMPT = re.compile(r"Type yes to [^:\n]*: ")
+
+
+def split_at_the_prompt(output: str) -> tuple[list[str], list[str]]:
+    """The stdout lines before the yes prompt (the plan) and after it (the run); an output without a prompt is all plan."""
+    prompt = YES_PROMPT.search(output)
+    if prompt is None:
+        return output.splitlines(), []
+    return output[: prompt.start()].splitlines(), output[prompt.end() :].splitlines()
+
+
 def run_captured_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str, **port_overrides) -> tuple[int, list[str], str]:
-    """`run_hal_setup`, with what it printed: the exit code, the stdout lines and the stderr text."""
+    """`run_hal_setup`, with what it printed: the exit code, the stdout lines of the run (all of them when no yes was asked) and the stderr text."""
     code = run_hal_setup(*flags, **port_overrides)
     captured = capsys.readouterr()
-    return code, captured.out.splitlines(), captured.err
+    return code, lines_of_the_run(captured.out), captured.err
+
+
+def lines_of_the_run(output: str) -> list[str]:
+    """What `hal setup` printed after the yes; an output that asked no yes is all of it."""
+    plan, run = split_at_the_prompt(output)
+    return run if YES_PROMPT.search(output) else plan
 
 
 UNEXPECTED_ERROR_PREFIX = "error: unexpected error ("
