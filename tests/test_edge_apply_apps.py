@@ -272,7 +272,9 @@ def hal(app_world, at_terminal, capsys, ingress, monkeypatch):  # noqa: F811
 
 def deployed(app_world: AppWorld) -> None:
     app_world.origin.release(RELEASE)
+    stdin, stdout = sys.stdin, sys.stdout
     assert app_world.apply()[0] == 0
+    sys.stdin, sys.stdout = stdin, stdout
 
 
 def hosted(app_world: AppWorld, hal: Hal) -> Path:
