@@ -46,6 +46,13 @@ at_coloured_terminal() {  # at_coloured_terminal <log> <command>: as tester at a
     return "$code"
 }
 
+at_terminal_answering() {  # at_terminal_answering <answer: yes|no|eof|interrupt> <log> <command>: the yes prompt answered so
+    local answer=$1
+    shift
+    PROOF_ANSWER=$answer at_terminal "$@"
+    return
+}
+
 without_terminal() {  # without_terminal <log> <command>: as tester with no terminal on any end
     local log=$1 command=$2
     timeout 300 su - tester -c "$command" </dev/null >"$EVIDENCE/$log.log" 2>&1
@@ -58,9 +65,39 @@ in_log() {
     return
 }
 
-row_in_log() {  # row_in_log <log> <row> <event regex>: a row of hal setup's output, whatever its glyph
+YES_PROMPT_PATTERN='Type .*yes.* to .*: '
+
+after_the_yes() {  # after_the_yes <log>: the output after the yes prompt; all of it when no yes was asked
+    awk -v pattern="$YES_PROMPT_PATTERN" '{ lines[NR] = $0 } $0 ~ pattern && !asked { asked = NR } END { for (i = asked + 1; i <= NR; i++) print lines[i] }' "$EVIDENCE/$1.log"
+    return
+}
+
+before_the_yes() {  # before_the_yes <log>: the plan, the output up to the yes prompt; all of it when no yes was asked
+    awk -v pattern="$YES_PROMPT_PATTERN" '{ lines[NR] = $0 } $0 ~ pattern && !asked { asked = NR } END { for (i = 1; i <= (asked ? asked - 1 : NR); i++) print lines[i] }' "$EVIDENCE/$1.log"
+    return
+}
+
+row_in_log() {  # row_in_log <log> <row> <event regex>: a row of hal setup's run (or of a run that asked no yes), whatever its glyph
     local log=$1 row=$2 event=$3
-    grep -qP -- "^  [^ ]+ $row +$event( |\\r?$)" "$EVIDENCE/$log.log"
+    after_the_yes "$log" | grep -qP -- "^  [^ ]+ $row +$event( |\\r?$)"
+    return
+}
+
+plan_row_in_log() {  # plan_row_in_log <log> <row> <event regex>: a row of the plan, before the yes prompt
+    local log=$1 row=$2 event=$3
+    before_the_yes "$log" | grep -qP -- "^  [^ ]+ $row +$event( |\\r?$)"
+    return
+}
+
+yes_asked_once() {
+    local log=$1
+    grep -qx 'YESES=1' "$EVIDENCE/$log.log"
+    return
+}
+
+yes_never_asked() {
+    local log=$1
+    grep -qx 'YESES=0' "$EVIDENCE/$log.log"
     return
 }
 
@@ -70,14 +107,39 @@ asked_once() {
     return
 }
 
-announced_before_prompt() {  # announced_before_prompt <log>: the `needs sudo` row is printed, then the system's own password prompt
+announced_before_prompt() {  # announced_before_prompt <log>: the yes prompt, then the `needs sudo` row, then the system's own password prompt
     local log=$1
-    awk '/^  › system +needs sudo/ { announced = NR } /\[sudo[^]]*\] [Pp]ass/ && announced { found = 1 } END { exit !found }' "$EVIDENCE/$log.log"
+    awk -v pattern="$YES_PROMPT_PATTERN" '$0 ~ pattern { asked = 1 } /^  › system +needs sudo/ && asked { announced = 1 } /\[sudo[^]]*\] [Pp]ass/ && announced { found = 1 } END { exit !found }' "$EVIDENCE/$log.log"
     return
 }
 
 snapshot() {
     find "$UNIT_DIR" /etc/polkit-1/rules.d -path '*cloudflared*' -type f -exec sha256sum {} + 2>/dev/null | sort
+    return
+}
+
+# What a declined or refused `hal setup` must leave alone beyond the system files: the user units, the tool installs (uv's
+# receipts), the hook files and the global git config, the secrets directory and the Docker settings.
+home_snapshot() {
+    snapshot
+    sha256sum /home/tester/.gitconfig /etc/docker/daemon.json 2>&1
+    find /home/tester/.config/systemd /home/tester/.local/share/home /home/tester/.local/share/quality /home/tester/.secrets /home/tester/.local/share/uv/tools /etc/docker /etc/systemd/system/docker.service.d \
+        -maxdepth 3 -printf '%p %y %s %T@\n' 2>&1 | sort
+    return
+}
+
+ANSIBLE_CALL_LOG=/proof/ansible-calls.log
+ANSIBLE_PLAYBOOK=/home/tester/.local/bin/ansible-playbook
+
+ansible_calls_logged() {  # ansible_calls_logged <on|off>: a wrapper that logs every call of the tester's ansible-playbook and runs the real one
+    if [[ $1 == on ]]; then
+        : >"$ANSIBLE_CALL_LOG"
+        mv "$ANSIBLE_PLAYBOOK" "$ANSIBLE_PLAYBOOK.real"
+        printf '#!/bin/sh\necho "$*" >>%s\nexec %s.real "$@"\n' "$ANSIBLE_CALL_LOG" "$ANSIBLE_PLAYBOOK" >"$ANSIBLE_PLAYBOOK"
+        chmod 755 "$ANSIBLE_PLAYBOOK"
+    else
+        mv -f "$ANSIBLE_PLAYBOOK.real" "$ANSIBLE_PLAYBOOK"
+    fi
     return
 }
 
@@ -110,7 +172,7 @@ install_home() {  # the wheel, and the user manager `hal setup`'s user-units ste
     return
 }
 
-# `hal setup --apply` ends with the secrets step, which would walk the wizard at the cells' terminal for every secret the
+# `hal setup` ends with the secrets step, which would walk the wizard at the cells' terminal for every secret the
 # packaged manifest names. The tester's home therefore holds a fake file for each one, never a real secret, and the
 # secrets cell takes one away and puts it back.
 plant_fake_secrets() {  # plant_fake_secrets [drop]: a fake file for every live entry of the manifest; with `drop`, the first is taken away again and its name printed
@@ -205,7 +267,7 @@ prepare_today() {
 
 cell_2() {
     local code
-    at_terminal cell2 "$HAL_BIN setup --apply"
+    at_terminal cell2 "$HAL_BIN setup"
     code=$?
     shown_without_exec_start >"$EVIDENCE/show-after.txt"
     exec_start_arguments >"$EVIDENCE/exec-start-after.txt"
@@ -221,16 +283,18 @@ cell_2() {
 }
 
 cell_11() {
-    local dry apply
-    without_terminal cell11-dry "$HAL_BIN setup"
+    local dry apply before
+    before=$(home_snapshot)
+    without_terminal cell11-dry "$HAL_BIN setup --dry-run"
     dry=$?
     verdict 11 "a dry run without a terminal says not checked, exit 0" \
         '[ $dry -eq 0 ] && row_in_log cell11-dry system "not checked" && in_log cell11-dry "needs sudo at a terminal"'
-    without_terminal cell11-apply "$HAL_BIN setup --apply"
+    without_terminal cell11-apply "$HAL_BIN setup"
     apply=$?
-    verdict 11 "--apply without a terminal refuses naming the command, exit 3, no hang" \
-        '[ $apply -eq 3 ] && row_in_log cell11-apply system "not started" && in_log cell11-apply "needs sudo in your own terminal window"'
-    verdict 11 "--apply without a terminal prints no needs sudo announcement" \
+    verdict 11 "setup without a terminal prints the plan, refuses with exit 4 and runs no step" \
+        '[ $apply -eq 4 ] && plan_row_in_log cell11-apply system "not checked" && in_log cell11-apply "setup asks yes at a terminal · nothing changed" &&
+         [ "$(home_snapshot)" = "$before" ] && [ -z "$(su - tester -c "git config --global --get core.hooksPath")" ]'
+    verdict 11 "setup without a terminal prints no needs sudo announcement" \
         '! grep -q "^  › system  *needs sudo" "$EVIDENCE/cell11-apply.log"'
     return
 }
@@ -246,7 +310,7 @@ cell_12_without_a_tunnel_id() {  # <case> <sed edit of config.yml>: the `tunnel:
     before=$(snapshot)
     cp /etc/cloudflared/config.yml /proof/config.yml.saved
     sed -i "$edit" /etc/cloudflared/config.yml
-    at_terminal "$log" "$HAL_BIN setup --apply"
+    at_terminal "$log" "$HAL_BIN setup"
     code=$?
     cp /proof/config.yml.saved /etc/cloudflared/config.yml
     verdict 12 "apply fails loudly when the tunnel id is $case_name" '[ $code -eq 3 ] && in_log "$log" "names no \`tunnel:\`"'
@@ -254,10 +318,10 @@ cell_12_without_a_tunnel_id() {  # <case> <sed edit of config.yml>: the `tunnel:
     return
 }
 
-cell_13() {  # cell 11 has activated the hook already, so it is undone here for the activation to run again
+cell_13() {  # cell 12 has activated the hook already, so it is undone here for the activation to run again
     local code
     su - tester -c "git config --global --unset core.hooksPath"
-    PROOF_PASSWORD="not-the-password" at_terminal cell13 "$HAL_BIN setup --apply"
+    PROOF_PASSWORD="not-the-password" at_terminal cell13 "$HAL_BIN setup"
     code=$?
     verdict 13 "a wrong password fails the system step alone, exit 3" \
         '[ $code -eq 3 ] && row_in_log cell13 "commit hook" changed && row_in_log cell13 system failed'
@@ -268,7 +332,7 @@ cell_13() {  # cell 11 has activated the hook already, so it is undone here for 
 cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, and the image ships them empty
     local code
     apt-get update >"$EVIDENCE/cell10-apt-update.log" 2>&1
-    at_terminal cell10 "$HAL_BIN setup"
+    at_terminal cell10 "$HAL_BIN setup --dry-run"
     code=$?
     verdict 10 "a dry run at a terminal asks once for sudo" '[ $code -eq 0 ] && asked_once cell10'
     verdict T1 "the dry run shows the units in its diff and starts nothing" \
@@ -276,7 +340,7 @@ cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, a
     verdict 10 "it shows would change, with the diff" 'row_in_log cell10 system "will change" && grep -q "^+++ " "$EVIDENCE/cell10.log"'
     verdict DK4 "the dry run on a Docker still on json-file shows the log-driver line and the restart as changes, and writes nothing" \
         'in_log cell10 "+    \"log-driver\": \"journald\"" && grep -A2 "TASK \[Restart Docker\]" "$EVIDENCE/cell10.log" | grep -q "^changed:" && [ ! -e "$DAEMON_JSON" ]'
-    at_coloured_terminal cell10-colour "export TERM=xterm; $HAL_BIN setup"
+    at_coloured_terminal cell10-colour "export TERM=xterm; $HAL_BIN setup --dry-run"
     verdict C1 "a dry run at a terminal colours its rows and its verdict; the run with NO_COLOR above has no escape code" \
         'grep -qP "^  \x1b\[[0-9;]+m\S+\x1b\[0m system " "$EVIDENCE/cell10-colour.log" && grep -qP "^\x1b\[1;[0-9;]+m\S+ setup plan" "$EVIDENCE/cell10-colour.log" && ! grep -qP "\x1b" "$EVIDENCE/cell10.log"'
     return
@@ -284,7 +348,7 @@ cell_10() {  # the lists are fresh as on the PC: a dry run cannot update them, a
 
 cell_1() {
     local code
-    at_terminal cell1 "$HAL_BIN setup --apply"
+    at_terminal cell1 "$HAL_BIN setup"
     code=$?
     verdict 1 "apply exits 0 after one prompt" '[ $code -eq 0 ] && asked_once cell1 && row_in_log cell1 system changed'
     verdict 1 "the apply announces needs sudo once, before the system's password prompt" \
@@ -303,7 +367,7 @@ cell_1() {
 
 cell_9() {
     local code
-    at_terminal cell9 "$HAL_BIN setup --apply"
+    at_terminal cell9 "$HAL_BIN setup"
     code=$?
     verdict DK4 "a second apply restarts nothing: Docker's start time is unchanged" \
         '[ "$(docker_started_at)" = "$(cat "$EVIDENCE/dk4-started-after-cell1.txt")" ]'
@@ -318,11 +382,84 @@ cell_s1() {  # the secrets step: verified with every fake secret in place; the d
     local code dropped
     verdict S1 "every secret in place: the secrets step is unchanged" 'row_in_log cell9 secrets complete'
     dropped=$(plant_fake_secrets drop)
-    without_terminal cell-s1 "$HAL_BIN setup"
+    without_terminal cell-s1 "$HAL_BIN setup --dry-run"
     code=$?
     verdict S1 "a dry run names the missing secret $dropped and exits 0" \
         '[ $code -eq 0 ] && row_in_log cell-s1 secrets missing && in_log cell-s1 "$dropped"'
     plant_fake_secrets >/dev/null
+    return
+}
+
+# The yes cells (Y1-Y8). A declined, interrupted or refused `hal setup` changes nothing: not the system files, the user
+# units, the tool installs, the hook files, the git config, the secrets directory or Docker, and it never calls Ansible
+# (the wrapper's log stays empty, which a cached sudo ticket could not hide).
+reopen_the_hook() {  # the hook files and core.hooksPath gone, so the commit hook row is open again
+    su - tester -c "git config --global --unset core.hooksPath; rm -rf /home/tester/.local/share/home/git-hooks"
+    return
+}
+
+cell_y_not_run() {  # cell_y_not_run <cell> <answer> <exit code> <error line, or "" for none>: the answer at the yes prompt runs nothing
+    local cell=$1 answer=$2 expected=$3 error=$4 log="y-${1,,}" code before after
+    reopen_the_hook
+    ansible_calls_logged on
+    before=$(home_snapshot)
+    at_terminal_answering "$answer" "$log" "$HAL_BIN setup"
+    code=$?
+    after=$(home_snapshot)
+    ansible_calls_logged off
+    verdict "$cell" "answer '$answer': exit $expected, one yes asked, no sudo prompt, no Ansible call, nothing changed" \
+        '[ $code -eq $expected ] && yes_asked_once "$log" && grep -qx "PROMPTS=0" "$EVIDENCE/$log.log" && [ ! -s "$ANSIBLE_CALL_LOG" ] && [ "$before" = "$after" ] &&
+         plan_row_in_log "$log" system "not checked" && ! grep -q "^  › system  *needs sudo" "$EVIDENCE/$log.log"'
+    if [[ -n $error ]]; then
+        verdict "$cell" "the one error line is '$error', and no next line" \
+            'in_log "$log" "$error" && ! grep -q "^next:" "$EVIDENCE/$log.log"'
+    else
+        verdict "$cell" "Ctrl-C prints no error line" '! grep -q "^error:" "$EVIDENCE/$log.log"'
+    fi
+    return
+}
+
+cell_y5_apply_is_gone() {
+    local code before
+    before=$(home_snapshot)
+    without_terminal y5 "$HAL_BIN setup --apply"
+    code=$?
+    verdict Y5 "--apply exits 2 with the usage pair and nothing ran" \
+        '[ $code -eq 2 ] && in_log y5 "error: unrecognized arguments: --apply" && in_log y5 "next: hal setup --help" && [ "$before" = "$(home_snapshot)" ]'
+    verdict Y5 "--apply prints nothing on stdout" '[ -z "$(su - tester -c "$HAL_BIN setup --apply" 2>/dev/null </dev/null)" ]'
+    return
+}
+
+cell_y8_the_wizard_after_the_yes() {  # the first manifest entry is a token: the page opens (BROWSER=true, no DISPLAY), the empty paste skips it
+    local code dropped
+    dropped=$(plant_fake_secrets drop)
+    at_terminal y8 "unset DISPLAY; export BROWSER=true; $HAL_BIN setup"
+    code=$?
+    verdict Y8 "the plan names the missing secret, the yes comes before the wizard, an empty paste stops setup: exit 3, no file" \
+        '[ $code -eq 3 ] && yes_asked_once y8 && plan_row_in_log y8 secrets missing && in_log y8 "$dropped" && in_log y8 "setup stopped at secrets · 1 secret still open" && [ ! -e "/home/tester/.secrets/$dropped" ]'
+    plant_fake_secrets >/dev/null
+    return
+}
+
+cell_y1_one_yes_then_one_sudo() {
+    local code
+    reopen_the_hook
+    at_terminal y1 "$HAL_BIN setup"
+    code=$?
+    verdict Y1 "one yes, one sudo: the plan has no sudo prompt, the yes comes before the announcement and the announcement before sudo's prompt" \
+        '[ $code -eq 0 ] && yes_asked_once y1 && asked_once y1 && announced_before_prompt y1 && ! before_the_yes y1 | grep -q "\[sudo" &&
+         plan_row_in_log y1 "commit hook" "will change" && row_in_log y1 "commit hook" changed && in_log y1 "✓ setup done"'
+    return
+}
+
+cells_yes() {  # the declines first, then the yes that converges the machine again
+    cell_y_not_run Y2 no 1 "error: aborted, nothing changed"
+    cell_y_not_run Y3 eof 1 "error: aborted, nothing changed"
+    cell_y_not_run Y4 interrupt 130 ""
+    cell_y_not_run Y6 Yes 1 "error: aborted, nothing changed"
+    cell_y5_apply_is_gone
+    cell_y8_the_wizard_after_the_yes
+    cell_y1_one_yes_then_one_sudo
     return
 }
 
@@ -424,12 +561,12 @@ cell_t5() {
     cp "/proof/$RETENTION_SERVICE" "/proof/$RETENTION_TIMER" "$UNIT_DIR/"
     verdict T5 "the interrupted state is set: units on disk, the timer neither enabled nor active" \
         '[ "$(systemctl is-enabled $RETENTION_TIMER 2>&1)" != enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" != active ]'
-    at_terminal t5-first "$HAL_BIN setup --apply"
+    at_terminal t5-first "$HAL_BIN setup"
     first=$?
     journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/t5-docker-unit.txt" 2>&1
     verdict T5 "apply converges: the timer is enabled and active" \
         '[ $first -eq 0 ] && [ "$(systemctl is-enabled $RETENTION_TIMER)" = enabled ] && [ "$(systemctl is-active $RETENTION_TIMER)" = active ]'
-    at_terminal t5-second "$HAL_BIN setup --apply"
+    at_terminal t5-second "$HAL_BIN setup"
     second=$?
     verdict T5 "a second run reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5-second.log" && row_in_log t5-second system unchanged'
     return
@@ -443,11 +580,11 @@ cell_t5b() {  # the timer is enabled and the service unit on disk is newer than 
     cp "/proof/t5b-original.service" "$UNIT_DIR/$RETENTION_SERVICE"
     verdict T5b "the stale state is set: the timer is enabled, systemd runs 5d and needs a reload" \
         '[ "$(systemctl is-enabled $RETENTION_TIMER)" = enabled ] && [ "$(systemctl show $RETENTION_SERVICE -p NeedDaemonReload --value)" = yes ] && systemctl show $RETENTION_SERVICE -p ExecStart --value | grep -qF -- "--vacuum-time=5d"'
-    at_terminal t5b-first "$HAL_BIN setup --apply"
+    at_terminal t5b-first "$HAL_BIN setup"
     first=$?
     verdict T5b "apply reloads without changing a file: systemd needs no reload and runs 28d" \
         '[ $first -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-first.log" && [ "$(systemctl show $RETENTION_SERVICE -p NeedDaemonReload --value)" = no ] && systemctl show $RETENTION_SERVICE -p ExecStart --value | grep -qF -- "--vacuum-time=28d"'
-    at_terminal t5b-second "$HAL_BIN setup --apply"
+    at_terminal t5b-second "$HAL_BIN setup"
     second=$?
     verdict T5b "a repeat reports changed=0" '[ $second -eq 0 ] && grep -qE "changed=0 " "$EVIDENCE/t5b-second.log" && row_in_log t5b-second system unchanged'
     return
@@ -660,11 +797,11 @@ refuses_foreign_shape() {  # refuses_foreign_shape <name> <make> <undo> [reason]
     local name=$1 make=$2 undo=$3 reason=${4:-nothing was written} before after code dry_code dry_after  # NOSONAR(shelldre:S1481) read inside the condition that verdict evals
     eval "$make"
     before=$(agent_world)
-    at_terminal "a1-3-$name" "$HAL_BIN setup --apply"
+    at_terminal "a1-3-$name" "$HAL_BIN setup"
     code=$?
     after=$(agent_world)
     if [[ ${5:-} == dry ]]; then
-        at_terminal "a1-3-$name-dry" "$HAL_BIN setup"
+        at_terminal "a1-3-$name-dry" "$HAL_BIN setup --dry-run"
         dry_code=$?
         dry_after=$(agent_world)
     fi
@@ -709,7 +846,7 @@ remove_account() {  # the account, its group and its home, as a cell that needs 
 }
 
 recreate_account() {
-    at_terminal a1-3-recreate "$HAL_BIN setup --apply"
+    at_terminal a1-3-recreate "$HAL_BIN setup"
     return
 }
 
@@ -809,7 +946,7 @@ cell_a1_3_failed_useradd() {  # useradd cannot lock /etc/passwd: the apply fails
     local code
     remove_account
     echo $$ >/etc/passwd.lock
-    at_terminal a1-3-useradd-fails "$HAL_BIN setup --apply"
+    at_terminal a1-3-useradd-fails "$HAL_BIN setup"
     code=$?
     rm /etc/passwd.lock
     verdict A1-3 "useradd fails on a held lock: the apply fails and leaves no group agent" '[ $code -ne 0 ] && ! getent group agent >/dev/null'
@@ -825,7 +962,7 @@ cell_a1_3_ids_of_the_new_account() {  # a numeric subuid or subgid entry for the
         skipped=$(lowest_free_id)
         echo "$skipped:100000:65536" >>"$file"
         expected=$(lowest_free_id "$skipped")
-        at_terminal a1-3-new-ids "$HAL_BIN setup --apply"
+        at_terminal a1-3-new-ids "$HAL_BIN setup"
         code=$?
         verdict A1-3 "a numeric entry in $file for the lowest free id: exit 0, the account gets the next id for uid and gid" \
             '[ $code -eq 0 ] && [[ $(id -u agent) == "$expected" && $(id -g agent) == "$expected" ]] && agent_is_dormant'
@@ -841,12 +978,12 @@ cell_a1_3_without_subid_files() {  # the subordinate id files do not exist: an e
     local code
     mv /etc/subuid /etc/subuid.proof
     mv /etc/subgid /etc/subgid.proof
-    at_terminal a1-3-no-subid-existing "$HAL_BIN setup --apply"
+    at_terminal a1-3-no-subid-existing "$HAL_BIN setup"
     code=$?
     verdict A1-3 "no subuid and subgid file, the account exists: exit 0, changed=0, dormant" \
         '[ $code -eq 0 ] && in_log a1-3-no-subid-existing "changed=0 " && agent_is_dormant'
     remove_account
-    at_terminal a1-3-no-subid-new "$HAL_BIN setup --apply"
+    at_terminal a1-3-no-subid-new "$HAL_BIN setup"
     code=$?
     verdict A1-3 "no subuid and subgid file, a new account: exit 0, dormant, and no file was created" \
         '[ $code -eq 0 ] && agent_is_dormant && [ ! -e /etc/subuid ] && [ ! -e /etc/subgid ]'
@@ -872,13 +1009,13 @@ cron_deny_is() {  # cron_deny_is <entries> <owner:group> <mode>
 cell_a1_3_cron_files() {  # the states of the files; the proof image has no cron, so crontab itself is not driven
     local code
     keep_the_cron_deny_of bob root:bystander 640
-    at_terminal a1-3-cron-deny "$HAL_BIN setup --apply"
+    at_terminal a1-3-cron-deny "$HAL_BIN setup"
     code=$?
     verdict A1-3 "an existing cron.deny keeps owner and mode and gains the agent line" \
         '[ $code -eq 0 ] && cron_deny_is "bob agent" root:bystander 640'
     keep_the_cron_deny_of bob root:root 644
     echo alice >/etc/cron.allow
-    at_terminal a1-3-cron-allow "$HAL_BIN setup --apply"
+    at_terminal a1-3-cron-allow "$HAL_BIN setup"
     code=$?
     verdict A1-3 "a cron.allow without the agent denies it already: exit 0, cron.deny left alone" \
         '[ $code -eq 0 ] && cron_deny_is bob root:root 644 && [[ $(cat /etc/cron.allow) == alice ]]'
@@ -894,19 +1031,28 @@ install_wheel_for() {  # install_wheel_for <user>: the packaged `hal`, in that u
 }
 
 cell_a1_4_and_5() {
-    local dry apply
+    local dry apply refused
     install_wheel_for agent
-    run_as agent a1-4-dry "$AGENT_HOME/.local/bin/hal" setup
+    run_as agent a1-4-dry "$AGENT_HOME/.local/bin/hal" setup --dry-run
     dry=$?
     verdict A1-4 "as agent the dry run exits 0, shows the per-user steps and skips the operator's" \
         '[ $dry -eq 0 ] && row_in_log a1-4-dry "commit hook" "will change" &&
          row_in_log a1-4-dry timers skipped && row_in_log a1-4-dry system skipped && row_in_log a1-4-dry secrets skipped'
-    run_as agent a1-5-apply "$AGENT_HOME/.local/bin/hal" setup --apply
+    run_as agent a1-5-no-terminal "$AGENT_HOME/.local/bin/hal" setup
+    refused=$?
+    verdict A1-5b "as agent without a terminal and with the hook open setup prints the plan and refuses with exit 4; hook files and config stay" \
+        '[ $refused -eq 4 ] && plan_row_in_log a1-5-no-terminal "commit hook" "will change" && in_log a1-5-no-terminal "setup asks yes at a terminal · nothing changed" &&
+         [ ! -e "$AGENT_HOME/.local/share/home/git-hooks" ] && [ -z "$(runuser -u agent -- env -i HOME="$AGENT_HOME" git config --global --get core.hooksPath)" ]'
+    PROOF_USER=agent at_terminal a1-5-apply "$AGENT_HOME/.local/bin/hal setup"
     apply=$?
-    verdict A1-5 "as agent --apply exits 0 with the same skips, no sudo prompt, no user unit linked" \
-        '[ $apply -eq 0 ] && row_in_log a1-5-apply "commit hook" changed && row_in_log a1-5-apply system skipped &&
+    verdict A1-5 "as agent at a terminal setup asks one yes and exits 0 with the same skips, no sudo prompt, no user unit linked" \
+        '[ $apply -eq 0 ] && yes_asked_once a1-5-apply && row_in_log a1-5-apply "commit hook" changed && row_in_log a1-5-apply system skipped &&
          ! grep -qi "password" "$EVIDENCE/a1-5-apply.log" && [ ! -e "$AGENT_HOME/.config/systemd/user" ]'
     verdict A1-5 "the account is still dormant after the agent's own apply" agent_is_dormant
+    run_as agent y7 "$AGENT_HOME/.local/bin/hal" setup
+    apply=$?
+    verdict Y7 "the agent with the hook in place and nothing open gets no question and no terminal is needed: up to date, exit 0" \
+        '[ $apply -eq 0 ] && ! grep -q "Type .*yes" "$EVIDENCE/y7.log" && in_log y7 "✓ setup up to date"'
     return
 }
 
@@ -925,14 +1071,14 @@ cell_a1_7() {
     cp -r /proof/systemd /proof/tunnel /home/bystander/git/edge/
     chown -R bystander:bystander /home/bystander/git
     install_wheel_for bystander
-    run_as bystander a1-7-dry /home/bystander/.local/bin/hal setup
+    run_as bystander a1-7-dry /home/bystander/.local/bin/hal setup --dry-run
     dry=$?
     verdict A1-7 "a bystander's dry run behaves as today: not checked, exit 0, nothing skipped" \
         '[ $dry -eq 0 ] && row_in_log a1-7-dry system "not checked" && in_log a1-7-dry "needs sudo at a terminal" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-dry.log"'
-    run_as bystander a1-7-apply /home/bystander/.local/bin/hal setup --apply
+    run_as bystander a1-7-apply /home/bystander/.local/bin/hal setup
     apply=$?
-    verdict A1-7 "a bystander's --apply fails the system step, exit 3" \
-        '[ $apply -eq 3 ] && row_in_log a1-7-apply system "not started" && in_log a1-7-apply "needs sudo in your own terminal window" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-apply.log"'
+    verdict A1-7 "a bystander's setup without a terminal is refused after its plan, exit 4, nothing skipped" \
+        '[ $apply -eq 4 ] && plan_row_in_log a1-7-apply system "not checked" && in_log a1-7-apply "setup asks yes at a terminal · nothing changed" && ! grep -q "$OPERATORS_SKIP" "$EVIDENCE/a1-7-apply.log"'
     return
 }
 
@@ -1317,9 +1463,9 @@ cells_rsyslog_purged() {  # after the first apply, while the package is purged
 cell_r4() {  # a run interrupted after the purge: the files are there again, one apply finishes it, the next changes nothing
     local first second
     plant_rsyslog_files
-    at_terminal r4-first "$HAL_BIN setup --apply"
+    at_terminal r4-first "$HAL_BIN setup"
     first=$?
-    at_terminal r4-second "$HAL_BIN setup --apply"
+    at_terminal r4-second "$HAL_BIN setup"
     second=$?
     verdict R4 "an apply after the purge deletes the files that came back" \
         '[ $first -eq 0 ] && row_in_log r4-first system changed && no_planted_file_exists'
@@ -1394,8 +1540,8 @@ engine_on_json_file_with() {  # engine_on_json_file_with <file: a path, or "" fo
 }
 
 cell_dk3_case() {  # cell_dk3_case <name> <daemon.json text> <text the refusal names> [dry]: exit 3, nothing moves, Docker is not touched
-    local name=$1 content=$2 names=$3 flag=--apply code before started file_before log="dk3-$1"
-    [[ ${4:-} == dry ]] && flag=
+    local name=$1 content=$2 names=$3 flag= code before started file_before log="dk3-$1"
+    [[ ${4:-} == dry ]] && flag=--dry-run
     printf '%s' "$content" >"$DAEMON_JSON"
     before=$(snapshot)
     started=$(docker_started_at)
@@ -1423,7 +1569,7 @@ cell_dk3() {  # after cell 1, so Docker and edge's files are in place and a writ
     snapshot >"$EVIDENCE/dk3-before.txt"
     started=$(docker_started_at)
     systemctl stop docker.socket docker.service
-    at_terminal dk3-down "$HAL_BIN setup --apply"
+    at_terminal dk3-down "$HAL_BIN setup"
     code=$?
     systemctl start docker.socket
     wait_for_engine
@@ -1437,7 +1583,7 @@ cell_dk2_merge() {  # the PC's file keeps runtimes and gains the one line; the o
     write_the_pcs_daemon_json "$pc"
     verdict DK2 "the PC-shaped fixture is exactly 128 bytes" '[ "$(stat -c %s "$pc")" -eq 128 ]'
     engine_on_json_file_with "$pc"
-    at_terminal dk2-merge "$HAL_BIN setup --apply"
+    at_terminal dk2-merge "$HAL_BIN setup"
     code=$?
     backup=$(backups_of_daemon_json | tail -1)
     changed_lines=$(diff --unified=0 "$pc" "$DAEMON_JSON" | grep -c '^[+-][^+-]')
@@ -1458,7 +1604,7 @@ cell_dk4_and_dk5() {  # a merged file with Docker still on json-file: one restar
     backups_before=$(backups_of_daemon_json)
     checksum_before=$(sha256sum <"$DAEMON_JSON")
     started=$(docker_started_at)
-    at_terminal dk4-restart "$HAL_BIN setup --apply"
+    at_terminal dk4-restart "$HAL_BIN setup"
     code=$?
     wait_for_engine
     verdict DK4 "merged file, Docker on json-file: the apply restarts Docker into the journal" \
@@ -1523,7 +1669,7 @@ cell_dk7_case() {  # cell_dk7_case <name> <state of the file before the apply: c
     esac
     if [[ $failure = flag ]]; then install_the_conflicting_flag; else install_a_docker_that_reports_json_file; fi
     backups_before=$(backups_of_daemon_json)
-    at_terminal "dk7-$state-$failure" "$HAL_BIN setup --apply"
+    at_terminal "dk7-$state-$failure" "$HAL_BIN setup"
     code=$?
     verdict DK7 "$name: the apply exits 3 naming the rescue" '[ $code -eq 3 ] && in_log "dk7-$state-$failure" "was written back without"'
     if [[ $failure = wrong-driver ]]; then
@@ -1545,7 +1691,7 @@ cells_dk7() {
     cell_dk7_case "file merged by an earlier run, Docker still on json-file" earlier '{}'
     cell_dk7_case "Docker started but reports json-file" created '{}' wrong-driver
     engine_on_json_file_with ""
-    at_terminal dk7-converge "$HAL_BIN setup --apply"
+    at_terminal dk7-converge "$HAL_BIN setup"
     docker info >/dev/null 2>&1 || journalctl --unit docker --no-pager --lines 80 >"$EVIDENCE/dk7-docker-unit.txt" 2>&1
     return
 }
@@ -1579,7 +1725,7 @@ cell_r5() {  # last: the rollback puts the package back, so nothing after it may
 # (suffix c) and sudo-rs (suffix r). Each cell asserts the active sudo first.
 SUDO_CLASSIC=/usr/bin/sudo.ws
 SUDO_RS=/usr/lib/cargo/bin/sudo
-APPLY_ARGUMENTS="setup --apply"
+APPLY_ARGUMENTS="setup"
 
 active_sudo_is() {  # active_sudo_is <alternative>
     local alternative=$1
@@ -1662,7 +1808,7 @@ cell_p_interrupted() {  # cell_p_interrupted <cell> <log> <ticket>: Ctrl-C at th
 
 cell_p_dry_run() {  # cell_p_dry_run <cell> <log> <ticket> <prompts>
     local cell=$1 log=$2 ticket=$3 prompts=$4 code
-    at_sudo_terminal "$log" "$ticket" setup
+    at_sudo_terminal "$log" "$ticket" "setup --dry-run"
     code=$?
     verdict "$cell" "a dry run asks $prompts time(s), no BECOME, the ticket is gone" \
         "[ \$code -eq 0 ] && active_sudo_is \"\$sudo_alternative\" && hal_prompts_are $log $prompts && no_become_prompt $log && ticket_is_gone $log"
@@ -1716,7 +1862,7 @@ cells_sudo() {  # cells_sudo <suffix> <alternative>: P1-P10 under one variant of
 
 case "${1:?stage}" in
     install) install_home ;;
-    fresh) cell_dk1; plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_dk3_before_the_first_apply; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_mail; cells_agent; cells_docker; cells_retention; cells_polkit; marker_on ;;
+    fresh) cell_dk1; plant_rsyslog_files; record_rsyslog_before; cell_11; cell_12; cell_13; cell_10; cell_r0; cell_dk3_before_the_first_apply; cell_1; cells_rsyslog_purged; cell_a1_1; cell_9; cell_a1_2; cell_r4; cell_s1; cells_yes; cells_mail; cells_agent; cells_docker; cells_retention; cells_polkit; marker_on ;;
     after-marker-reboot) cell_7; cell_a1_9; cell_r2_after_boot; marker_off ;;
     after-unmarked-reboot) cell_8; cell_r5 ;;
     prepared) wait_for_engine; prepare_today; cell_2 ;;

@@ -1,20 +1,41 @@
 #!/usr/bin/expect -f
-# Runs one command as `tester` at a pseudo-terminal, answers every sudo password prompt with PROOF_PASSWORD,
-# prints how many prompts there were, and exits with the command's exit code.
+# Runs one command as `tester` (or, with PROOF_USER=agent, as the agents' account, which has no login shell) at a
+# pseudo-terminal, answers every sudo password prompt with PROOF_PASSWORD and every `Type yes to ...:` prompt with
+# PROOF_ANSWER (`yes` by default, or `no`, `eof` for Ctrl-D, `interrupt` for Ctrl-C), answers the secrets wizard's two
+# prompts with an empty line, prints how many sudo prompts (PROMPTS) and yes prompts (YESES) there were, and exits with
+# the command's exit code.
 # With PROOF_PREAUTH set the command prints @@HAL@@ when hal starts: prompts before it are PREPROMPTS, after it PROMPTS.
 # With PROOF_INTERRUPT set to a regex, the first output matching it is answered with Ctrl-C.
 set timeout 1200
 set prompts 0
+set yeses 0
+set answer [expr {[info exists env(PROOF_ANSWER)] ? $env(PROOF_ANSWER) : "yes"}]
+# Ctrl-D and Ctrl-C are control characters; any other answer is typed as it is, then Enter.
+set answers [dict create eof "\004" interrupt "\003"]
 set preprompts 0
 set hal_started [expr {![info exists env(PROOF_PREAUTH)]}]
 set interrupted [expr {![info exists env(PROOF_INTERRUPT)]}]
 set interrupt_pattern [expr {[info exists env(PROOF_INTERRUPT)] ? $env(PROOF_INTERRUPT) : "(?!)"}]
 # `su -c` alone starts a session without a controlling terminal, so sudo could not read the password; --pty gives the command one.
-spawn -noecho su --pty - tester -c [join $argv " "]
+if {[info exists env(PROOF_USER)] && $env(PROOF_USER) eq "agent"} {
+    set agent_id [exec id -u agent]
+    spawn -noecho runuser -u agent -- env -i HOME=/home/agent XDG_RUNTIME_DIR=/run/user/$agent_id LC_ALL=C.UTF-8 NO_COLOR=1 PATH=/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin bash -c [join $argv " "]
+} else {
+    spawn -noecho su --pty - tester -c [join $argv " "]
+}
 expect {
     -re {\[sudo[^\]]*\] [Pp]ass[a-z]*[^:\r\n]*: ?} {
         if {$hal_started} { incr prompts } else { incr preprompts }
         send -- "$env(PROOF_PASSWORD)\r"
+        exp_continue
+    }
+    -re {Type (?:\x1b\[[0-9;]*m)*yes(?:\x1b\[[0-9;]*m)* to [^\r\n]*: ?} {
+        incr yeses
+        send -- [expr {[dict exists $answers $answer] ? [dict get $answers $answer] : "$answer\r"}]
+        exp_continue
+    }
+    -re {Enter opens the page in your browser: ?|paste the token \(hidden, empty skips\): ?} {
+        send -- "\r"
         exp_continue
     }
     -re {@@HAL@@} { set hal_started 1; exp_continue }
@@ -28,4 +49,5 @@ expect {
 lassign [wait] pid spawn_id os_error status
 if {[info exists env(PROOF_PREAUTH)]} { puts "PREPROMPTS=$preprompts" }
 puts "PROMPTS=$prompts"
+puts "YESES=$yeses"
 exit $status
