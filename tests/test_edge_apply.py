@@ -1,6 +1,7 @@
 """`edge apply --closed`, `edge stop` and `edge start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
+import dataclasses
 import errno
 import fcntl
 import hashlib
@@ -33,7 +34,7 @@ from git_support import (
     with_origin,
 )
 from test_edge_core import bind, bind_core_files, sha256
-from test_edge_plan_rows import find_row, row_at
+from test_edge_plan_rows import detail_lines, find_row, plain, row_at
 
 from edge import (
     apply,
@@ -395,7 +396,7 @@ class SetupRun:
 
 
 class Terminal(io.StringIO):
-    """A terminal; `while_prompt_waits` runs when the operator's answer is read."""
+    """A terminal; `while_prompt_waits` runs when the operator's answer is read, which it echoes."""
 
     while_prompt_waits: Callable[[], None] | None = None
 
@@ -405,7 +406,9 @@ class Terminal(io.StringIO):
     def readline(self, *arguments) -> str:
         if self.while_prompt_waits:
             self.while_prompt_waits()
-        return super().readline(*arguments)
+        answer = super().readline(*arguments)
+        sys.stdout.write(answer)  # the terminal echoes what the operator typed
+        return answer
 
 
 class InterruptedWaitForLock(switches.Switches):
@@ -609,6 +612,7 @@ def switch(
         installed_backup: bool = False,
         app_runtime: apps.AppRuntime | None = None,
         rename=os.rename,
+        clock=None,
     ) -> tuple[int, str, str]:
         at_terminal(answer, while_prompt_waits)
         if not at_a_terminal:
@@ -621,7 +625,7 @@ def switch(
             setup_check,
             run_setup or setup_run,
             from_home or home,
-            ingress.verifier,
+            dataclasses.replace(ingress.verifier, clock=clock) if clock else ingress.verifier,
             ingress.watch,
             git or scripted_git,
             ensure_environment,
@@ -1044,7 +1048,7 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
 
 
 NOT_SET_UP_LINE = "step-ca/init --check: not set up: password is not done"
-QUESTION = "Type 'yes' to run `step-ca/init` now"
+QUESTION = "Type yes to run `step-ca/init` now"
 
 
 @pytest.fixture
@@ -1061,7 +1065,8 @@ def test_a_missing_setup_is_asked_separately_before_the_plan(
 
     assert exit_code == 0
     assert f"step-ca is not set up: {NOT_SET_UP_LINE}" in out
-    assert out.index(QUESTION) < out.index("the plan") < out.index("apply exactly this plan")
+    shown = plain(out)
+    assert shown.index(QUESTION) < shown.index("the plan") < shown.index("Type yes to apply")
     assert setup_run.commands == [(repository / "step-ca/init", repository)]
     assert missing_setup.commands[-1][-1] == "--check"
     assert scripted.containers["step-ca"] == "running"
@@ -1115,7 +1120,7 @@ def test_a_running_unit_that_is_not_set_up_is_asked_like_one_switched_on(
     exit_code, out, err = switch("no")
 
     assert exit_code == 1
-    assert QUESTION in out
+    assert QUESTION in plain(out)
     assert "aborted, nothing changed" in err
     assert setup_run.commands == []
 
@@ -1173,7 +1178,8 @@ def test_an_interrupted_setup_says_that_keys_may_exist_and_how_to_go_on(
 
     _, _, err = switch("yes")
 
-    assert "nothing switched; keys may already exist; run `edge apply --closed` again" in err
+    assert "nothing switched; keys may already exist" in err
+    assert err.splitlines()[-1] == "next: hal apply"
 
 
 def test_a_setup_that_leaves_the_check_failing_is_exit_1(
@@ -1230,10 +1236,11 @@ def test_several_missing_setups_run_in_catalog_order_before_the_plans_own_questi
     exit_code, out, _ = switch("yes\nyes\nyes")
 
     assert exit_code == 0
+    shown = plain(out)
     assert (
-        out.index("run `step-ca/init` now")
-        < out.index("run `keycloak/init` now")
-        < out.index("apply exactly this plan")
+        shown.index("run `step-ca/init` now")
+        < shown.index("run `keycloak/init` now")
+        < shown.index("Type yes to apply")
     )
     assert setup_run.commands == [
         (repository / "step-ca/init", repository),
@@ -1383,7 +1390,7 @@ def test_from_another_copy_it_refuses_naming_the_tree_and_runs_nothing(
 
     assert exit_code == 2
     assert err.splitlines() == [
-        f"edge apply --closed: runs only from the live checkout ~/git/edge (this is {copy})"
+        f"error: runs only from the live checkout ~/git/edge (this is {copy})"
     ]
     assert scripted.calls == []
     assert scripted_git.calls == []
@@ -1417,10 +1424,7 @@ def test_a_missing_environment_file_is_written_and_the_plan_follows(switch, scri
     assert exit_code == 0
     assert (repository / ".env").read_text().endswith(ENVIRONMENT_FILE_LINES)
     assert stat.S_IMODE((repository / ".env").stat().st_mode) == 0o600
-    assert [line for line in err.splitlines() if ".env" in line] == [
-        f"edge apply --closed: wrote {repository / '.env'}: "
-        f"EDGE_DOMAIN={ZONE}, DOCKER_GID={DOCKER_GID}"
-    ]
+    assert ".env" not in err
     assert "step-ca" in out
     assert scripted.containers["step-ca"] == "running"
 
@@ -1450,8 +1454,8 @@ def test_a_differing_environment_file_is_named_and_left_alone(
 
     assert exit_code == 2
     assert err.splitlines() == [
-        f'edge apply --closed: {repository / ".env"}: EDGE_DOMAIN is "old.invalid" but edge '
-        f'derives "{ZONE}"; delete it and `edge apply --closed` writes it again'
+        f'error: {repository / ".env"}: EDGE_DOMAIN is "old.invalid" but edge '
+        f'derives "{ZONE}"; delete it and `hal apply` writes it again'
     ]
     assert (repository / ".env").read_text().startswith("EDGE_DOMAIN=old.invalid")
     assert scripted.calls == []
@@ -1512,15 +1516,13 @@ def test_while_another_apply_runs_it_never_writes_an_environment_file(switch, re
 def test_while_another_apply_runs_it_refuses_and_touches_nothing(
     switch, scripted, scripted_git, state
 ):
-    """#95 rule 4, S8 and G8: exit 1, "another `edge apply --closed` is running"; no git or
+    """#95 rule 4, S8 and G8: exit 1, "another `hal apply` is running"; no git or
     compose call."""
     with apply_lock_held(state):
         exit_code, _, err = switch()
 
     assert exit_code == 1
-    assert err.splitlines() == [
-        "edge apply --closed: another `edge apply --closed` is running; nothing changed"
-    ]
+    assert err.splitlines() == ["error: another `hal apply` is running; nothing changed"]
     assert scripted.calls == []
     assert scripted_git.calls == []
 
@@ -1576,8 +1578,7 @@ def test_a_missing_git_is_one_line(switch):
 
     assert exit_code == 2
     assert err.splitlines() == [
-        "edge apply --closed: cannot read the live checkout, cannot run git "
-        "(No such file or directory)"
+        "error: cannot read the live checkout, cannot run git (No such file or directory)"
     ]
 
 
@@ -1592,7 +1593,7 @@ def test_a_lock_that_flock_refuses_is_exit_2_and_leaves_no_descriptor_open(
 
     assert exit_code == 2
     assert err.splitlines() == [
-        f"edge apply --closed: cannot take {apply_lock(state)} ({os.strerror(errno.ENOLCK)})"
+        f"error: cannot take {apply_lock(state)} ({os.strerror(errno.ENOLCK)})"
     ]
     assert scripted_git.calls == []
     assert_closed(refused[0])
@@ -1652,13 +1653,12 @@ def test_a_stop_never_waits_for_a_running_apply(switch, stop, state, ingress):
 @pytest.mark.parametrize(
     ("reference", "status", "lines"),
     [
-        pytest.param(b"refs/heads/feature\n", b"", ["runs only on main (this is branch feature)"],
+        pytest.param(b"refs/heads/feature\n", b"",
+                     ["error: runs only on main (this is branch feature)"],
                      id="G12 another branch"),
         pytest.param(b"refs/heads/main\n", b" M fleet.yaml\0?? dynamic/x.yml\0", [
-            "the live checkout has local changes, nothing changed; a change reaches it through "
-            "a pull request and `git pull --ff-only`:",
-            "  fleet.yaml",
-            "  dynamic/x.yml",
+            "error: the live checkout has local changes, nothing changed",
+            "next: git -C ~/git/edge status",
         ], id="G15 G17 changed paths"),
     ],
 )  # fmt: skip
@@ -1671,7 +1671,7 @@ def test_off_main_or_with_changes_it_refuses_naming_why(
     exit_code, _, err = switch()
 
     assert exit_code == 2
-    assert err.splitlines() == [f"edge apply --closed: {line}" for line in lines]
+    assert err.splitlines() == lines
     assert scripted.calls == []
 
 
@@ -1708,7 +1708,7 @@ def test_a_checkout_ahead_of_or_beside_origin_is_refused_and_nothing_reset(
     standing = "is ahead of" if waiting == 0 else "has diverged from"
     assert exit_code == 2
     assert err.splitlines() == [
-        f"edge apply --closed: the live checkout {standing} origin main (HEAD "
+        f"error: the live checkout {standing} origin main (HEAD "
         f"{short(real_main)}, origin main {short(real_main, tip)}); nothing reset, a change "
         "reaches it through a pull request"
     ]
@@ -1746,9 +1746,7 @@ def test_a_failed_fetch_is_exit_2_with_gits_line_and_changes_nothing(
     exit_code, _, err = switch(git=checkout.run_git)
 
     assert exit_code == 2
-    assert err.splitlines() == [
-        f"edge apply --closed: cannot fetch main from origin, {line}; nothing changed"
-    ]
+    assert err.splitlines() == [f"error: cannot fetch main from origin, {line}; nothing changed"]
     assert scripted.calls == []
     assert checkout_state(real_main) == before
     assert apply_lock_is_free(state)
@@ -1762,8 +1760,7 @@ def test_a_fetch_that_times_out_is_exit_2_and_frees_the_lock(switch, scripted, s
 
     assert exit_code == 2
     assert err.splitlines() == [
-        "edge apply --closed: cannot fetch main from origin, `git fetch` took longer than 120s; "
-        "nothing changed"
+        "error: cannot fetch main from origin, `git fetch` took longer than 120s; nothing changed"
     ]
     assert scripted.calls == []
     assert apply_lock_is_free(state)
@@ -1783,10 +1780,10 @@ def test_traefik_yml_replaced_by_a_directory_refuses_before_compose(switch, scri
     (real_main / "traefik.yml").unlink()
     (real_main / "traefik.yml").mkdir()
 
-    exit_code, _, err = switch(git=checkout.run_git)
+    exit_code, out, _ = switch(git=checkout.run_git)
 
     assert exit_code == 2
-    assert "edge apply --closed:   traefik.yml" in err.splitlines()
+    assert "traefik.yml" in detail_lines(out)
     assert scripted.calls == []
 
 
@@ -1819,7 +1816,7 @@ GUARD_LINES = (
     "is running; nothing changed",
     "runs only on main",
     "the live checkout has local changes",
-    "delete it and `edge apply --closed` writes it again",
+    "delete it and `hal apply` writes it again",
 )
 
 
@@ -1862,7 +1859,7 @@ def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_
 
     assert exit_code == 1
     err = capsys.readouterr().err
-    assert "edge apply --closed: refused, stdin and stdout must be a terminal" in err
+    assert "error: refused, stdin and stdout must be a terminal" in err
     assert "edge apply: nothing published" in err
 
 
@@ -2016,7 +2013,7 @@ def test_the_state_table_cells_of_stop_start_and_apply(
     assert exit_code == exit_wanted
     assert (marker(state) is not None) is marker_wanted
     assert scripted.changing_verbs() == verbs_wanted
-    assert ("Type 'yes'" in out) is asked_wanted
+    assert ("Type yes to " in plain(out)) is asked_wanted
 
 
 def test_stop_records_the_time_in_a_private_marker_before_closing(
@@ -2232,7 +2229,7 @@ def test_start_of_a_disabled_unit_is_refused_and_keeps_its_switch(start, reposit
     exit_code, _, err = start()
 
     assert exit_code == 1
-    assert "step-ca is disabled in the catalog; enable it by PR and `edge apply --closed`" in err
+    assert "step-ca is disabled in the catalog; enable it by PR and `hal apply`" in err
     assert marker(state) == SWITCHED_OFF_AT
 
 
@@ -2808,7 +2805,7 @@ RECREATE_TRAEFIK = ["--profile", "*", "up", "-d", "--no-deps", "--force-recreate
 PROBE_STOPPED = DISABLED + "  probe:\n    run: {enabled: true}\n"
 RECREATE_SOCKET_PROXY = [*RECREATE_TRAEFIK[:-1], "socket-proxy"]
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
-SOCKET_PROXY_RECREATED = f"{apply.COMMAND}: socket-proxy is recreated"
+SOCKET_PROXY_RECREATED = "\nsocket-proxy is recreated\n"  # the line, not the plan row
 CORE_CURRENT = "the core is current"
 UNFINISHED = {"traefik": {}}
 
@@ -2876,7 +2873,7 @@ def test_a_second_apply_with_the_recorded_traefik_yml_changes_nothing(core_files
 
     assert exit_code == 0
     assert "nothing to change" in out
-    assert "apply exactly this plan" not in out
+    assert "Type yes to apply" not in plain(out)
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids
 
@@ -3059,7 +3056,7 @@ def test_an_unproven_barrier_after_the_recreate_is_partial_and_the_next_run_recr
     assert exit_code == 1
     assert "partial, the barrier of probe is not proven after the traefik recreate (" in err
     assert (
-        "): probe may be reachable through Traefik; to close the tunnel now: edge stop --all; "
+        "): probe may be reachable through Traefik; to close the tunnel now: hal offline; "
         "no unit switched" in err
     )
     assert applied(state) == UNFINISHED
@@ -3148,7 +3145,7 @@ def test_a_core_change_and_a_unit_switch_share_one_plan_and_one_yes_core_first(
 
     assert exit_code == 0
     assert row_at(out, "traefik", PlanEvent.RECREATE) < row_at(out, "step-ca", PlanEvent.SWITCH_ON)
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
     assert "step-ca is on" in out
@@ -3263,7 +3260,7 @@ def test_a_second_run_after_a_definition_recreate_changes_nothing(
 
     assert exit_code == 0
     assert "nothing to change" in out
-    assert "apply exactly this plan" not in out
+    assert "Type yes to apply" not in plain(out)
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids
 
@@ -3442,7 +3439,7 @@ def test_an_unproven_barrier_after_the_socket_proxy_recreate_names_the_unit_and_
 
     assert exit_code == 1
     assert "the barrier of probe is not proven after the socket-proxy recreate (" in err
-    assert "probe may be reachable through Traefik; to close the tunnel now: edge stop --all" in err
+    assert "probe may be reachable through Traefik; to close the tunnel now: hal offline" in err
     assert up_calls(scripted) == [RECREATE_SOCKET_PROXY]
     assert SOCKET_PROXY_RECREATED not in out
     assert applied(state) == UNFINISHED
@@ -3637,7 +3634,7 @@ def test_a_socket_proxy_change_and_a_unit_switch_share_one_yes_and_the_core_goes
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert row_at(out, "traefik", PlanEvent.RECREATE) < row_at(out, "step-ca", PlanEvent.SWITCH_ON)
     starting_step_ca = unit_calls(scripted)[0]
     assert scripted.calls.index(RECREATE_TRAEFIK) < scripted.calls.index(starting_step_ca)
@@ -3746,9 +3743,7 @@ def test_a_traefik_stopped_before_its_own_recreate_keeps_an_emptied_entry_for_th
 
 FOLLOWER_FILE = "traefik-mcp.yml"
 RECREATE_FOLLOWER = [*RECREATE_TRAEFIK[:-1], "traefik-mcp"]
-FOLLOWER_RECREATED = (
-    f"{apply.COMMAND}: traefik-mcp is recreated and runs the checked-out {FOLLOWER_FILE}"
-)
+FOLLOWER_RECREATED = f"traefik-mcp is recreated and runs the checked-out {FOLLOWER_FILE}"
 HELD_OFF = "traefik-mcp.yml changed · step-ca is off"
 HELD_SWITCHED_OFF = "traefik-mcp.yml changed · step-ca is switched off"
 
@@ -3804,7 +3799,7 @@ def test_a_changed_traefik_mcp_yml_recreates_exactly_traefik_mcp_and_records_the
 
     assert exit_code == 0
     assert find_row(out, "traefik-mcp", PlanEvent.RECREATE, "traefik-mcp.yml changed")
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert up_calls(scripted) == [RECREATE_FOLLOWER]
     assert scripted.container_ids["traefik-mcp"] != ids["traefik-mcp"]
     assert scripted.container_ids["step-ca"] == ids["step-ca"]
@@ -3828,7 +3823,7 @@ def test_a_follower_without_an_entry_is_recreated_once_and_a_second_run_changes_
     exit_code, out, _ = switch(answer="no")
     assert exit_code == 0
     assert "nothing to change" in out
-    assert "apply exactly this plan" not in out
+    assert "Type yes to apply" not in plain(out)
     assert scripted.changing_verbs() == []
     assert scripted.container_ids == ids
 
@@ -4040,7 +4035,7 @@ def test_a_core_change_a_follower_change_and_a_unit_switch_share_one_yes_in_orde
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert up_calls(scripted)[:3] == [RECREATE_SOCKET_PROXY, RECREATE_TRAEFIK, RECREATE_FOLLOWER]
     assert unit_calls(scripted, "echo") == [up_calls(scripted)[3]]
     proven = "the barrier of probe is proven"
@@ -4113,7 +4108,7 @@ def test_a_running_unit_whose_image_changed_is_named_and_nothing_changes(
     assert runs[0] == runs[1]
     exit_code, out, _ = runs[0]
     assert exit_code == 0
-    assert out.index(OLD_IMAGE) < out.index(f"{apply.COMMAND}: nothing to change")
+    assert out.index(OLD_IMAGE) < plain(out).index("nothing to change")
     assert out.count(OLD_IMAGE) == 1
     assert "Type" not in out
     assert scripted.changing_verbs() == []
@@ -4133,7 +4128,7 @@ def test_a_unit_switched_on_names_its_running_service_whose_image_changed_after_
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert find_row(out, "step-ca", PlanEvent.SWITCH_ON).start() < out.index(OLD_IMAGE)
     assert "traefik-mcp runs" not in out
     assert up_calls(scripted) == [
@@ -4296,7 +4291,7 @@ def test_a_kept_image_and_a_core_recreate_share_one_yes_core_first(
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert out.count("apply exactly this plan") == 1
+    assert plain(out).count("Type yes to apply") == 1
     assert row_at(out, "traefik", PlanEvent.RECREATE) < out.index(OLD_IMAGE)
     assert up_calls(scripted) == [RECREATE_TRAEFIK]
     assert {service: scripted.container_ids[service] for service in STEP_CA_SERVICES} == unit_ids
@@ -4320,7 +4315,7 @@ def test_the_repositorys_agent_service_unit_that_is_not_set_up_runs_its_setup_wi
 
 KEYCLOAK_ENABLED = "services:\n  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
 KEYCLOAK_DISABLED = "services:\n  keycloak:\n    run: {enabled: false, setup: keycloak/init}\n"
-REALM_APPLIED = f"{apply.COMMAND}: realm: applied keycloak/*.yaml; pre-apply snapshot ab12cd34"
+REALM_APPLIED = "realm: applied keycloak/*.yaml; pre-apply snapshot ab12cd34"
 
 
 @pytest.fixture
@@ -4360,7 +4355,7 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
 
     assert exit_code == 0
     assert REALM_APPLIED in out
-    assert f"{apply.COMMAND}: realm: no changes" in out
+    assert "realm: no changes" in out
     assert (realm_backup.asked, scripted.realm_applies) == (["backup", "restore test"], 1)
 
     exit_code, out, _ = switch()
@@ -4371,7 +4366,7 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
 
 
 @pytest.mark.usefixtures("realm_unit")
-def test_the_waiting_line_of_a_stopped_hal_carries_the_prefix_of_the_steps_lines(
+def test_the_waiting_line_of_a_stopped_hal_is_told_as_the_step_runs(
     switch, repository, monkeypatch
 ):
     """Cell 7, through the wiring `apply` gives the installed backup."""
@@ -4385,8 +4380,7 @@ def test_the_waiting_line_of_a_stopped_hal_carries_the_prefix_of_the_steps_lines
     exit_code, out, _ = switch(installed_backup=True)
 
     assert exit_code == 1
-    assert f"{apply.COMMAND}: realm: waiting up to 0.2s for hal to clean up" in out
-    assert "\nrealm: waiting" not in out
+    assert "realm: waiting up to 0.2s for hal to clean up" in out
 
 
 @pytest.mark.usefixtures("realm_unit")
@@ -4397,7 +4391,7 @@ def test_a_failed_backup_ends_partial_exit_1_and_applies_nothing(switch, scripte
     exit_code, _, err = switch()
 
     assert exit_code == 1
-    assert f"{apply.COMMAND}: partial, realm: backup broke; nothing applied" in err
+    assert "error: partial, realm: backup broke; nothing applied" in err
     assert scripted.realm_applies == 0
 
 

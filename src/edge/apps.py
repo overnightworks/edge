@@ -51,6 +51,7 @@ from edge import (
     switches,
 )
 from edge.unit_plans import Fleet, Progress
+from hal_output.command import Verb, command
 
 HEALTH_SECONDS = 300.0
 HEALTH_POLL_SECONDS = 2.0
@@ -164,7 +165,7 @@ class AppsPlan:
     kept: tuple[StaysStoppedNote | SkippedNote, ...] = ()
     offs: tuple[OffPlan, ...] = ()
     catalogued: tuple[catalog.App, ...] = ()  # every app of the catalog, for its barriers
-    switched_off_still_running: tuple[str, ...] = ()  # the refusal of each, by apply
+    switched_off_still_running: tuple[str, ...] = ()  # the keys apply refuses to go on with
 
     @property
     def changes_nothing(self) -> bool:
@@ -203,10 +204,7 @@ def plan_apps(
         if stopped := _stays_stopped_note(app.key, marks, ingress):
             notes.append(stopped)
             if _runs(app, runtime):
-                still_running.append(
-                    f"{app.key} is switched off but still runs; nothing switched; "
-                    f"run `edge stop {app.key}` again"
-                )
+                still_running.append(app.key)
             continue
         planned, skipped = _plan_one(app, organisation, runtime, ingress)
         notes += [SkippedNote(app.key, one) for one in skipped]
@@ -347,12 +345,12 @@ class SwitchedOffLine(str):
     """The failure line of a run that a stop won: running apply again would change nothing."""
 
 
-def retry_advice(key: str, failure: str, apply_command: str) -> str:
-    """What to do after a run that failed: apply again, unless a stop won, which only
-    `edge start` ends (E3: the stack's lines name `edge`)."""
+def retry_command(key: str, failure: str) -> str:
+    """The command to run after a run that failed: apply again, unless a stop won, which only
+    start ends."""
     if isinstance(failure, SwitchedOffLine):
-        return f"`edge start {key}` switches it back on"
-    return f"run `{apply_command}` again"
+        return command(Verb.START, key)
+    return command(Verb.APPLY)
 
 
 class _SwitchedOffMeanwhile(Exception):

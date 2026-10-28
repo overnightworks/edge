@@ -11,9 +11,11 @@ import grp
 import os
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from edge import catalog
+from hal_output.command import Verb, command
 
 ENVIRONMENT_FILE = ".env"
 DOMAIN_KEY = "EDGE_DOMAIN"
@@ -26,13 +28,25 @@ _QUOTES = "\"'"
 GroupLookup = Callable[[str], grp.struct_group]
 
 
+@dataclass(frozen=True)
+class Settings:
+    """The two derived values, in the order `.env` holds them."""
+
+    domain: str
+    docker_gid: str
+
+    @property
+    def assignments(self) -> tuple[tuple[str, str], ...]:
+        return ((DOMAIN_KEY, self.domain), (DOCKER_GID_KEY, self.docker_gid))
+
+
 class EnvironmentRefused(Exception):
     """The `.env` step cannot go on; the message is one line, nothing was written."""
 
 
-def ensure(repository: Path, group_lookup: GroupLookup = grp.getgrnam) -> str | None:
-    """Writes the `.env` of `repository` when it is missing and returns the line saying so; None
-    when a `.env` already holds both derived values. Raises EnvironmentRefused otherwise."""
+def ensure(repository: Path, group_lookup: GroupLookup = grp.getgrnam) -> Settings | None:
+    """Writes the `.env` of `repository` when it is missing and returns what it wrote; None when
+    a `.env` already holds both derived values. Raises EnvironmentRefused otherwise."""
     wanted = _derived(repository, group_lookup)
     path = repository / ENVIRONMENT_FILE
     if os.path.lexists(path):
@@ -45,10 +59,10 @@ def ensure(repository: Path, group_lookup: GroupLookup = grp.getgrnam) -> str | 
         return None
     except OSError as error:
         raise EnvironmentRefused(f"cannot write {path} ({error.strerror})") from error
-    return f"wrote {path}: {', '.join(f'{key}={value}' for key, value in wanted.items())}"
+    return wanted
 
 
-def _derived(repository: Path, group_lookup: GroupLookup) -> dict[str, str]:
+def _derived(repository: Path, group_lookup: GroupLookup) -> Settings:
     try:
         domain = catalog.zone(catalog.read(repository / catalog.FLEET_FILE))
     except catalog.CatalogError as error:
@@ -60,21 +74,21 @@ def _derived(repository: Path, group_lookup: GroupLookup) -> dict[str, str]:
             f"this PC has no `{DOCKER_GROUP}` group to derive {DOCKER_GID_KEY} from; "
             "nothing written"
         ) from error
-    return {DOMAIN_KEY: domain, DOCKER_GID_KEY: str(docker_gid)}
+    return Settings(domain, str(docker_gid))
 
 
-def _check(path: Path, wanted: dict[str, str]) -> None:
+def _check(path: Path, wanted: Settings) -> None:
     try:
         written = _settings(path.read_text())
     except (OSError, UnicodeDecodeError) as error:
         reason = error.strerror if isinstance(error, OSError) else "not text"
         raise EnvironmentRefused(f"cannot read {path} ({reason})") from error
-    for key, derived in wanted.items():
+    for key, derived in wanted.assignments:
         if written.get(key) != derived:
             shown = "not set" if key not in written else f'"{written[key]}"'
             raise EnvironmentRefused(
                 f'{path}: {key} is {shown} but edge derives "{derived}"; delete it and '
-                f"`edge apply --closed` writes it again"
+                f"`{command(Verb.APPLY)}` writes it again"
             )
 
 
@@ -88,9 +102,9 @@ def _settings(text: str) -> dict[str, str]:
     return settings
 
 
-def _write_without_replacing(path: Path, wanted: dict[str, str]) -> None:
+def _write_without_replacing(path: Path, wanted: Settings) -> None:
     """Raises FileExistsError when `path` exists by the time it is linked into place."""
-    content = HEADER + "".join(f"{key}={value}\n" for key, value in wanted.items())
+    content = HEADER + "".join(f"{key}={value}\n" for key, value in wanted.assignments)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.")
     try:
         os.fchmod(descriptor, _PRIVATE_FILE)

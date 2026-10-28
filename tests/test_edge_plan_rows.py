@@ -63,13 +63,13 @@ REPOSITORY = Path("/repository")
 NO_APPKIT = AppkitPlan("0.5.0", Path(), REPOSITORY, (), ())
 
 
-def groups_of(
+def plan_of(
     images: tuple[KeptImage, ...] = (),
     realm: RealmPlan = NO_REALM,
     legal: LegalPlan = NO_LEGAL,
     appkit: AppkitPlan = NO_APPKIT,
     **parts: Any,
-) -> tuple[Group, ...]:
+) -> Plan:
     units = {
         key: parts.pop(key)
         for key in ("built", "recreates", "unit_plans", "core", "followers")
@@ -88,7 +88,11 @@ def groups_of(
         core=list(units.pop("core", ())),
         followers=list(units.pop("followers", ())),
     )
-    return plan_groups(cast(Plan, plan))
+    return cast(Plan, plan)
+
+
+def groups_of(**parts: Any) -> tuple[Group, ...]:
+    return plan_groups(plan_of(**parts))
 
 
 def rows_of(**parts: object) -> tuple[Row, ...]:

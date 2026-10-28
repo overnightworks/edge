@@ -43,6 +43,7 @@ from test_edge_external import (
     live_checkout,  # noqa: F401 the fixture, requested by name below
     plain_git,
 )
+from test_edge_plan_rows import plain
 
 from edge import apply, cli, compose
 from edge.external import cli as external_cli
@@ -60,8 +61,8 @@ services:
     hosts:
       - {name: "@", exposure: public, reason: the site}
 """
-SETUP_QUESTION = "Type 'yes' to run `step-ca/init` now"
-PLAN_QUESTION = "Type 'yes' to apply exactly this plan"
+SETUP_QUESTION = "Type yes to run `step-ca/init` now"
+PLAN_QUESTION = "Type yes to apply "
 NOTHING_PUBLISHED = "edge apply: nothing published"
 INTERRUPTED_IN_PUBLISH = "interrupted during the publish; run `hal check hosts`"
 
@@ -158,7 +159,7 @@ def world(
     def run(*answers: str, arguments=("apply",), while_prompt_waits=None) -> Result:
         at_terminal("\n".join(answers), while_prompt_waits)
         exit_code = cli.main(list(arguments))
-        return Result(exit_code, sys.stdout.getvalue(), capsys.readouterr().err)
+        return Result(exit_code, plain(sys.stdout.getvalue()), capsys.readouterr().err)
 
     def settle_local() -> None:
         """The local part has applied before; the publish has not run."""
@@ -277,7 +278,7 @@ def test_nothing_to_change_on_either_side_asks_nothing(world):
     result = world.run()
 
     assert result.exit_code == 0
-    assert "Type 'yes'" not in result.out
+    assert "Type yes" not in result.out
     assert "nothing to change" in result.out
     assert "no findings" in result.out
 
@@ -303,7 +304,7 @@ def test_a_missing_setup_is_asked_before_the_two_plans(world):
     result = world.run("yes", "yes", "yes")
 
     assert result.exit_code == 0
-    assert result.out.count("Type 'yes'") == 3
+    assert result.out.count("Type yes") == 3
     assert result.out.count(PLAN_QUESTION) == 2
     assert result.out.index(SETUP_QUESTION) < result.out.index(PLAN_QUESTION)
     assert result.out.index("step-ca is on") < result.out.rindex(PLAN_QUESTION)
@@ -341,8 +342,10 @@ def test_an_interrupted_stop_after_an_interrupted_setup_is_refused_and_publishes
     result = world.run()
 
     assert result.exit_code == 1
-    assert "step-ca is switched off but still runs and is not set up" in result.err
-    assert "edge stop step-ca" in result.err
+    assert result.err.splitlines()[:2] == [
+        "error: switched off but still running, nothing switched",
+        "next: hal stop step-ca",
+    ]
     assert SETUP_QUESTION not in result.out
     assert world.setup_run.commands == []
     assert world.scripted.changing_verbs() == changes_before

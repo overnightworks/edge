@@ -73,7 +73,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
-from edge import apply, checkout, compose, core, tunnel  # noqa: E402
+from edge import checkout, compose, core, tunnel  # noqa: E402
 from edge.plan_rows import PlanEvent  # noqa: E402
 
 PROJECT = "edge-switches-probe"
@@ -90,7 +90,7 @@ NOTHING_TO_CHANGE = "nothing to change"
 TRAEFIK_FILE = "traefik.yml"
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
 TRAEFIK_KEPT = "the traefik container is the old one"
-SOCKET_PROXY_RECREATED = "edge apply --closed: socket-proxy is recreated"
+SOCKET_PROXY_RECREATED = "socket-proxy is recreated"  # also a fact of the plan: look from the end
 CORE_CURRENT = "the core is current"
 CORE = ("socket-proxy", "traefik")
 COMPOSE_FILE = "compose.yaml"
@@ -454,7 +454,7 @@ class Probe:
             "socket-proxy recreate definition changed" in out
             and "traefik recreate" in out
             and out.count("socket-proxy is recreated") == 2  # the fact of traefik's row, the result
-            and out.index(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT),
+            and out.rindex(SOCKET_PROXY_RECREATED) < out.index(RECREATED) < out.index(CORE_CURRENT),
             f"apply after the socket-proxy label said: {out[-400:]}",
         )
         expect(all(after[s] != before[s] for s in CORE), "a core container is the old one")
@@ -495,7 +495,7 @@ class Probe:
         expect(
             proven in out
             and SOCKET_PROXY_RECREATED in out
-            and out.index(proven) < out.index(SOCKET_PROXY_RECREATED),
+            and out.index(proven) < out.rindex(SOCKET_PROXY_RECREATED),
             f"apply with the barrier said: {out[-400:]}",
         )
         expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after the recreate")
@@ -707,12 +707,6 @@ class ThrowawayTunnel:
             self.drop_in.parent.rmdir()
         self.unit_file.unlink(missing_ok=True)
         self.systemctl("daemon-reload")
-
-
-def printed(*lines: str) -> str:
-    """`lines` as `edge apply --closed` prints them one after another, each with its prefix, in the
-    whitespace-joined form `edge_copy.run_edge` returns."""
-    return " ".join(" ".join(f"{apply.COMMAND}: {line}" for line in lines).split())
 
 
 def port_is_busy() -> bool:

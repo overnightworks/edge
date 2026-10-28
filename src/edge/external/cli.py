@@ -297,11 +297,22 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
     """Exit 2, naming why, unless `tree` is the live checkout on a clean main (#30 rules 2, 3)."""
     if not_live := checkout.not_live_checkout_line(tree, home):
         refusals = [not_live]
+    elif refused := checkout.not_clean_main(checkout.Git(tree, git)):
+        refusals = _refusal_lines(refused)
     else:
-        refusals = checkout.not_clean_main(checkout.Git(tree, git))
+        refusals = []
     for line in refusals:
         print(f"edge external apply: {line}", file=sys.stderr)
     return ExitCode.CANNOT_PLAN if refusals else None
+
+
+def _refusal_lines(refusal: checkout.Refusal) -> list[str]:
+    if not refusal.paths:
+        return [refusal.message]
+    return [
+        f"{refusal.message}; {checkout.PULL_REQUEST_ROUTE}:",
+        *(f"  {path}" for path in refusal.paths),
+    ]
 
 
 @dataclass(frozen=True)

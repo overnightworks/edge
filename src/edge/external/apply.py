@@ -20,6 +20,7 @@ from typing import Any, TextIO
 
 from edge import catalog, terminal
 from edge.external import host_probe, secrets, tofu
+from hal_output import confirmed
 from hal_output.command import Verb, command
 
 PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
@@ -363,7 +364,7 @@ def _show_confirm_apply(
         )
         return ApplyExit.REFUSED
     progress.step = Step.CONFIRMATION
-    if not terminal.confirmed("apply exactly this plan"):
+    if not confirmed("apply exactly this plan"):
         print("edge external apply: aborted, nothing applied", file=sys.stderr)
         return ApplyExit.REFUSED
     progress.step = Step.APPLY

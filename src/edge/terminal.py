@@ -5,7 +5,7 @@ It stops accidental and non-interactive runs; it does not identify the operator 
 
 import sys
 
-CONFIRMATION = "yes"
+NEEDS_TERMINAL = "refused, stdin and stdout must be a terminal"
 
 
 def at_terminal() -> bool:
@@ -17,13 +17,5 @@ def refused_without_terminal(command: str) -> bool:
     """True, after saying so, when stdin and stdout are not both a terminal."""
     if at_terminal():
         return False
-    print(f"{command}: refused, stdin and stdout must be a terminal", file=sys.stderr)
+    print(f"{command}: {NEEDS_TERMINAL}", file=sys.stderr)
     return True
-
-
-def confirmed(purpose: str) -> bool:
-    """Ask for the exact word `yes`; anything else, and a closed stdin, is a no."""
-    try:
-        return input(f"Type {CONFIRMATION!r} to {purpose}: ") == CONFIRMATION
-    except EOFError:
-        return False

@@ -35,6 +35,8 @@ from hal_output import printable
 
 LIVE_CHECKOUT = "~/git/edge"
 MAIN = "main"
+DIRTY_TREE = "the live checkout has local changes, nothing changed"
+PULL_REQUEST_ROUTE = "a change reaches it through a pull request and `git pull --ff-only`"
 _BRANCH_PREFIX = "refs/heads/"
 _ISOLATION = (
     "-c", "core.hooksPath=/dev/null",
@@ -312,19 +314,24 @@ def not_on_main(git: Git) -> str | None:
     return None
 
 
-def not_clean_main(git: Git) -> list[str]:
-    """Why `git` is not a born `main` with nothing changed, as lines; none when it is (#95 rules
-    5, 6). A git that fails is a line too, so the caller refuses rather than guesses."""
+@dataclass(frozen=True)
+class Refusal:
+    """Why a checkout is not a born `main` with nothing changed; `paths` are the changed paths of
+    a dirty tree, in git's order."""
+
+    message: str
+    paths: tuple[str, ...] = ()
+
+
+def not_clean_main(git: Git) -> Refusal | None:
+    """Why `git` is not a born `main` with nothing changed; None when it is (#95 rules 5, 6). A
+    git that fails is a refusal too, so the caller refuses rather than guesses."""
     try:
         if reason := not_on_main(git):
-            return [f"runs only on {MAIN} ({reason})"]
+            return Refusal(f"runs only on {MAIN} ({reason})")
         changed = git.changed_paths()
     except GitError as error:
-        return [f"cannot read the live checkout, {error}"]
+        return Refusal(f"cannot read the live checkout, {error}")
     if not changed:
-        return []
-    return [
-        "the live checkout has local changes, nothing changed; a change reaches it through "
-        "a pull request and `git pull --ff-only`:",
-        *(f"  {path}" for path in changed),
-    ]
+        return None
+    return Refusal(DIRTY_TREE, tuple(changed))
