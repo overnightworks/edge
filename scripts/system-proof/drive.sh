@@ -1621,8 +1621,9 @@ no_become_prompt() {
     return
 }
 
-home_is_untouched() {
-    [[ ! -e /home/tester/.ansible && -z $(find /home/tester -xdev -user root) ]]
+home_is_untouched() {  # the offenders are listed in the evidence
+    find /home/tester -xdev \( -user root -o -name .ansible \) >"$EVIDENCE/home-offenders.txt"
+    [[ ! -s "$EVIDENCE/home-offenders.txt" ]]
     return
 }
 

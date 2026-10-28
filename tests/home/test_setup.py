@@ -737,7 +737,7 @@ def test_the_play_runs_under_sudo_in_its_own_directory_and_sudo_forgets_the_tick
     system_step.run_playbook_as_root([str(playbook), "--diff"])
 
     play_call, forget_call = stub_sudo.calls()
-    assert play_call[0] == f"{playbook} --diff"
+    assert play_call[0] == f"env PYTHONDONTWRITEBYTECODE=1 {playbook} --diff"
     assert play_call[1] == str(system_step.PLAYBOOK.parent)
     assert forget_call[0] == "-k"
 

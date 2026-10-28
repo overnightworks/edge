@@ -90,11 +90,12 @@ def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
     The system asks for the password at the terminal, which stays stdin and stderr's; stdout is shown line by line and read for
     the recap. No `ANSIBLE_*` variable reaches the play, so the packaged `ansible.cfg` there decides. `sudo -k` follows whatever
     the play did, and a failing `sudo -k` fails the step; it never follows a sudo that did not start.
+    Root's Python writes no bytecode, which would leave root-owned files in the operator's tool environment.
     No timeout: a person types the password, and without a terminal the step refuses before it gets here.
     """
     environment = {name: value for name, value in os.environ.items() if not name.startswith("ANSIBLE_")}
     shown: list[str] = []
-    with subprocess.Popen(["sudo", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:
+    with subprocess.Popen(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:
         try:
             for line in playbook.stdout:
                 sys.stdout.write(line)
