@@ -265,7 +265,7 @@ def admission_cell(events: list[str], output: str) -> Cell:
     name = "L3 admission through the gateway"
     if "run_started" not in events:
         return Cell(name, Verdict.FAILED, "no run_started: the issuer's keys did not arrive")
-    served = SERVED_AFTER_RUN_STARTED.search(output)
+    served = SERVED_AFTER_RUN_STARTED.match(output, output.index("event: run_started"))
     if served is None:
         return Cell(name, Verdict.FAILED, "run_started names no model or no route")
     shown = f"run_started names {served['model']} on route {served['route']}"

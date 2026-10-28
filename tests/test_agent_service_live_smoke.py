@@ -112,6 +112,17 @@ def test_l3_fails_when_only_the_answer_text_looks_like_the_served_line():
     assert l3.verdict is Verdict.FAILED
 
 
+def test_l3_fails_when_the_answer_text_repeats_the_run_started_record_with_a_model():
+    output = (
+        f"event: run_started\n{served_line('', 'cli')}\nevent: assistant_text\n"
+        f"event: run_started\n{SERVED_LINE}\nevent: succeeded\n"
+    )
+
+    _, l3 = live_smoke.turn_cells(0, output, KNOWN)
+
+    assert l3.verdict is Verdict.FAILED
+
+
 def test_l3_holds_and_l2_fails_when_model_and_route_are_seen_but_no_text_comes():
     l2, l3 = live_smoke.turn_cells(0, started("event: succeeded"), KNOWN)
 
