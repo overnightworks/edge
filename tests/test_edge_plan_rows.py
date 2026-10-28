@@ -100,6 +100,12 @@ def find_row(out: str, subject: str, event: PlanEvent, fact: str = "") -> re.Mat
     return re.search(pattern, plain, re.MULTILINE)
 
 
+def row_at(out: str, subject: str, event: PlanEvent, fact: str = "") -> int:
+    row = find_row(out, subject, event, fact)
+    assert row, out
+    return row.start()
+
+
 @pytest.mark.parametrize(
     ("plans", "expected"),
     [
