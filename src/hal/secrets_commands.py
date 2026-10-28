@@ -13,8 +13,8 @@ HELP = f"""\
 {command(Verb.SECRETS)}             every secret of the manifest: file, check, expiry
 {command(Verb.SECRETS, "--by-service")}  which service reads which secret (declared)
 
-It shows no value and changes nothing except the report
-~/.local/state/home/secrets-report.md. It needs no terminal; agents may run it.
+It shows no value and changes nothing except its report file. It needs no terminal; agents
+may run it.
 {command(Verb.SETUP, "--apply")} sets up the missing secrets, at your own terminal.
 """
 
