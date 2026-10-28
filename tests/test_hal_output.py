@@ -2,6 +2,7 @@
 
 import io
 import sys
+from datetime import UTC, datetime
 from enum import StrEnum
 
 import pytest
@@ -19,6 +20,7 @@ from hal_output import (
     counted,
     format_bytes,
     format_duration,
+    format_moment,
     write_detail,
     write_error,
     write_groups,
@@ -94,6 +96,29 @@ def test_a_duration_is_whole_seconds_rounded_down_then_minutes_then_hours(
     """#500: under a second `<1s`, from 60 s `XmYYs`, from one hour `XhYYm`."""
 
     assert format_duration(seconds) == shown
+
+
+@pytest.mark.parametrize(
+    ("moment", "shown"),
+    [
+        (datetime(2026, 10, 18, 3, 0, tzinfo=UTC), "18.10. 05:00"),
+        (datetime(2026, 10, 25, 0, 30, tzinfo=UTC), "25.10. 02:30"),
+        (datetime(2026, 10, 25, 1, 30, tzinfo=UTC), "25.10. 02:30"),
+        (datetime(2026, 10, 17, 22, 30, tzinfo=UTC), "18.10. 00:30"),
+        (datetime(2025, 12, 31, 12, 0, tzinfo=UTC), "31.12.2025 13:00"),
+    ],
+    ids=[
+        "same year",
+        "before the clock change",
+        "after the clock change",
+        "other local day than UTC",
+        "other year",
+    ],
+)
+def test_a_moment_shows_on_the_local_wall_clock_with_the_year_only_when_it_is_not_this_one(
+    berlin_time, moment, shown
+):
+    assert format_moment(moment, datetime(2026, 10, 28, 8, 0, tzinfo=UTC)) == shown
 
 
 @pytest.mark.parametrize(
