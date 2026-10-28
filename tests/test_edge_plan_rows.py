@@ -19,7 +19,15 @@ from edge.apps import (
 )
 from edge.built_image import ENDS_RUNS, BuiltRecreate
 from edge.catalog import App, Unit
-from edge.core import Gate
+from edge.core import (
+    Cause,
+    CauseKind,
+    CoreAction,
+    CorePlan,
+    FollowerAction,
+    FollowerPlan,
+    Gate,
+)
 from edge.plan import Plan
 from edge.plan_rows import PlanEvent, PlanGroup, plan_groups
 from edge.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
@@ -53,7 +61,11 @@ def groups_of(
     realm: RealmPlan = NO_REALM,
     **parts: Any,
 ) -> tuple[Group, ...]:
-    units = {key: parts.pop(key) for key in ("built", "recreates", "unit_plans") if key in parts}
+    units = {
+        key: parts.pop(key)
+        for key in ("built", "recreates", "unit_plans", "core", "followers")
+        if key in parts
+    }
     apps = AppsPlan(cast(AppRuntime, None), **parts)  # type: ignore[arg-type]
     plan = SimpleNamespace(
         app_plans=apps,
@@ -62,18 +74,24 @@ def groups_of(
         built=list(units.pop("built", ())),
         recreates=list(units.pop("recreates", ())),
         plans=list(units.pop("unit_plans", ())),
+        core=list(units.pop("core", ())),
+        followers=list(units.pop("followers", ())),
     )
     return plan_groups(cast(Plan, plan))
 
 
 def rows_of(**parts: object) -> tuple[Row, ...]:
-    [units, apps] = groups_of(**parts)
-    assert (units.heading, apps.heading) == (PlanGroup.UNITS, PlanGroup.APPS)
+    [core, units, apps] = groups_of(**parts)
+    assert (core.heading, units.heading, apps.heading) == (
+        PlanGroup.CORE,
+        PlanGroup.UNITS,
+        PlanGroup.APPS,
+    )
     return apps.rows
 
 
 def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
-    return groups_of(**plan)[0].rows
+    return groups_of(**plan)[1].rows
 
 
 def find_row(out: str, subject: str, event: PlanEvent, fact: str = "") -> re.Match[str] | None:
@@ -257,7 +275,7 @@ def test_the_kept_images_come_before_the_realm_row_and_the_units_before_the_apps
     image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
     realm = RealmPlan(RealmAction.RUN, why="x")
 
-    units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
+    _, units, apps = groups_of(images=(image,), realm=realm, plans=(app_plan(AppKind.ON),))
 
     assert [row.event for row in units.rows] == [PlanEvent.OLD_IMAGE, PlanEvent.REALM_APPLY]
     assert apps.rows
@@ -390,7 +408,7 @@ def test_a_unit_part_is_one_row_of_its_typed_fields(parts: dict[str, Any], row: 
 def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_the_realm() -> None:
     image = kept(ImageReference(KEYCLOAK, DIGEST_A), ImageReference(KEYCLOAK, DIGEST_B))
 
-    units, apps = groups_of(
+    _, units, apps = groups_of(
         built=(built(rebuilt=True),),
         recreates=(Recreate("keycloak", "keycloak-db"),),
         unit_plans=(unit_plan(Action.ON), unit_plan(Action.STAYS_STOPPED)),
@@ -408,3 +426,153 @@ def test_the_unit_rows_stand_built_then_recreates_then_plans_then_images_then_th
         (REALM_UNIT, PlanEvent.REALM_APPLY),
     ]
     assert apps.rows
+
+
+def core_rows_of(**parts: Any) -> tuple[Row, ...]:
+    return groups_of(**parts)[0].rows
+
+
+def core_plan(action: CoreAction, *why: Cause) -> CorePlan:
+    return CorePlan("socket-proxy", action, why, {}, False)
+
+
+def follower_plan(action: FollowerAction, gate: Gate, *why: Cause) -> FollowerPlan:
+    return FollowerPlan("traefik-mcp", "step-ca", action, why, {}, gate)
+
+
+DEFINITION = Cause(CauseKind.DEFINITION_CHANGED)
+FOLLOWER_FILE = Cause(CauseKind.FILE_UNRECORDED, "traefik-mcp.yml")
+
+
+@pytest.mark.parametrize(
+    ("cause", "fact"),
+    [
+        pytest.param(DEFINITION, "definition changed", id="definition changed"),
+        pytest.param(
+            Cause(CauseKind.FILE_CHANGED, "traefik.yml"), "traefik.yml changed", id="file"
+        ),
+        pytest.param(
+            Cause(CauseKind.FILE_UNRECORDED, "traefik.yml"),
+            "traefik.yml has no applied record",
+            id="file unrecorded",
+        ),
+        pytest.param(
+            Cause(CauseKind.UNFINISHED), "the last recreate did not finish", id="unfinished"
+        ),
+        pytest.param(
+            Cause(CauseKind.RECORD_UNTRUSTED, "/x/applied.json is malformed: it is not JSON"),
+            "/x/applied.json is malformed: it is not JSON",
+            id="record untrusted",
+        ),
+        pytest.param(
+            Cause(CauseKind.RECORD_NAMES_OTHERS, "old.yml, older.yml"),
+            "applied.json names old.yml, older.yml, which socket-proxy does not mount",
+            id="record names others",
+        ),
+        pytest.param(
+            Cause(CauseKind.PULLED_IN, "socket-proxy"), "socket-proxy is recreated", id="pulled in"
+        ),
+    ],
+)
+def test_every_cause_of_a_recreated_core_service_is_one_fact(cause: Cause, fact: str) -> None:
+    plan = core_plan(CoreAction.RECREATE, cause)
+
+    assert core_rows_of(core=(plan,)) == (
+        Row(Glyph.CHANGE, "socket-proxy", PlanEvent.RECREATE, fact),
+    )
+
+
+def test_several_causes_are_one_row_in_the_order_they_are_planned() -> None:
+    plan = CorePlan(
+        "traefik",
+        CoreAction.RECREATE,
+        (DEFINITION, Cause(CauseKind.FILE_CHANGED, "traefik.yml")),
+        {},
+        False,
+    )
+
+    assert core_rows_of(core=(plan,)) == (
+        Row(
+            Glyph.CHANGE, "traefik", PlanEvent.RECREATE, "definition changed · traefik.yml changed"
+        ),
+    )
+
+
+def test_a_core_service_that_is_not_running_is_a_row_that_says_it_is_not_started() -> None:
+    plan = core_plan(CoreAction.NOT_STARTED, DEFINITION)
+
+    assert core_rows_of(core=(plan,)) == (
+        Row(
+            Glyph.UNCHANGED,
+            "socket-proxy",
+            PlanEvent.NOT_STARTED,
+            "definition changed · not running",
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("action", "gate", "row"),
+    [
+        pytest.param(
+            FollowerAction.RECREATE,
+            Gate.ON,
+            Row(
+                Glyph.CHANGE,
+                "traefik-mcp",
+                PlanEvent.RECREATE,
+                "traefik-mcp.yml has no applied record",
+            ),
+            id="recreate",
+        ),
+        pytest.param(
+            FollowerAction.STARTS_WITH_UNIT,
+            Gate.ON,
+            Row(
+                Glyph.CHANGE,
+                "traefik-mcp",
+                PlanEvent.STARTS_LATER,
+                "traefik-mcp.yml has no applied record · with step-ca",
+            ),
+            id="starts with its unit",
+        ),
+        pytest.param(
+            FollowerAction.HELD,
+            Gate.OFF,
+            Row(
+                Glyph.UNCHANGED,
+                "traefik-mcp",
+                PlanEvent.NOT_STARTED,
+                "traefik-mcp.yml has no applied record · step-ca is off",
+            ),
+            id="held, unit off",
+        ),
+        pytest.param(
+            FollowerAction.HELD,
+            Gate.SWITCHED_OFF,
+            Row(
+                Glyph.UNCHANGED,
+                "traefik-mcp",
+                PlanEvent.NOT_STARTED,
+                "traefik-mcp.yml has no applied record · step-ca is switched off",
+            ),
+            id="held, unit switched off",
+        ),
+    ],
+)
+def test_a_follower_is_one_row_whose_last_fact_is_the_state_of_its_unit(
+    action: FollowerAction, gate: Gate, row: Row
+) -> None:
+    assert core_rows_of(followers=(follower_plan(action, gate, FOLLOWER_FILE),)) == (row,)
+
+
+def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_and_apps() -> None:
+    core, units, apps = groups_of(
+        core=(core_plan(CoreAction.RECREATE, DEFINITION),),
+        followers=(follower_plan(FollowerAction.RECREATE, Gate.ON, DEFINITION),),
+        unit_plans=(unit_plan(Action.ON),),
+        plans=(app_plan(AppKind.ON),),
+    )
+
+    assert [group.heading for group in (core, units, apps)] == list(PlanGroup)
+    assert [row.subject for row in core.rows] == ["socket-proxy", "traefik-mcp"]

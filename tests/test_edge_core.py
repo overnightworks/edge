@@ -114,8 +114,20 @@ def plan_of(
     return core.plan_core(config, containers(running, labels), HASHES, checkout, record)
 
 
-def lines(plans: list[core.CorePlan]) -> list[str]:
-    return [planned.describe() for planned in plans]
+DEFINITION = core.Cause(core.CauseKind.DEFINITION_CHANGED)
+UNFINISHED = core.Cause(core.CauseKind.UNFINISHED)
+
+
+def file_changed(name: str) -> core.Cause:
+    return core.Cause(core.CauseKind.FILE_CHANGED, name)
+
+
+def file_unrecorded(name: str) -> core.Cause:
+    return core.Cause(core.CauseKind.FILE_UNRECORDED, name)
+
+
+def causes_of(plans: list[core.CorePlan]) -> list[tuple[str, tuple[core.Cause, ...]]]:
+    return [(planned.service, planned.why) for planned in plans]
 
 
 def test_the_core_is_every_service_without_a_profile(config):
@@ -176,10 +188,10 @@ def write_record(record: core.Record, content: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("content", "why"),
+    ("content", "problem"),
     [
-        (None, "traefik.yml has no applied record"),
-        ("{}", "traefik.yml has no applied record"),
+        (None, None),
+        ("{}", None),
         ("not json", "RECORD is malformed: it is not JSON"),
         ("[]", "RECORD is malformed: it is not an object of services"),
         ('{"traefik": "abc"}', "RECORD is malformed: the traefik entry is not an object of files"),
@@ -187,12 +199,12 @@ def write_record(record: core.Record, content: str) -> None:
             '{"traefik": {"traefik.yml": 1}}',
             "RECORD is malformed: traefik.yml of traefik is not a digest string",
         ),
-        ('{"traefik": {"traefik.yml": "0000"}}', "traefik.yml changed"),
-        ('{"traefik": {"old.yml": "0000"}}', "traefik.yml has no applied record"),
+        ('{"traefik": {"traefik.yml": "0000"}}', file_changed(TRAEFIK_FILE)),
+        ('{"traefik": {"old.yml": "0000"}}', None),
     ],
 )
 def test_a_record_that_does_not_match_counts_as_changed_and_says_why(
-    content, why, config, checkout, record
+    content, problem, config, checkout, record
 ):
     """#85 rule 2, cells U1, U3, U4: missing, malformed or other digests count as changed."""
     if content is not None:
@@ -200,7 +212,15 @@ def test_a_record_that_does_not_match_counts_as_changed_and_says_why(
 
     [plan] = plan_of(config, checkout, record)
 
-    assert plan.describe() == f"traefik: recreate ({why.replace('RECORD', str(record.path))})"
+    if isinstance(problem, core.Cause):
+        expected = problem
+    elif problem:
+        expected = core.Cause(
+            core.CauseKind.RECORD_UNTRUSTED, problem.replace("RECORD", str(record.path))
+        )
+    else:
+        expected = file_unrecorded(TRAEFIK_FILE)
+    assert plan.why == (expected,)
     assert plan.digests == {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}
 
 
@@ -210,7 +230,11 @@ def test_a_record_that_cannot_be_read_counts_as_changed(config, checkout, record
 
     [plan] = plan_of(config, checkout, record)
 
-    assert plan.why == f"{record.path} cannot be read (Is a directory)"
+    assert plan.why == (
+        core.Cause(
+            core.CauseKind.RECORD_UNTRUSTED, f"{record.path} cannot be read (Is a directory)"
+        ),
+    )
 
 
 def test_an_entry_naming_another_file_beside_the_current_one_counts_as_changed(
@@ -222,7 +246,7 @@ def test_an_entry_naming_another_file_beside_the_current_one_counts_as_changed(
 
     [plan] = plan_of(config, checkout, record)
 
-    assert plan.why == "applied.json names old.yml, which traefik does not mount"
+    assert plan.why == (core.Cause(core.CauseKind.RECORD_NAMES_OTHERS, "old.yml"),)
 
 
 def test_a_current_record_plans_nothing(config, checkout, record):
@@ -251,13 +275,16 @@ def test_only_a_core_service_with_a_live_container_is_recreated(
     assert plan.action is action
 
 
-def test_a_core_service_that_is_not_running_is_named_and_not_started(config, checkout, record):
-    """#85 rule 4, cell U5: the wording of the non-action."""
+def test_a_core_service_that_is_not_running_is_named_with_its_cause_and_not_started(
+    config, checkout, record
+):
+    """#85 rule 4, cell U5: the non-action keeps the cause."""
     record.write("traefik", {TRAEFIK_FILE: "0000"}, FOLLOWED)
 
     [plan] = plan_of(config, checkout, record, {})
 
-    assert plan.describe() == "traefik: traefik.yml changed; it is not running and is not started"
+    assert plan.action is core.CoreAction.NOT_STARTED
+    assert plan.why == (file_changed(TRAEFIK_FILE),)
 
 
 def test_the_record_is_written_into_a_new_state_directory_whole(record, tmp_path):
@@ -315,9 +342,9 @@ def test_a_changed_socket_proxy_definition_recreates_it_and_pulls_in_traefik(
     recreated, then traefik because it depends on it; socket-proxy is followed through no file."""
     plans = plan_of(config, checkout, recorded, BOTH_RUNNING, {"socket-proxy": STALE})
 
-    assert lines(plans) == [
-        "socket-proxy: recreate (its compose definition changed)",
-        "traefik: recreate (socket-proxy is recreated)",
+    assert causes_of(plans) == [
+        ("socket-proxy", (DEFINITION,)),
+        ("traefik", (core.Cause(core.CauseKind.PULLED_IN, "socket-proxy"),)),
     ]
     assert [planned.digests for planned in plans] == [
         {},
@@ -329,7 +356,7 @@ def test_a_changed_traefik_definition_recreates_only_traefik(config, checkout, r
     """#87 rule 2, cell D2: nothing depends on traefik, so socket-proxy is not named."""
     plans = plan_of(config, checkout, recorded, BOTH_RUNNING, {"traefik": STALE})
 
-    assert lines(plans) == ["traefik: recreate (its compose definition changed)"]
+    assert causes_of(plans) == [("traefik", (DEFINITION,))]
 
 
 def test_a_changed_definition_and_traefik_yml_are_one_recreate_with_both_reasons(
@@ -340,10 +367,7 @@ def test_a_changed_definition_and_traefik_yml_are_one_recreate_with_both_reasons
 
     [planned] = plan_of(config, checkout, recorded, BOTH_RUNNING, {"traefik": STALE})
 
-    assert (
-        planned.describe()
-        == "traefik: recreate (its compose definition changed; traefik.yml changed)"
-    )
+    assert planned.why == (DEFINITION, file_changed(TRAEFIK_FILE))
     assert planned.digests == {TRAEFIK_FILE: sha256(checkout / TRAEFIK_FILE)}
 
 
@@ -373,19 +397,14 @@ def test_a_changed_socket_proxy_that_is_not_running_is_named_and_pulls_in_nothin
 
     plans = plan_of(config, checkout, recorded, states, {"socket-proxy": STALE})
 
-    assert lines(plans) == [
-        "socket-proxy: its compose definition changed; it is not running and is not started"
-    ]
+    assert causes_of(plans) == [("socket-proxy", (DEFINITION,))]
     assert plans[0].action is core.CoreAction.NOT_STARTED
     assert not plans[0].left_unstarted
 
 
 @pytest.mark.parametrize(
     ("label", "why"),
-    [
-        (None, "the last recreate did not finish"),
-        (STALE, "its compose definition changed; the last recreate did not finish"),
-    ],
+    [(None, (UNFINISHED,)), (STALE, (DEFINITION, UNFINISHED))],
 )
 def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_traefik(
     label, why, config, checkout, recorded
@@ -401,9 +420,9 @@ def test_a_socket_proxy_a_recreate_left_created_is_recreated_again_and_pulls_in_
 
     plans = plan_of(config, checkout, recorded, states, labels)
 
-    assert lines(plans) == [
-        f"socket-proxy: recreate ({why})",
-        "traefik: recreate (the last recreate did not finish; socket-proxy is recreated)",
+    assert causes_of(plans) == [
+        ("socket-proxy", why),
+        ("traefik", (UNFINISHED, core.Cause(core.CauseKind.PULLED_IN, "socket-proxy"))),
     ]
     assert [planned.left_unstarted for planned in plans] == [True, False]
 
@@ -418,7 +437,7 @@ def test_a_traefik_its_recreate_left_created_is_recreated_again_for_one_reason(
 
     plans = plan_of(config, checkout, recorded, states)
 
-    assert lines(plans) == ["traefik: recreate (the last recreate did not finish)"]
+    assert causes_of(plans) == [("traefik", (UNFINISHED,))]
     assert plans[0].left_unstarted
 
 
@@ -523,46 +542,25 @@ def test_the_followers_are_the_profile_services_binding_traefiks_static_config(
 
 
 @pytest.mark.parametrize(
-    ("states", "gate", "line"),
+    ("states", "gate", "action"),
     [
-        (
-            {FOLLOWER: "running"},
-            core.Gate.ON,
-            "traefik-mcp: recreate (traefik-mcp.yml has no applied record)",
-        ),
-        (
-            {FOLLOWER: "restarting"},
-            core.Gate.ON,
-            "traefik-mcp: recreate (traefik-mcp.yml has no applied record)",
-        ),
-        (
-            {},
-            core.Gate.ON,
-            "traefik-mcp: traefik-mcp.yml has no applied record; it starts with step-ca",
-        ),
-        (
-            {},
-            core.Gate.OFF,
-            "traefik-mcp: traefik-mcp.yml has no applied record; step-ca is off, so it is not "
-            "started",
-        ),
-        (
-            {FOLLOWER: "running"},
-            core.Gate.SWITCHED_OFF,
-            "traefik-mcp: traefik-mcp.yml has no applied record; step-ca is switched off, so it "
-            "is not started",
-        ),
+        ({FOLLOWER: "running"}, core.Gate.ON, core.FollowerAction.RECREATE),
+        ({FOLLOWER: "restarting"}, core.Gate.ON, core.FollowerAction.RECREATE),
+        ({}, core.Gate.ON, core.FollowerAction.STARTS_WITH_UNIT),
+        ({}, core.Gate.OFF, core.FollowerAction.HELD),
+        ({FOLLOWER: "running"}, core.Gate.SWITCHED_OFF, core.FollowerAction.HELD),
     ],
     ids=["F2 on", "F10 crash-looping", "F12 switched on", "F5 off", "F7 switched off"],
 )
 def test_a_changed_follower_is_planned_by_its_units_gate(
-    states, gate, line, with_follower, checkout, record
+    states, gate, action, with_follower, checkout, record
 ):
     """#89 rules 2-4, cells F2, F5, F7, F10, F12: a follower with any container whose unit is on
     is recreated, one without starts with its unit, and an off or switched-off unit holds it."""
     [plan] = followers_of(with_follower, checkout, record, states, {"step-ca": gate})
 
-    assert plan.describe() == line
+    assert plan.action is action
+    assert plan.why == (file_unrecorded(FOLLOWER_FILE),)
     assert plan.digests == {FOLLOWER_FILE: sha256(checkout / FOLLOWER_FILE)}
 
 
@@ -584,7 +582,7 @@ def test_a_followers_changed_label_is_its_definition_and_step_cas_is_none_of_its
         with_follower, checkout, record, states, ON, {FOLLOWER: STALE, "step-ca": STALE}
     )
 
-    assert plan.describe() == "traefik-mcp: recreate (its compose definition changed)"
+    assert plan.why == (DEFINITION,)
 
 
 def test_a_follower_without_a_container_gets_no_definition_line(with_follower, checkout, record):

@@ -3,7 +3,7 @@
 
 from enum import StrEnum
 
-from edge import switches
+from edge import core, switches
 from edge.apps import AppKind, AppPlan, AppsPlan, OffPlan, SkippedNote, StaysStoppedNote
 from edge.built_image import ENDS_RUNS, BuiltRecreate
 from edge.plan import Plan
@@ -18,6 +18,8 @@ _DEFINITION_CHANGED = "definition changed"
 
 class PlanEvent(StrEnum):
     RECREATE = "recreate"
+    NOT_STARTED = "not started"
+    STARTS_LATER = "starts later"
     SWITCH_ON = "switch on"
     START_AGAIN = "start again"
     UPDATE = "update"
@@ -32,15 +34,68 @@ class PlanEvent(StrEnum):
 
 
 class PlanGroup(StrEnum):
+    CORE = "core"
     UNITS = "units"
     APPS = "apps"
 
 
 def plan_groups(plan: Plan) -> tuple[Group, ...]:
     return (
+        Group(PlanGroup.CORE, _core_rows(plan)),
         Group(PlanGroup.UNITS, _unit_rows(plan)),
         Group(PlanGroup.APPS, _app_rows(plan.app_plans)),
     )
+
+
+def _core_rows(plan: Plan) -> tuple[Row, ...]:
+    return (
+        *(_core_plan_row(core_plan) for core_plan in plan.core),
+        *(_follower_row(follower) for follower in plan.followers),
+    )
+
+
+def _core_plan_row(plan: core.CorePlan) -> Row:
+    facts = [_cause_fact(cause, plan.service) for cause in plan.why]
+    if plan.action is core.CoreAction.NOT_STARTED:
+        return Row(
+            Glyph.UNCHANGED,
+            plan.service,
+            PlanEvent.NOT_STARTED,
+            _SEPARATOR.join((*facts, "not running")),
+        )
+    return Row(Glyph.CHANGE, plan.service, PlanEvent.RECREATE, _SEPARATOR.join(facts))
+
+
+def _follower_row(plan: core.FollowerPlan) -> Row:
+    facts = [_cause_fact(cause, plan.service) for cause in plan.why]
+    match plan.action:
+        case core.FollowerAction.HELD:
+            facts.append(f"{plan.unit} is {plan.gate}")
+            return Row(Glyph.UNCHANGED, plan.service, PlanEvent.NOT_STARTED, _SEPARATOR.join(facts))
+        case core.FollowerAction.STARTS_WITH_UNIT:
+            facts.append(f"with {plan.unit}")
+            return Row(Glyph.CHANGE, plan.service, PlanEvent.STARTS_LATER, _SEPARATOR.join(facts))
+        case core.FollowerAction.RECREATE:
+            return Row(Glyph.CHANGE, plan.service, PlanEvent.RECREATE, _SEPARATOR.join(facts))
+
+
+def _cause_fact(cause: core.Cause, service: str) -> str:
+    subject = cause.subject
+    match cause.kind:
+        case core.CauseKind.DEFINITION_CHANGED:
+            return _DEFINITION_CHANGED
+        case core.CauseKind.FILE_CHANGED:
+            return f"{subject} changed"
+        case core.CauseKind.FILE_UNRECORDED:
+            return f"{subject} has no applied record"
+        case core.CauseKind.UNFINISHED:
+            return "the last recreate did not finish"
+        case core.CauseKind.RECORD_UNTRUSTED:
+            return subject
+        case core.CauseKind.RECORD_NAMES_OTHERS:
+            return f"{core.APPLIED_FILE} names {subject}, which {service} does not mount"
+        case core.CauseKind.PULLED_IN:
+            return f"{subject} is recreated"
 
 
 def _unit_rows(plan: Plan) -> tuple[Row, ...]:

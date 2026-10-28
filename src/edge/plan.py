@@ -45,5 +45,4 @@ class Plan:
         return [
             *self.appkit.describe(),
             *self.legal.describe(),
-            *(plan.describe() for plan in (*self.core, *self.followers)),
         ]
