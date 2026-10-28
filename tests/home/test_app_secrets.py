@@ -511,6 +511,7 @@ def test_hal_setup_dry_run_names_only_the_open_secrets(
 def closed_folder(sandbox: Sandbox) -> Iterator[None]:
     """A folder its owner cannot open, so `stat` cannot tell whether the file inside exists."""
     put_secret(sandbox, "closed/entry")
+    (sandbox.home / ".secrets").chmod(0o700)
     folder = sandbox.home / ".secrets" / "closed"
     folder.chmod(0)
     yield
@@ -557,6 +558,20 @@ def test_hal_setup_apply_counts_two_open_entries_in_the_row_and_the_error(
         "  ! secrets         2 open         first (by hand), second (by hand)",
         "error: setup stopped at secrets · 2 secrets still open",
     )
+
+
+def test_hal_setup_apply_ends_a_refused_store_with_the_wizards_own_pair_and_no_still_open_pair(
+    hal_secrets: Callable[..., tuple[int, list[str], str]], sandbox: Sandbox
+) -> None:
+    (sandbox.home / ".secrets").mkdir(mode=0o700)
+    (sandbox.home / ".secrets").chmod(0o755)
+
+    code, lines, error = hal_secrets(secret_entry("opentofu/passphrase"), "--apply")
+
+    assert code == ExitCode.FAILURE
+    assert error.splitlines()[-2:] == ["error: setup stopped at secrets · nothing stored for opentofu/passphrase", "next: chmod 700 ~/.secrets"]
+    assert [" ".join(line.split()) for line in lines if "✗" in line] == ["✗ opentofu/passphrase not stored ~/.secrets has mode 755; at most 700 allowed"]
+    assert not [line for line in lines + error.splitlines() if "still open" in line]
 
 
 GUIDED_TOKEN = secret_entry(
