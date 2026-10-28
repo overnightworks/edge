@@ -53,8 +53,10 @@ def test_a_failing_write_stops_the_stack_before_compose_up_loudly(
         steps.append("write")
         raise probe.ProbeFailure("appkit: could not write the theme")
 
+    stack = stack_that_records(probe, tmp_path, steps, failing)
+
     with pytest.raises(probe.ProbeFailure, match="could not write the theme"):
-        stack_that_records(probe, tmp_path, steps, failing).up("keycloak")
+        stack.up("keycloak")
 
     assert steps == ["write"]
 

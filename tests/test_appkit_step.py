@@ -312,6 +312,7 @@ def test_the_module_writes_every_target_without_the_question(world):
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(appkit_step.__file__).parents[1])},
     )
 
     assert finished.returncode == 0, finished.stderr
