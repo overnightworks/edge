@@ -1,20 +1,13 @@
 [edge-verb]
 ".github/workflows/ci.yml" = 1
 ".gitignore" = 3
-"README.md" = 1
 "agent-service/setup" = 1
 "docs/architecture.md" = 116
 "docs/design/hal-output.html" = 18
 "docs/external.md" = 4
-"docs/keycloak.md" = 6
-"docs/naming.md" = 1
-"docs/stack.md" = 34
-"probe/edge_copy.py" = 4
 "probe/keycloak/README.md" = 1
 "probe/keycloak/probe.py" = 2
-"probe/step-ca/probe.py" = 4
-"probe/switches/probe.py" = 8
-"src/edge/apply.py" = 5
+"src/edge/apply.py" = 4
 "src/edge/barrier.py" = 3
 "src/edge/catalog.py" = 1
 "src/edge/checkout.py" = 2
@@ -27,11 +20,11 @@
 "src/hal/version.py" = 1
 "tests/home/test_secrets_setup.py" = 3
 "tests/home/test_secrets_view.py" = 1
-"tests/test_edge_apply.py" = 16
+"tests/test_edge_apply.py" = 15
 "tests/test_edge_apply_apps.py" = 1
 "tests/test_edge_apply_checkout.py" = 1
 "tests/test_edge_apply_legal.py" = 2
-"tests/test_edge_apply_publish.py" = 7
+"tests/test_edge_apply_publish.py" = 6
 "tests/test_edge_barrier.py" = 3
 "tests/test_edge_environment.py" = 1
 "tests/test_edge_external.py" = 2

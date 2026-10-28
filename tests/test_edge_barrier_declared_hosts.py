@@ -63,7 +63,7 @@ def stack(fakes, hal):  # noqa: F811
 
 
 @pytest.fixture
-def closed_apply(core_files, hal, repository, applying):  # noqa: F811
+def local_apply(core_files, hal, repository, applying):  # noqa: F811
     """`hal apply --local` over a running core, in the checkout whose fleet the test writes."""
     return lambda: hal("apply", "--local", answers=("yes",)), repository, applying.state
 
@@ -120,9 +120,9 @@ def test_stop_refuses_to_plan_when_another_entry_declares_a_malformed_host(stack
     assert "cannot plan, services.step-ca.hosts[0].name:" in result.err
 
 
-def test_apply_closed_proves_the_apex_barrier_of_a_switched_off_unit_again(closed_apply):
+def test_apply_local_proves_the_apex_barrier_of_a_switched_off_unit_again(local_apply):
     """#325 B8: `hal apply --local` re-renders and proves the barrier, the declared apex too."""
-    apply_local, checkout, state_directory = closed_apply
+    apply_local, checkout, state_directory = local_apply
     declare_apex(checkout, enabled=False)
     switch_off(state_directory, unit="probe")
 
