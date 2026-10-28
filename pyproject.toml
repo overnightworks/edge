@@ -1,7 +1,7 @@
 [project]
-name = "edge-check"
+name = "overnightworks-hal"
 version = "0.1.0"
-description = "The edge tools: hal, the daily door."
+description = "hal, the daily door."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
