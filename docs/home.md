@@ -710,7 +710,7 @@ Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) ver
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist der Starter,
 der `.venv/bin/hal` des Checkouts ausführt; der Link
-unter `~/.local/bin` muss deshalb `hal` heißen. Die systemd-Unit ruft
+unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet. Die systemd-Unit ruft
 `~/git/edge/.venv/bin/hal` direkt auf und hängt so an keinem Link. `hal`
 läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
