@@ -1,0 +1,8 @@
+claim_id = "551f2a60314745c9bd1c98a09847bc2b"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "1281937901a87392d43afd143392f4e71bcad5c0"
+branch = "claude/issue-633-setup-asks-one-yes"
+scope = ["README.md", "docs/architecture.md", "docs/backup.md", "docs/design/hal-output.html", "docs/home.md", "docs/stack.md", "quality/baseline.toml", "scripts/system-proof/drive.sh", "scripts/system-proof/terminal.exp", "src/edge/emergency.py", "src/hal/grammar.py", "src/hal/secrets_commands.py", "src/hal/setup_commands.py", "src/home_tools/check.py", "src/home_tools/hook_check.py", "src/home_tools/hooks/commit-hook", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_setup.py", "src/home_tools/setup.py", "src/home_tools/system/playbook.yml", "src/home_tools/system_step.py", "tests/home/conftest.py", "tests/home/secrets_support.py", "tests/home/test_app_secrets.py", "tests/home/test_commit_hook.py", "tests/home/test_hook_check.py", "tests/home/test_secrets_setup.py", "tests/home/test_setup.py", "tests/home/test_setup_yes.py", "tests/home/test_system_step_runner.py", "tests/home/test_user_units.py", "tests/old_names_baseline.toml", "tests/test_command_texts.py", "tests/test_edge_global_stop.py", "tests/test_hal_cli.py", "tests/test_hal_output.py", "tests/test_hal_stack_commands.py"]
+opened_commit = "ed06818958d92ffbca74fb47f36205482d8e259f"
+whole_reason = "The --apply flag, every hint and test that names it, the yes gate and the no-terminal refusals it makes unreachable go together, with the proof, docs and picture, or a text names a missing flag, hal setup acts without a yes, or dead branches stay."
