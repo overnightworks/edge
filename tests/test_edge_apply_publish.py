@@ -373,7 +373,7 @@ def publish_fails(_world: World) -> tuple[list[str], dict]:
     [publish_is_declined, publish_has_findings, publish_cannot_check, publish_fails],
     ids=["C11 declined", "C12 findings", "C12 cannot check", "C13 apply fails"],
 )
-def test_a_publish_that_does_not_end_clean_is_exit_1(world, arrange):
+def test_a_publish_that_does_not_end_clean_ends_with_3(world, arrange):
     """C11-C13: the publish's own non-zero exit is the exit of `edge apply`."""
     answers, plan = arrange(world)
     world.fake_tofu.configure(**plan)
@@ -414,7 +414,7 @@ def test_a_failing_tofu_apply_names_cloudflare_as_the_sender(world):
     assert "cloudflare: tofu apply failed (exit 1)" in result.err
 
 
-def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
+def test_a_publish_that_cannot_plan_ends_with_3_and_the_summary_line(world):
     """C14: the publish's exit 2 becomes 1; only a local part can end `edge apply` with 2."""
     world.fake_tofu.configure(plan=1)
 
@@ -425,7 +425,7 @@ def test_a_publish_that_cannot_plan_is_exit_1_with_the_summary_line(world):
     assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 
-def test_a_missing_write_token_after_the_local_part_is_exit_1_naming_the_file(world, home):  # noqa: F811
+def test_a_missing_write_token_after_the_local_part_ends_with_3_naming_the_file(world, home):  # noqa: F811
     """C15 (D8): the local part ran; the publish names the file it misses."""
     (home / ".secrets/cloudflare/fleet-write").unlink()
 
