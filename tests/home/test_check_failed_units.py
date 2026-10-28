@@ -18,7 +18,7 @@ ACTION_TITLE = "PC check: action needed – Services"
 
 @pytest.fixture
 def clean_home(sandbox: Sandbox, furnish_clean_home: Callable[[Path], Path]) -> Path:
-    """The conftest's clean home, inside the sandbox's HOME so that `home setup` can install the hook there."""
+    """The conftest's clean home, inside the sandbox's HOME so that the setup step can install the hook there."""
     return furnish_clean_home(sandbox.home)
 
 
