@@ -1,12 +1,11 @@
 """The system step of `hal setup`: edge's cloudflared files and the stop-only polkit rule, written by Ansible as root under one sudo call.
 
 The root work is `system/playbook.yml`. This module runs it with the terminal passed through, says what its check found in one
-of three states, and keeps the record of the last verified run, which lets `home next` see the step without Ansible or sudo.
+of three states.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import pwd
@@ -139,7 +138,7 @@ class Boundaries:
     operator_user: Callable[[], str]
 
 
-# The terminal fact is the one `home secrets --setup` asks: both ends are a terminal.
+# The terminal fact is the one the wizard asks: both ends are a terminal.
 TERMINAL_BOUNDARIES = Boundaries(secrets_setup.TERMINAL_BOUNDARIES.terminal.is_interactive, run_playbook_as_root, _running_user)
 
 
@@ -163,22 +162,6 @@ class SystemStep:
             "rsyslog_file_names": RSYSLOG_FILE_NAMES,
         }
 
-    def inputs_digest(self) -> str:
-        """What a verified run rendered: the playbook, edge's `tunnel/` files and the filled-in values."""
-        digest = hashlib.sha256(json.dumps(self.extra_vars(), sort_keys=True).encode())
-        digest.update(b"\0" + PLAYBOOK.read_bytes())
-        tunnel_dir = self.layout.edge_tunnel_dir
-        for path in sorted(path for path in tunnel_dir.rglob("*") if path.is_file()):
-            digest.update(b"\0" + str(path.relative_to(tunnel_dir)).encode() + b"\0" + path.read_bytes())
-        return digest.hexdigest()
-
-    def is_verified(self) -> bool:
-        """`home next` reads this: a verified run rendered today's inputs. A hand edit in /etc only `hal setup` sees."""
-        try:
-            return self.layout.system_step_record.read_text() == self.inputs_digest()
-        except OSError:
-            return False
-
     def will_ask_for_sudo(self) -> bool:
         """An apply with a terminal runs the play, and sudo asks for the password there."""
         return self.boundaries.has_terminal()
@@ -195,23 +178,17 @@ class SystemStep:
         """At a terminal, Ansible's check mode asks for sudo once and shows the diff; without what it needs nothing is read."""
         if self.needs_first():
             return CheckState.NOT_CHECKED
-        digest = self.inputs_digest()
         if not (run := self._run_playbook(check=True)).succeeded:
             raise StepFailed("Ansible's check did not finish · its output above says why")
         if run.changed:
             return CheckState.WOULD_CHANGE
-        self._record(digest)
         return CheckState.UNCHANGED
 
     def apply(self) -> Applied:
         if not self.boundaries.has_terminal():
             raise StepRefused(NEEDS_SUDO_AT_A_TERMINAL)
-        digest = self.inputs_digest()
-        # An apply may change the system, so an earlier verification no longer stands, whatever the outcome.
-        self.layout.system_step_record.unlink(missing_ok=True)
         if not (run := self._run_playbook(check=False)).succeeded:
             raise StepFailed("Ansible did not finish · its output above says why")
-        self._record(digest)
         return Applied.CHANGED if run.changed else Applied.UNCHANGED
 
     def _run_playbook(self, check: bool) -> PlaybookRun:
@@ -226,8 +203,3 @@ class SystemStep:
             *(["--check"] if check else []),
         ]
         return self.boundaries.run_playbook(argv)
-
-    def _record(self, digest: str) -> None:
-        # A torn write only reads as "never verified", so the record needs no atomic replace.
-        self.layout.system_step_record.parent.mkdir(parents=True, exist_ok=True)
-        self.layout.system_step_record.write_text(digest)

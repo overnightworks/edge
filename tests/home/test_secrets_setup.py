@@ -7,30 +7,26 @@ import signal
 import stat
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, FakeProbe, symlinked_folder_fix
+from conftest import FAKE_SECRET_VALUE, symlinked_folder_fix
+from secrets_support import FakeSync, FakeTerminal, guided_boundaries, run_wizard
 
-from home_tools import cli, secrets_setup
+from home_tools import secrets_setup
 from home_tools.secrets_setup import (
     CLOUDFLARE_TOKEN_PAGE,
     NO_BROWSER,
     OPEN_PROMPT,
     PASTE_PROMPT,
-    TERMINAL_BOUNDARIES,
     Boundaries,
     Outcome,
-    Terminal,
     Verdict,
     github_page,
 )
 from home_tools.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
 from home_tools.secrets_view import SecretEntry, TokenSource, load_manifest
-
-NOW = datetime(2026, 10, 17, 9, 0)
 
 # Two guided tokens, one generated passphrase, in the order the walk must keep.
 SETUP_MANIFEST = """\
@@ -63,7 +59,7 @@ name = "opentofu/passphrase"
 kind = "service-password"
 paths = ["~/.secrets/opentofu/passphrase"]
 read_by = ["edge external plan"]
-recreate = "home secrets --setup"
+recreate = "hal setup --apply"
 purpose = "verschlüsselt den State"
 """
 TOKEN_FILES = (".secrets/cloudflare/read", ".secrets/github/read")
@@ -93,7 +89,7 @@ name = "locked/token"
 kind = "service-password"
 paths = ["~/.secrets/locked/token"]
 read_by = []
-recreate = "home secrets --setup"
+recreate = "hal setup --apply"
 
 [[secret]]
 name = "github/old"
@@ -112,37 +108,6 @@ WRONG_VALUE = "FAKE-WRONG-VALUE-0000"
 
 
 @dataclass
-class FakeTerminal:
-    """A terminal whose operator pastes the queued answers; an exception class in the queue is raised instead."""
-
-    pastes: list[str | type[BaseException]] = field(default_factory=list)
-    enter: type[BaseException] | None = None
-    browser_opens: bool = True
-    opened: list[str] = field(default_factory=list)
-    prompts: list[str] = field(default_factory=list)
-
-    def ask(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        if self.enter:
-            raise self.enter
-        return ""
-
-    def ask_hidden(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        answer = self.pastes.pop(0) if self.pastes else ""
-        if isinstance(answer, type):
-            raise answer
-        return answer
-
-    def open_page(self, page: str) -> bool:
-        self.opened.append(page)
-        return self.browser_opens
-
-    def boundary(self) -> Terminal:
-        return Terminal(lambda: True, self.ask, self.ask_hidden, self.open_page)
-
-
-@dataclass
 class FakeVerifier:
     """Accepts PASTED_VALUE and refuses anything else, unless told otherwise; runs `side_effect` on each call."""
 
@@ -154,21 +119,6 @@ class FakeVerifier:
         self.checked.append((source.resource, len(value)))
         self.side_effect()
         return Verdict(Outcome.ACCEPTED) if value == PASTED_VALUE else self.refusal
-
-
-@dataclass
-class FakeDisk:
-    """The disk under the walk; `interrupted` raises Ctrl-C while a file is synced, `ctrl_c` sends the real signal then."""
-
-    interrupted: bool = False
-    ctrl_c: bool = False
-
-    def sync(self, descriptor: int) -> None:
-        if self.interrupted:
-            raise KeyboardInterrupt
-        if self.ctrl_c:
-            os.kill(os.getpid(), signal.SIGINT)
-        os.fsync(descriptor)
 
 
 @pytest.fixture
@@ -185,8 +135,8 @@ def verifier() -> FakeVerifier:
 
 
 @pytest.fixture
-def disk() -> FakeDisk:
-    return FakeDisk()
+def disk() -> FakeSync:
+    return FakeSync()
 
 
 @pytest.fixture
@@ -195,7 +145,7 @@ def terminal() -> FakeTerminal:
 
 
 @pytest.fixture
-def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeDisk) -> Boundaries:
+def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeSync) -> Boundaries:
     """The operator at the keyboard; the walk sees only these fakes, never a browser, a prompt or a provider."""
     return Boundaries(terminal.boundary(), verifier, disk.sync)
 
@@ -203,10 +153,6 @@ def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeDisk) -
 def squeezed(output: str) -> list[str]:
     """The output's lines with each run of spaces squeezed to one, so a row reads as its columns in order."""
     return [" ".join(line.split()) for line in output.splitlines()]
-
-
-def home_secrets_setup(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES) -> int:
-    return cli.main(["secrets", "--setup"], home=home, probe=FakeProbe(), now=NOW, secrets_setup_boundaries=boundaries)
 
 
 def private_directory(home: Path, relative: str) -> Path:
@@ -226,7 +172,7 @@ def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, termi
     """#36 rule 2.5: every secret is written 0600 in directories kept 0700."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    home_secrets_setup(home, boundaries)
+    run_wizard(home, boundaries)
 
     assert {name: stat.S_IMODE((home / name).stat().st_mode) for name in EVERY_FILE} == dict.fromkeys(EVERY_FILE, 0o600)
     directories = {".secrets", ".secrets/cloudflare", ".secrets/github", ".secrets/opentofu"}
@@ -243,7 +189,7 @@ def test_no_value_reaches_stdout_stderr_or_a_log(
     terminal.browser_opens = browser_opens
     terminal.pastes = [WRONG_VALUE, PASTED_VALUE, PASTED_VALUE]
 
-    home_secrets_setup(home, boundaries)
+    run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
     passphrase = (home / PASSPHRASE_FILE).read_text()
@@ -264,7 +210,7 @@ def test_an_unexpected_error_that_quotes_the_value_ends_the_walk_unquoted_and_un
     verifier.side_effect = quote_the_value
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 2
@@ -288,7 +234,7 @@ def test_an_unexpected_error_after_the_entry_is_stored_says_it_is_stored(
     monkeypatch.setattr(Path, "unlink", refuse_to_remove_the_fresh_name)
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 2
@@ -316,7 +262,7 @@ def test_an_unexpected_error_that_leaves_the_entry_unstatable_claims_neither_sto
     verifier.side_effect = hide_the_disk_and_fail
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 2
@@ -336,7 +282,7 @@ def test_a_value_the_provider_does_not_confirm_is_never_written(
     verifier.refusal = refusal
     terminal.pastes = [WRONG_VALUE, "", PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     lines = squeezed(capsys.readouterr().out)
     assert code == 1
@@ -346,19 +292,19 @@ def test_a_value_the_provider_does_not_confirm_is_never_written(
     assert not [line for line in lines if line.startswith("next:") or "offen" in line]
 
 
-def interrupt_at_the_open_prompt(terminal: FakeTerminal, _disk: FakeDisk) -> None:
+def interrupt_at_the_open_prompt(terminal: FakeTerminal, _disk: FakeSync) -> None:
     terminal.enter = KeyboardInterrupt
 
 
-def interrupt_at_the_paste(terminal: FakeTerminal, _disk: FakeDisk) -> None:
+def interrupt_at_the_paste(terminal: FakeTerminal, _disk: FakeSync) -> None:
     terminal.pastes = [KeyboardInterrupt]
 
 
-def end_the_input_at_the_paste(terminal: FakeTerminal, _disk: FakeDisk) -> None:
+def end_the_input_at_the_paste(terminal: FakeTerminal, _disk: FakeSync) -> None:
     terminal.pastes = [EOFError]
 
 
-def interrupt_while_the_file_is_written(terminal: FakeTerminal, disk: FakeDisk) -> None:
+def interrupt_while_the_file_is_written(terminal: FakeTerminal, disk: FakeSync) -> None:
     terminal.pastes = [PASTED_VALUE]
     disk.interrupted = True
 
@@ -374,12 +320,12 @@ def interrupt_while_the_file_is_written(terminal: FakeTerminal, disk: FakeDisk) 
     ids=["open prompt", "paste", "input ended", "file write"],
 )
 def test_an_interrupted_walk_leaves_no_file_and_says_how_to_go_on(
-    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys, interrupt: Callable[[FakeTerminal, FakeDisk], None], expected_error: str
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeSync, capsys, interrupt: Callable[[FakeTerminal, FakeSync], None], expected_error: str
 ) -> None:
     """#36 rule 2.3 / #10 line 7: Ctrl-C or the end of the input leaves no file, and the next run goes on."""
     interrupt(terminal, disk)
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 130
     assert files_under(home) == set()
@@ -398,13 +344,13 @@ def ctrl_c_interrupts() -> Iterator[None]:
 
 @pytest.mark.usefixtures("ctrl_c_interrupts")
 def test_a_ctrl_c_while_a_secret_is_stored_waits_until_the_file_is_whole(
-    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeDisk, capsys
+    home: Path, terminal: FakeTerminal, boundaries: Boundaries, disk: FakeSync, capsys
 ) -> None:
     """#36 rule 2.3 / #10 line 7: a Ctrl-C while a secret is stored waits until the file is whole, never half-made."""
     terminal.pastes = [PASTED_VALUE]
     disk.ctrl_c = True
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 130
     assert capsys.readouterr().err.endswith("error: interrupted at cloudflare/read · no file half written\nnext: hal setup --apply\n")
@@ -420,7 +366,7 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     before = existing.stat()
     terminal.pastes = [PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 0
     assert not [line for line in squeezed(capsys.readouterr().out) if "cloudflare/read" in line and line[0] in "✓✗!·"]
@@ -442,7 +388,7 @@ def test_setup_never_writes_the_passwords_step_ca_init_and_keycloak_go_live_gene
         file.write_text("FAKE-OLD-VALUE")
         file.chmod(0o644)
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 0
     assert {path: (home / path).read_text() for path in files_under(home)} == {f".secrets/{name}": "FAKE-OLD-VALUE" for name in generated if present}
@@ -462,7 +408,7 @@ def test_a_file_that_appears_while_the_operator_pastes_is_never_replaced(
     verifier.side_effect = another_run_stores_it_first
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 1
     captured = capsys.readouterr()
@@ -486,7 +432,7 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
     verifier.side_effect = replace_the_directory_by_a_file
     terminal.pastes = ["", PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 1
     captured = capsys.readouterr()
@@ -502,7 +448,7 @@ def test_a_directory_that_turns_into_a_file_while_the_operator_pastes_is_refused
 def test_a_group_that_is_a_file_when_the_walk_starts_is_refused_before_any_page_opens(home: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys) -> None:
     private_directory(home, ".secrets").joinpath("cloudflare").write_text("not a directory")
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     assert code == 1
     captured = capsys.readouterr()
@@ -543,7 +489,7 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     reason, fix = damage(home)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
 
-    code = home_secrets_setup(home, boundaries)
+    code = run_wizard(home, boundaries)
 
     captured = capsys.readouterr()
     assert code == 1
@@ -563,7 +509,7 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
     private_directory(home, ".secrets/locked").chmod(0o000)
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
     try:
-        code = home_secrets_setup(home, boundaries)
+        code = run_wizard(home, boundaries)
     finally:
         (home / ".secrets" / "locked").chmod(0o700)
 
@@ -578,7 +524,7 @@ def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retir
 
 def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, capsys) -> None:
     """#36 rule 2 / #10 line 10: without a terminal --setup is refused and nothing is written."""
-    code = home_secrets_setup(home)
+    code = run_wizard(home)
 
     assert code == 2
     assert capsys.readouterr().err.endswith("error: secrets setup needs your own terminal window · nothing changed\nnext: hal setup --apply in your own terminal window\n")
@@ -586,12 +532,10 @@ def test_without_a_terminal_setup_is_refused_and_nothing_is_written(home: Path, 
 
 
 def test_a_terminal_that_cannot_hide_the_paste_is_refused_before_anything_is_read(
-    home: Path, verifier: FakeVerifier, disk: FakeDisk, capsys
+    home: Path, verifier: FakeVerifier, capsys
 ) -> None:
     """#36 rule 2.3 / #10 line 3: a terminal that cannot hide the paste is refused before anything is read."""
-    echoing = Terminal(lambda: True, lambda _prompt: "", getpass.fallback_getpass, lambda _page: True)
-
-    code = home_secrets_setup(home, Boundaries(echoing, verifier, disk.sync))
+    code = run_wizard(home, guided_boundaries(getpass.fallback_getpass, verifier))
 
     assert code == 2
     assert capsys.readouterr().err.endswith("error: this terminal cannot hide what you type · nothing read\nnext: hal setup --apply in another terminal window\n")
@@ -604,7 +548,7 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 ) -> None:
     """#531 picture s-s2g / #36 rules 2 and 5: a token entry announces itself, says why, briefs and names the page; a generated one prints its row only."""
     terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
-    assert home_secrets_setup(home, boundaries) == 0
+    assert run_wizard(home, boundaries) == 0
     output = capsys.readouterr().out
     assert verifier.checked == [("example.invalid", len(PASTED_VALUE)), ("example-org", len(PASTED_VALUE))]
     assert files_under(home) == set(EVERY_FILE)
@@ -641,7 +585,7 @@ def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
 ) -> None:
     use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\nrecreate = "https://x.example"\n')
     terminal.pastes = [PASTED_VALUE]
-    assert home_secrets_setup(tmp_path, boundaries) == 0
+    assert run_wizard(tmp_path, boundaries) == 0
     output = capsys.readouterr().out
     assert squeezed(output)[0].startswith("› turn new token")
     assert "why:" not in output
@@ -652,7 +596,7 @@ def test_a_page_no_browser_opens_is_named_for_opening_by_hand_and_the_walk_goes_
 ) -> None:
     """#36 rule 2.2: a page no browser opens is named for opening by hand, never reported as opened."""
     terminal.browser_opens, terminal.pastes = False, [PASTED_VALUE, PASTED_VALUE]
-    assert home_secrets_setup(home, boundaries) == 0
+    assert run_wizard(home, boundaries) == 0
     lines = capsys.readouterr().out.splitlines()
     assert files_under(home) == set(EVERY_FILE)
     assert f"    {NO_BROWSER} {CLOUDFLARE_TOKEN_PAGE}" in lines
@@ -691,7 +635,7 @@ def test_a_service_password_is_generated_fresh_for_each_home(
         home = tmp_path / name
         home.mkdir()
         terminal.pastes = ["", ""]
-        home_secrets_setup(home, boundaries)
+        run_wizard(home, boundaries)
         passphrases.append((home / PASSPHRASE_FILE).read_text())
 
     assert passphrases[0] != passphrases[1]

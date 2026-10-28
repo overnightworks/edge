@@ -1,74 +1,15 @@
 # home-tools
 
-Ein Befehl, `home`, zeigt, was am PC von dir gebraucht wird, prüft ihn täglich und führt durch die Geheimnisse.
-Jeder Unterbefehl erklärt sich mit `home <command> --help` samt Beispielen;
+`hal` prüft den PC täglich, zeigt die Geheimnisse (`hal secrets`) und führt mit `hal setup --apply` durch die fehlenden.
+Jeder Befehl erklärt sich mit `hal <command> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
-Alle Befehle außer `home next` (siehe dort) teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
+Alle Befehle teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
 es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
 `SuccessExitStatus=1` dafür), `2` wenn das
 Geheimnis-Manifest ungültig ist (`hal check` kennt zusätzlich die Konfigurationsdatei, siehe „Konfiguration“), `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine `error:`-Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
-
-## home next
-
-```
-home next            # was jetzt von dir gebraucht wird, je Schritt mit dem genauen Befehl
-```
-
-`home next` zeigt nur, was du selbst tun musst: eine nummerierte Liste, der
-dringendste Schritt zuerst. Jeder Schritt nennt den Befehl, wo er läuft, und was
-danach zu sehen sein soll. Was ein Agent einsortieren kann, zählt eine
-Schlusszeile:
-
-```
-1. home secrets --setup (eigenes Terminalfenster) — erwartet: cloudflare/fleet-read verified ~/.secrets/cloudflare/fleet-read (600); github/fleet-read verified ~/.secrets/github/fleet-read (600); opentofu/state-passphrase generated ~/.secrets/opentofu/state-passphrase (600) · never shown; then hal apply
-2. https://sonarcloud.io/account/security (von Hand, für sonarcloud/token) — erwartet: home secrets zeigt sonarcloud/token present
-3. hal setup --apply (eigenes Terminalfenster) — erwartet: Aktivierung, System: changed; it asks once for sudo
-   warum: without the hook no commit is checked for secrets; without it the tunnel ignores edge's global stop after a reboot, and only root may stop it
-Außerdem zum Einsortieren: 4 unknown files in ~/.secrets. Das macht ein Agent: sag „räum home auf“.
-```
-
-Ein Schritt ist etwas, das nur du tun kannst: ein geführter Befehl an deinem
-Terminal (`home secrets --setup`, `hal setup --apply`),
-eine Seite im Browser (ein Token anlegen oder widerrufen) oder ein Befehl, den ein
-Fund für deine Ordnerrechte oder deine Git-Konfiguration nennt. Ob ein Fund ein
-Schritt ist oder Buchhaltung, sagt die Regel, die ihn findet, nicht `home next`.
-Ein Befehl, der ohne Terminal abbricht, steht mit „eigenes Terminalfenster“ da;
-das `!` in Claude Code ist kein Terminal. Nur ein Befehl, der auch ohne Terminal
-läuft, steht mit „beliebiges Terminal“ da.
-
-Die Schritte kommen aus den Besitzern der Fakten, die `home next` nur liest.
-Zuerst steht, was den Assistenten blockiert, der sonst nichts speichert, in der
-Reihenfolge des Baums unter `~/.secrets`, also nach Pfad sortiert, gleich
-welcher Art der Befund ist: zu offene Rechte (dann das `chmod`),
-ein Ordner, den sein Besitzer nicht öffnen kann (dann `chmod 700`), ein Symlink
-auf dem Weg zu einem Eintrag (dann der Befehl, der ihn durch den echten Ordner
-ersetzt) und eine Datei, wo ein Ordner hingehört (dann das `mv`, das sie
-beiseite legt). Dann fehlende Geheimnisse aus der Ansicht von `home secrets`
-(der Assistent für die, die er anlegen kann, die Seite aus `recreate` für die
-übrigen), ein fehlgeschlagener Login, ein unbestätigter Widerruf und jeder
-übrige Fund von `home secrets`, den nur du klären kannst, mit Ort und Empfehlung
-von Hand (etwa „~/.ssh/id_ed25519: check the parent folder's permissions“). Dann
-offene Schritte von `hal setup` (dann `hal setup --apply`) und die Korrekturen
-der Hook-Prüfung.
-Jeder Befehl steht nur einmal da.
-
-Die Schlusszeile zählt die Buchhaltung je Art, in fester Reihenfolge und ohne
-Pfad: unknown files in `~/.secrets`. Die sortiert ein Agent ein; jede
-Löschentscheidung kommt als eine Liste zu dir. Die einzelnen Funde zeigen
-`hal check` und `home secrets`.
-
-Gibt es nichts, steht da „Nichts zu tun.“. Gibt es nur Buchhaltung, steht da
-„Nichts für dich zu tun.“ und darunter die Schlusszeile. Kann `home next` eine
-Quelle nicht lesen (etwa ein ungültiges Manifest), steht ganz oben ein Schritt
-„1. konnte die Geheimnisse nicht lesen; den Fehler zeigt: home secrets“, und die
-Schritte der anderen Quellen folgen.
-Es ändert nichts, fragt nach keinem Passwort und liest keinen
-Geheimniswert (nur `stat`, wie `home secrets`); Agenten dürfen es fahren.
-Exit-Code: immer `0`, auch mit Schritten, denn es ist eine Ansicht, keine
-Prüfung; `3` nur bei einem unerwarteten Fehler.
 
 ## hal check
 
@@ -77,7 +18,7 @@ hal check           # alle Prüfungen lesend, ein Bericht, höchstens eine Benac
 ```
 
 `hal check` fährt jede Prüfung, die nichts ändert — die Ansicht von
-`home secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung, die Plattform-Prüfung und die Exposure-Prüfung (was von außerhalb dieses PCs erreichbar ist, dieselbe Suche wie `hal check exposure`; `hal` führt sie aus und reicht die Funde herunter) — und schreibt einen gemeinsamen
+`hal secrets`, die Hook-Prüfung, die Log-Prüfung, die Backup-Prüfung, die Plattform-Prüfung und die Exposure-Prüfung (was von außerhalb dieses PCs erreichbar ist, dieselbe Suche wie `hal check exposure`; `hal` führt sie aus und reicht die Funde herunter) — und schreibt einen gemeinsamen
 Bericht nach `~/.local/state/hal/check-report.md`; dort stehen die Zahlen und jeder Fund im Einzelnen.
 
 Von Hand getippt liefert ein nacktes `hal check` Neuigkeiten aus wie der Timer: derselbe Bericht, dieselbe Mail und Benachrichtigung, dasselbe Merken der Funde; einen Probelauf ohne Zustellung gibt es nicht. Exit 0 sauber, 1 Funde, 2 Manifest oder `config.toml` sind ungültig (`error: <Datei>: …`), 3 ein Bereich konnte nicht prüfen, 130 unterbrochen; `--json` gehört nur zu `hal check exposure` und `hal check hosts` (Exit 2).
@@ -147,7 +88,7 @@ Secrets: Note – Credentials for hopin are still missing
 Server logs: OK
 Exposure: OK
 
-Notes are not urgent; home next shows what you can do.
+Notes are not urgent.
 Everything in detail: ~/.local/state/hal/check-report.md
 ```
 
@@ -264,21 +205,22 @@ Container, der zwischen `docker ps` und `docker inspect` verschwindet, gilt als
 weg, nicht als Fehler. Der Bericht nennt außerdem je
 Speicher den Stand (Journal-Alter, Standardtreiber, Zahl der Container).
 
-## home secrets
+## hal secrets
 
 ```
-home secrets                # jedes Geheimnis: Datei, Prüfung, Ablauf; nie ein Wert
-home secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
-home secrets --setup        # führt am Terminal durch jedes fehlende Geheimnis
+hal secrets                # jedes Geheimnis: Datei, Prüfung, Ablauf; nie ein Wert
+hal secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
 ```
 
-`home secrets` zeigt jedes Geheimnis, das das Manifest
+`hal secrets` zeigt jedes Geheimnis, das das Manifest
 `src/home_tools/secrets_manifest.toml` nennt, und ändert nichts außer seinem
 Bericht `~/.local/state/home/secrets-report.md`. Es braucht kein Terminal;
-Agenten dürfen es fahren.
+Agenten dürfen es fahren. Einrichten geht nur mit `hal setup --apply` (unten);
+eine Option dafür hat `hal secrets` nicht, ein unbekanntes Argument endet mit Exit 2. Exit-Code: `0` sauber, `1` Funde, `2` das Manifest ist ungültig
+(`error: <Datei>: …`), `3` ein unerwarteter Fehler, `130` unterbrochen.
 
 **Kein Wert, nirgends.** Das Manifest enthält nur Namen, Orte und Links.
-`home secrets` liest Geheimnisdateien nur per `stat` und öffnet sie nie. Die
+`hal secrets` liest Geheimnisdateien nur per `stat` und öffnet sie nie. Die
 einzige Prüfung der Ansicht ist `gh auth status` (der Keyring-Login von `gh`): `home`
 behält davon nur den Exit-Code, verwirft Ausgabe und Fehlerausgabe und bricht
 nach 20 Sekunden ab.
@@ -286,7 +228,7 @@ nach 20 Sekunden ab.
 Beispiel (gekürzt):
 
 ```
-# home secrets 15.10.2026 09:00 | 2 findings
+# hal secrets 15.10.2026 09:00 | 2 findings
 
 | Name | Kind | File | Check | Expiry | Place | Recreate |
 |---|---|---|---|---|---|---|
@@ -304,7 +246,7 @@ Beispiel (gekürzt):
 | unknown-file | ~/.secrets/cloudflared/old.json | - | add ~/.secrets/cloudflared/old.json to the manifest or delete it |
 | loose-mode | ~/.secrets/gmail-cleanup | has mode 775; at most 700 allowed | `chmod 700 ~/.secrets/gmail-cleanup` |
 
-No values: home secrets reads secret files by stat only and never opens them.
+No values: hal secrets reads secret files by stat only and never opens them.
 ```
 
 So liest sich die Tabelle:
@@ -329,7 +271,7 @@ auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn
 den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
 `<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der
-`--setup` das Speichern verweigert. `home` setzt nie Rechte und ersetzt nichts;
+der Assistent das Speichern verweigert. `home` setzt nie Rechte und ersetzt nichts;
 `chmod` bleibt ein Handgriff.
 
 ### Einrichten: `hal setup --apply`
@@ -337,18 +279,18 @@ Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` n
 `hal setup` hat dafür den Schritt „Geheimnisse“: Er gilt als erledigt, wenn das Manifest
 auf diesem PC kein offenes Geheimnis hat (nur `stat`); offen ist auch ein Eintrag, dessen
 Vorhandensein sich nicht feststellen lässt. Ohne `--apply` nennt er die offenen in der Zeile
-`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; `--apply` zeigt vor dem Assistenten `! secrets  N missing  a, b` und führt ihn dann aus; er braucht ein eigenes Terminal. Der
-Assistent ist derselbe wie `home secrets --setup`, und `--setup` unten meint ihn. Ein Eintrag mit
+`! secrets  missing  a, b (by hand), c (unknown)` und ändert nichts; `--apply` zeigt vor dem Assistenten `! secrets  N missing  a, b` und führt ihn dann aus; er braucht ein eigenes Terminal. Er ist der einzige
+Weg zum Assistenten; `hal secrets` zeigt nur. Ein Eintrag mit
 `loosest_mode` landet mit diesem Modus (0644) in seinem 0700-Ordner, alle anderen mit 0600.
 
-`--setup` geht die fehlenden Einträge des Manifests der Reihe nach durch,
+Der Assistent geht die fehlenden Einträge des Manifests der Reihe nach durch,
 zuerst die fünf von `edge external`. Gelesen werden davon drei:
 `cloudflare/fleet-read` und `opentofu/state-passphrase` für `plan`, danach
 `cloudflare/fleet-write` für `apply`. `github/fleet-read` und
 `github/fleet-admin` bleiben im Assistenten, aber nichts liest sie, bis
 edge#30 X2/X3 die GitHub-Einstellungen als Code bauen. Es läuft nur am
-eigenen Terminal (stdin und stdout); ohne Terminal endet es mit Exit-Code `2`,
-bevor es etwas anfasst. Agenten fahren es nie.
+eigenen Terminal (stdin und stdout); ohne Terminal endet `hal setup --apply` in der
+Zeile `secrets` mit Exit-Code `3`, bevor der Assistent etwas anfasst. Agenten fahren ihn nie.
 
 Ein Token legt nur an, wer mehr Rechte hat als das Token: GitHub hat für
 Fine-grained-Tokens keine API, und für Cloudflare bräuchte der Assistent
@@ -383,7 +325,7 @@ Die State-Passphrase erzeugt er zufällig und schreibt sie, ohne sie zu zeigen.
 Key-ID und API-Token des TURN-Keys, den nur HopIn nutzt (`cloudflare/turn-hopin/key-id` und
 `…/api-token`, Art „token, unverified“), nimmt er ebenso unsichtbar entgegen, nennt vorher, wo
 der Key entsteht (Cloudflare › Realtime › TURN, beide Werte zeigt Cloudflare nur einmal), und
-bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter (`stored`, `not verified`), denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `home secrets`
+bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter (`stored`, `not verified`), denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `hal secrets`
 zeigt beide als `not checked`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
@@ -450,7 +392,7 @@ recreate = "wird beim Einrichten erzeugt"
 (`~/.secrets/cloudflared/*.json`). Ein zurückgezogener Eintrag trägt
 `retired_on = 2026-10-14` und `revoke_url`, nach geprüftem Widerruf auch
 `revocation_confirmed = 2026-10-15`; eine abgeleitete Kopie trägt
-`mirror_of`. `optional = true` heißt: Fehlen ist kein Fund, `--setup`
+`mirror_of`. `optional = true` heißt: Fehlen ist kein Fund, der Assistent
 überspringt den Eintrag; so stehen auch die bekannten Dateien ohne Geheimnis
 (`~/.secrets/README`, `claudebot-runtime.env`) im Manifest. `elsewhere` nennt Kopien außerhalb des Homes für die
 Spalte „Place“. `purpose` sagt in einem Satz, wofür es da ist. `loosest_mode`
@@ -459,14 +401,14 @@ Höchstmaß als 0600, weil ein Container-Nutzer sie lesen muss; `loosest_mode_re
 sagt in einer Zeile, wer sie liest, und gehört dazu. Mehr als 0644 lehnt das
 Laden des Manifests ab. Die Prüfung misst die Datei dann an diesem Maß und
 empfiehlt nie ein engeres. Ein Token, durch
-das `--setup` führt, nennt dazu `provider` (`github` oder `cloudflare`),
+das der Assistent führt, nennt dazu `provider` (`github` oder `cloudflare`),
 `resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
 Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
 `expires_in_days` (1 bis 366), alle vier zusammen; ein `unverified-token` nennt keinen davon und hat
-genau einen Pfad: `--setup` fragt seinen Wert unsichtbar ab und speichert ihn ungeprüft; ein `service-password`
+genau einen Pfad: der Assistent fragt seinen Wert unsichtbar ab und speichert ihn ungeprüft; ein `service-password`
 hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
 dann schreibt ihn die Einheit aus `recreate`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
-abzulegen), ein falscher Wert oder ein doppelter Name lässt `home secrets`
+abzulegen), ein falscher Wert oder ein doppelter Name lässt `hal secrets`
 mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
 ## hal setup
@@ -528,8 +470,7 @@ come before the system step, which is the one that asks for sudo:
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
 (`AGENT_USER` in `src/home_tools/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
-Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo; `home next` lists none of them, names no sudo and no own window for the
-apply, and lists no secrets. Everyone else, root
+Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 1.
 If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 1 with a line saying so.
 
@@ -644,13 +585,6 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   the dry run says `! system  not checked  needs sudo at a terminal` and
   `--apply` ends the row `✗ system  not started` with `error: setup stopped at system · /etc unchanged`
   and `next: hal setup --apply`; neither waits for a prompt.
-- **home next.** After a verified run (an `--apply`, or a dry run at a
-  terminal that says `unchanged`), the step records a digest of edge's files,
-  the playbook and the filled-in values in `~/.local/state/home/system-step.sha256`.
-  `home next` compares only that record, so it never asks for sudo: it shows
-  the step until a verified run, and again when edge's files, the playbook or the values
-  change. A hand edit in `/etc`, or a new tunnel id, only `hal setup` at a
-  terminal sees.
 - **Rollback.** Restore the previous `cloudflared.service`,
   `10-root-binary.conf` and `20-nonroot.conf` from the backup (their content
   before the first run is in the inventory of #9). Restore

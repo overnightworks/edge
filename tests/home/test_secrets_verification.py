@@ -11,13 +11,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from secrets_support import FakeTerminal, run_wizard
 from test_secrets_setup import (  # noqa: F401 the fixtures, requested by name
     PASSPHRASE_FILE,
     PASTED_VALUE,
-    FakeTerminal,
     files_under,
     home,
-    home_secrets_setup,
     squeezed,
     terminal,
 )
@@ -224,7 +223,7 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
     real_check = Boundaries(terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/ok")), os.fsync)
     terminal.pastes = [canary, "", canary, ""]
 
-    code = home_secrets_setup(home, real_check)
+    code = run_wizard(home, real_check)
 
     captured = capsys.readouterr()
     assert code == 1
@@ -246,7 +245,7 @@ def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
     )
     terminal.pastes = [PASTED_VALUE, "", ""]
 
-    code = home_secrets_setup(home, real_check)
+    code = run_wizard(home, real_check)
 
     captured = capsys.readouterr()
     assert code == 1

@@ -12,9 +12,10 @@ from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_report_command, symlinked_folder_fix
+from secrets_support import run_wizard
+from conftest import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
 
-from home_tools import cli, secrets_view
+from home_tools import secrets_view
 from home_tools.secrets_setup import Boundaries, Terminal
 from home_tools.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
 from home_tools.layout import Layout
@@ -87,10 +88,6 @@ revoke_url = "https://github.com/settings/tokens"
 """
 
 
-def home_secrets(home: Path, probe: FakeProbe, *options: str) -> int:
-    return cli.main(["secrets", *options], home=home, probe=probe, now=NOW)
-
-
 def cells_of(table: str) -> list[list[str]]:
     """The body rows of a Markdown table, cells stripped."""
     return [[cell.strip() for cell in line.strip("|").split(" | ")] for line in table.strip().splitlines()[2:]]
@@ -114,7 +111,7 @@ def finding_subjects(output: str) -> set[str]:
 
 
 def test_a_complete_home_lists_every_entry_and_writes_only_its_report(clean_home: Path, probe: FakeProbe, capsys) -> None:
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     rows = rows_of(output)
@@ -136,7 +133,7 @@ def test_no_secret_value_reaches_the_output_or_the_report_and_no_secret_file_is_
     for path in unreadable:
         path.chmod(0)  # opening one would now fail; stat still works
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out + Layout(clean_home).secrets_report_file.read_text()
     assert code == 0
@@ -239,7 +236,7 @@ def test_each_entry_shows_present_missing_or_unknown_and_every_gap_is_a_finding(
 ) -> None:
     damage(clean_home)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     rows = rows_of(output)
@@ -263,7 +260,7 @@ def test_only_github_is_verified_and_its_outcome_is_shown(
 ) -> None:
     probe.code = exit_code
 
-    home_secrets(clean_home, probe)
+    run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     assert rows_of(output)["gh"][3] == shown
@@ -277,7 +274,7 @@ def test_a_file_no_entry_names_is_reported_as_unknown_and_left_alone(clean_home:
     stray.chmod(0o600)
     (clean_home / ".secrets" / "latest").symlink_to(stray)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     assert code == 1
@@ -293,7 +290,7 @@ def test_a_newline_or_pipe_in_a_file_name_keeps_the_table_intact(clean_home: Pat
     stray.write_text(FAKE_SECRET_VALUE)
     stray.chmod(0o600)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     assert code == 1
@@ -307,7 +304,7 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
     directory.chmod(0o755)
     (clean_home / ".secrets" / "cloudflared" / "cert.pem").chmod(0o400)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     loose = findings_of(capsys.readouterr().out, "loose-mode")
     assert code == 1
@@ -362,7 +359,7 @@ def test_a_file_is_judged_against_the_mode_its_entry_declares(
     plant_secrets(home)
     (home / ".secrets" / "step-ca" / "password").chmod(file_mode)
 
-    home_secrets(home, probe)
+    run_hal_secrets(home, probe, now=NOW)
 
     assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
 
@@ -386,7 +383,7 @@ def test_only_the_pending_root_certificate_may_be_0644(
     for folder in (pending, pending.parent, home / ".secrets"):
         folder.chmod(0o700)
 
-    home_secrets(home, probe)
+    run_hal_secrets(home, probe, now=NOW)
 
     assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
 
@@ -410,7 +407,7 @@ def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path:
     for folder in ("agent-service/signing", "agent-service/claude", "agent-service", *folders):
         (home / ".secrets" / folder).chmod(0o700)
 
-    home_secrets(home, probe)
+    run_hal_secrets(home, probe, now=NOW)
 
     output = capsys.readouterr().out
     for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder"):
@@ -423,7 +420,7 @@ def test_a_home_where_neither_unit_is_set_up_has_no_finding_about_their_files(tm
     home = tmp_path / "home"
     (home / ".secrets").mkdir(parents=True, mode=0o700)
 
-    home_secrets(home, probe)
+    run_hal_secrets(home, probe, now=NOW)
 
     subjects = finding_subjects(capsys.readouterr().out)
     assert not {subject for subject in subjects if subject.startswith(("step-ca/", "keycloak/", "~/.secrets/step-ca", "~/.secrets/keycloak"))}
@@ -440,7 +437,7 @@ def test_a_retired_entry_shows_its_revoke_link_and_whether_its_revocation_is_con
     """#21 point 1: a confirmed revocation is shown with its date and raises no revocation-unconfirmed finding."""
     use_manifest(TEST_MANIFEST + RETIRED_ENTRY + recorded)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     retired = rows_of(output)["github/token"]
@@ -487,7 +484,7 @@ def test_known_non_secret_files_show_their_kind_and_a_missing_optional_entry_is_
         (clean_home / ".secrets" / name).write_text("no secret")
         (clean_home / ".secrets" / name).chmod(0o600)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     rows = rows_of(output)
@@ -586,7 +583,7 @@ def test_a_folder_on_the_way_that_cannot_hold_a_secret_is_a_finding_with_its_fix
     """#37 line 7: a closed folder, or a file or link where ~/.secrets belongs, is named with its fix, never a dead end."""
     block(reopened_secrets)
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     output = capsys.readouterr().out
     assert code == 1
@@ -595,11 +592,11 @@ def test_a_folder_on_the_way_that_cannot_hold_a_secret_is_a_finding_with_its_fix
 
 
 def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_home: Path, probe: FakeProbe, capsys) -> None:
-    code = home_secrets(clean_home, probe, "--by-service")
+    code = run_hal_secrets(clean_home, probe, "--by-service", now=NOW)
 
     output = capsys.readouterr().out
     assert code == 0
-    assert output.splitlines()[0] == "# home secrets --by-service | declared dependencies"
+    assert output.splitlines()[0] == "# hal secrets --by-service | declared dependencies"
     assert "| .bashrc | gitlab, cloudflared |" in output
     assert "Derived copies" not in output
     assert probe.calls == []
@@ -700,7 +697,7 @@ def test_the_files_edge_external_leaves_under_opentofu_are_known_and_only_a_loos
     (opentofu / "plans" / "fleet.tfplan").write_text("encrypted plan")
     (opentofu / "plans" / "fleet.tfplan").chmod(0o600)
 
-    code = home_secrets(home, probe)
+    code = run_hal_secrets(home, probe, now=NOW)
 
     output = capsys.readouterr().out
     assert findings_of(output, "unknown-file") == {}
@@ -716,7 +713,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
     stray.write_text("plaintext state")
     stray.chmod(0o600)
 
-    home_secrets(home, probe)
+    run_hal_secrets(home, probe, now=NOW)
 
     assert set(findings_of(capsys.readouterr().out, "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
 
@@ -764,10 +761,10 @@ def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, 
     home = tmp_path / "home"
     plant_secrets(home)
 
-    home_secrets(home, probe)
-    home_secrets(home, probe, "--by-service")
+    run_hal_secrets(home, probe, now=NOW)
+    run_hal_secrets(home, probe, "--by-service", now=NOW)
 
-    view, by_service = capsys.readouterr().out.split("# home secrets --by-service")
+    view, by_service = capsys.readouterr().out.split("# hal secrets --by-service")
     assert set(rows_of(view)) == INVENTORY
     assert findings_of(view, "unknown-file") == {}
     assert rows_of(view)["github/token"][-1] == "revoke: https://github.com/settings/tokens"
@@ -789,9 +786,9 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
     password.unlink()
     operator_absent = Boundaries(Terminal(lambda: True, never_asked, never_asked, never_asked), never_asked, os.fsync)
 
-    view_code = home_secrets(home, probe)
+    view_code = run_hal_secrets(home, probe, now=NOW)
     view = capsys.readouterr().out
-    setup_code = cli.main(["secrets", "--setup"], home=home, probe=probe, now=NOW, secrets_setup_boundaries=operator_absent)
+    setup_code = run_wizard(home, operator_absent)
     setup = capsys.readouterr().out.splitlines()
 
     assert view_code == 1
@@ -824,7 +821,7 @@ def test_setup_generates_only_a_service_password_and_never_a_human_one(tmp_path:
 def test_an_invalid_manifest_exits_2_naming_the_file(use_manifest, clean_home: Path, probe: FakeProbe, capsys) -> None:
     manifest = use_manifest(TEST_MANIFEST + 'value = "x"\n')
 
-    code = home_secrets(clean_home, probe)
+    code = run_hal_secrets(clean_home, probe, now=NOW)
 
     assert code == 2
     assert capsys.readouterr().err.startswith(f"error: {manifest}: ")
@@ -1037,8 +1034,8 @@ def test_a_stop_the_caller_ignores_neither_ends_the_run_nor_is_unignored() -> No
         signal.signal(signal.SIGHUP, caller_handler)
 
 
-A_HOME_RUN_FROM_A_TERMINAL = (
-    "import signal, sys; signal.signal(signal.SIGINT, signal.default_int_handler); from home_tools.cli import main; sys.exit(main())"
+HAL_SECRETS_FROM_A_TERMINAL = (
+    "import signal, sys; signal.signal(signal.SIGINT, signal.default_int_handler); from hal.cli import main; sys.exit(main())"
 )
 
 
@@ -1052,7 +1049,7 @@ A_HOME_RUN_FROM_A_TERMINAL = (
 )
 @pytest.mark.parametrize(
     ("stop", "exit_status"),
-    [(signal.SIGINT, -signal.SIGINT), (signal.SIGTERM, 128 + signal.SIGTERM), (signal.SIGHUP, 128 + signal.SIGHUP)],
+    [(signal.SIGINT, 130), (signal.SIGTERM, 128 + signal.SIGTERM), (signal.SIGHUP, 128 + signal.SIGHUP)],
     ids=["Ctrl-C", "a timeout wrapper", "a closed terminal"],
 )
 def test_a_stopped_run_takes_its_probe_and_everything_it_started_along(
@@ -1069,7 +1066,7 @@ def test_a_stopped_run_takes_its_probe_and_everything_it_started_along(
     environment = {**os.environ, "HOME": str(home), "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"}
     environment["PYTHONPATH"] = str(Path(secrets_view.__file__).parents[1])
     run = subprocess.Popen(
-        [sys.executable, "-c", A_HOME_RUN_FROM_A_TERMINAL, "secrets"],
+        [sys.executable, "-c", HAL_SECRETS_FROM_A_TERMINAL, "secrets"],
         env=environment,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

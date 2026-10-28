@@ -190,7 +190,7 @@ Examples:
 
 @dataclass(frozen=True)
 class Step:
-    """`is_verified` is all `home next` asks, so it never needs sudo; `check` is the dry run, `apply` the run.
+    """`check` is the dry run, `apply` the run.
 
     `row` is the line the step reports on; `failure` is the one sentence its failure shows when it raises nothing better,
     and `next_step` the command that goes on from there.
@@ -198,14 +198,12 @@ class Step:
     `open_fact` names what a dry run that found something to change shows on its row.
     `apply` may return `UnitsApplied`, which adds the fact the row of a changed step shows.
     `before_apply` is the row printed before an apply that waits on the operator (the wizard, sudo's password), or nothing.
-    `listed_by_next` is false for a step whose open work `home next` already lists from its own owner.
     `operators_only` marks a step the agents' account skips: it needs sudo, the operator's units or the operator's secrets.
     `may_leave_system_partial` marks the step that runs as root, whose failed apply leaves /etc half written.
     """
 
     name: str
     row: SetupRow
-    is_verified: Callable[[], bool]
     check: Callable[[], CheckState]
     apply: Callable[[], Applied | UnitsApplied]
     why: str
@@ -215,7 +213,6 @@ class Step:
     open_fact: Callable[[], str] = lambda: ""
     before_apply: Callable[[], Outcome | None] = lambda: None
     events: StepEvents = field(default_factory=StepEvents)
-    listed_by_next: bool = True
     operators_only: bool = False
     may_leave_system_partial: bool = False
 
@@ -264,7 +261,7 @@ def _local_step(
         return Applied.CHANGED
 
     return Step(
-        name, row, is_current, check, apply, why, failure, next_step, operators_only=operators_only
+        name, row, check, apply, why, failure, next_step, operators_only=operators_only
     )
 
 
@@ -278,14 +275,14 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
         except ManifestError as error:
             raise StepFailed(str(error)) from None
 
-    def is_verified() -> bool:
+    def nothing_open() -> bool:
         return not open_secrets()
 
     def check() -> CheckState:
-        return CheckState.UNCHANGED if is_verified() else CheckState.WOULD_CHANGE
+        return CheckState.UNCHANGED if nothing_open() else CheckState.WOULD_CHANGE
 
     def apply() -> Applied:
-        if is_verified():
+        if nothing_open():
             return Applied.UNCHANGED
         end = secrets_setup.run_setup(layout, boundaries, ports.now)
         if end is WalkEnd.ABORTED:
@@ -306,7 +303,6 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
     return Step(
         "Geheimnisse",
         SetupRow.SECRETS,
-        is_verified,
         check,
         apply,
         SECRETS_WHY,
@@ -314,7 +310,6 @@ def _secrets_step(layout: Layout, ports: Ports) -> Step:
         open_fact=open_names,
         before_apply=announce_missing,
         events=SECRETS_EVENTS,
-        listed_by_next=False,
         operators_only=True,
     )
 
@@ -466,7 +461,6 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         Step(
             "User units",
             SetupRow.TIMERS,
-            units.is_verified,
             units.check,
             units.apply,
             UNITS_WHY,
@@ -486,7 +480,6 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
         Step(
             "System",
             system_row,
-            system.is_verified,
             system.check,
             system.apply,
             SYSTEM_WHY,
@@ -507,30 +500,6 @@ def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
 def _role(ports: Ports) -> ExecutionRole:
     return ExecutionRole.of(ports.system.operator_user())
-
-
-def runs_as_agent(ports: Ports) -> bool:
-    """A running user the role cannot be told from (no passwd name, or `agent` sharing its uid) is not the agent; only setup itself reports that."""
-    try:
-        return _role(ports) is ExecutionRole.AGENT
-    except UnresolvableRunningUser:
-        return False
-
-
-def apply_asks_for_sudo(ports: Ports) -> bool:
-    """`--apply` runs every step, a verified one too, and the system step always asks for sudo at a terminal; the agent skips it.
-
-    The one fact `home next` reads for this command, as it reads `secrets_setup.SETUP_NEEDS_A_TERMINAL` for the wizard.
-    """
-    return not runs_as_agent(ports)
-
-
-def pending(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    """The open steps `home next` lists from `hal setup --apply`'s plan; it never asks for sudo.
-
-    The secrets step is left out: `home next` lists the missing secrets from the view, one wizard step each.
-    """
-    return tuple(step for step in _steps(layout, ports) if step.runs_for(_role(ports)) and step.listed_by_next and not step.is_verified())
 
 
 def _failure_sentence(step: Step, error: OSError | StepFailed) -> str:
