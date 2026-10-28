@@ -1,0 +1,8 @@
+claim_id = "694292b895dc4dec83ba51c9d4aa8c89"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "70c6e247ac4f224bcdfd105d4eafb008c5a4cf60"
+branch = "claude/issue-574-s2g3d-2-home-help-english"
+scope = ["docs/home.md", "src/home_tools/cli.py", "src/home_tools/next.py", "src/home_tools/secrets_manifest.toml", "src/home_tools/secrets_setup.py", "tests/home/conftest.py", "tests/home/test_app_secrets.py", "tests/home/test_cli.py", "tests/home/test_secrets_view.py", "tests/old_names_baseline.toml"]
+opened_commit = "ef980d3bfc0844befed029505354946c18697eb3"
+whole_reason = "The home command's words have one owner each: cli.py's lines go through write_error, and every help text, the manifest's reader names and every pin of them (tests, the old-names baseline, the doc's two facts) move in the same commit, or the ratchets and pins go red."
