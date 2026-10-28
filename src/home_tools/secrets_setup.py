@@ -60,10 +60,6 @@ from home_tools.layout import Layout
 if TYPE_CHECKING:
     from home_tools.cli import Ports
 
-NO_TERMINAL_EXIT = 2
-ENTRY_FAILED_EXIT = 2
-ABORTED_EXIT = 130  # the shell's code for a run ended by Ctrl-C
-
 OPEN_PROMPT = f"{DETAIL_INDENT}Enter opens the page in your browser: "
 PASTE_PROMPT = f"{DETAIL_INDENT}paste the token (hidden, empty skips): "
 OPENED = "opened"
@@ -602,11 +598,26 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
     return _set_up_or_fail(entry, layout, boundaries, now)
 
 
-STILL_OPEN_EXIT = 1
+class WalkEnd(Enum):
+    """How the wizard's walk ended: the exit code the command returns, and whether the walk already wrote its own error pair."""
+
+    DONE = (0, False)
+    STILL_OPEN = (1, False)
+    NO_TERMINAL = (2, True)
+    CANNOT_HIDE_INPUT = (2, True)
+    ENTRY_FAILED = (2, True)
+    ABORTED = (130, True)  # the shell's code for a run ended by Ctrl-C
+
+    def __new__(cls, exit_code: int, wrote_its_pair: bool) -> WalkEnd:
+        member = object.__new__(cls)
+        member._value_ = len(cls.__members__)  # equal pairs stay distinct members
+        member.exit_code = exit_code
+        member.wrote_its_pair = wrote_its_pair
+        return member
 
 
-def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
-    """Every live entry in manifest order; the exit code says whether anything is still open or left by hand."""
+def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
+    """Every live entry in manifest order; the end says whether anything is still open or left by hand."""
     still_open: list[SecretEntry] = []
     by_hand: list[SecretEntry] = []
     for entry in live_entries():
@@ -615,19 +626,19 @@ def _walk(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             by_hand.append(entry)
         elif step is Step.STILL_MISSING:
             still_open.append(entry)
-    return STILL_OPEN_EXIT if still_open or by_hand else 0
+    return WalkEnd.STILL_OPEN if still_open or by_hand else WalkEnd.DONE
 
 
 SETUP_NEXT_STEP = "hal setup --apply"
 
 
-def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
+def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> WalkEnd:
     if SETUP_NEEDS_A_TERMINAL and not boundaries.terminal.is_interactive():
         write_error(
             "secrets setup needs your own terminal window · nothing changed",
             "hal setup --apply in your own terminal window",
         )
-        return NO_TERMINAL_EXIT
+        return WalkEnd.NO_TERMINAL
     try:
         return _walk(layout, boundaries, now)
     except EntryInterrupted as interrupted:
@@ -636,16 +647,16 @@ def run_setup(layout: Layout, boundaries: Boundaries, now: datetime) -> int:
             SETUP_NEXT_STEP,
             fresh_line=True,
         )
-        return ABORTED_EXIT
+        return WalkEnd.ABORTED
     except getpass.GetPassWarning:
         write_error(
             "this terminal cannot hide what you type · nothing read",
             "hal setup --apply in another terminal window",
         )
-        return NO_TERMINAL_EXIT
+        return WalkEnd.CANNOT_HIDE_INPUT
     except EntryFailed as failed:
         write_error(failed.report(), SETUP_NEXT_STEP)
-        return ENTRY_FAILED_EXIT
+        return WalkEnd.ENTRY_FAILED
 
 
 # --- the `home secrets` command --------------------------------------------
@@ -666,7 +677,7 @@ an unexpected error at one secret, 3 any other unexpected error, 130 interrupted
 
 def _secrets_from_args(args: argparse.Namespace, layout: Layout, ports: Ports) -> int:
     if args.setup:
-        return run_setup(layout, ports.secrets_setup, ports.now)
+        return run_setup(layout, ports.secrets_setup, ports.now).exit_code
     return show_by_service() if args.by_service else show(layout, ports.probe, ports.now)
 
 

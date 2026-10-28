@@ -1,11 +1,9 @@
 """`hal rename OLD NEW` through `hal.cli.main`: the rows it prints for its plan, its apply, its
 findings and its refusals."""
 
-import io
-import sys
-
 import pytest
 from rename_support import HTTPS, make_clone, squeezed
+from terminal_support import put_stdout_on_a_terminal
 
 from hal import cli
 from hal.grammar import ExitCode
@@ -91,20 +89,10 @@ def test_a_finding_is_a_row_with_its_subject_and_leaves_the_exit_at_findings(
     assert "! link check ~/.local/bin/tool points into a moved clone" in out.splitlines()
 
 
-class Terminal(io.StringIO):
-    """A stream a person watches."""
-
-    def isatty(self) -> bool:
-        return True
-
-
 def test_the_next_line_of_a_plan_is_coloured_like_every_command_on_a_terminal(
     everything, cli_world, monkeypatch
 ):
-    monkeypatch.delenv("NO_COLOR", raising=False)
-    monkeypatch.setenv("TERM", "xterm-256color")
-    out = Terminal()
-    monkeypatch.setattr(sys, "stdout", out)
+    out = put_stdout_on_a_terminal(monkeypatch)
 
     cli.main(["rename", "old", "fresh"])
 
