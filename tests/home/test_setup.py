@@ -1,4 +1,4 @@
-"""`home setup` against a sandboxed HOME with stub `uv`, `quality` and Ansible; the rules are those of #22 and, for the system step, #40."""
+"""`hal setup` against a sandboxed HOME with stub `uv`, `quality` and Ansible; the rules are those of #22 and, for the system step, #40."""
 
 from __future__ import annotations
 
@@ -10,14 +10,13 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock, Sandbox
+from conftest import FakeClock, Sandbox, run_captured_hal_setup, run_hal_setup
 
 import home_tools
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
 from home_tools import system_step
 from home_tools.secrets_setup import Boundaries, Terminal
-from home_tools.cli import main
 from home_tools.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
 from home_tools.system_step import AGENT_USER, CheckState, SystemStep
 
@@ -73,9 +72,7 @@ QUALITY_URL = "https://github.com/overnightworks/quality"
 
 
 def run_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, list[str], str]:
-    code = main(["setup", *flags], home=sandbox.home)
-    captured = capsys.readouterr()
-    return code, captured.out.splitlines(), captured.err
+    return run_captured_hal_setup(capsys, *flags, home=sandbox.home)
 
 
 def test_the_verdict_shows_the_time_the_run_took_by_the_clock_the_ports_carry(
@@ -83,7 +80,7 @@ def test_the_verdict_shows_the_time_the_run_took_by_the_clock_the_ports_carry(
 ) -> None:
     """#500: setup measures from its start to its verdict with the monotonic clock of its ports."""
 
-    code = main(["setup"], home=sandbox.home, clock=FakeClock(65))
+    code = run_hal_setup(home=sandbox.home, clock=FakeClock(65))
 
     assert (code, capsys.readouterr().out.splitlines()[-1]) == (
         0,
@@ -101,11 +98,11 @@ def uv_installs(sandbox: Sandbox) -> list[str]:
 
 
 def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """Rule 4 and E1: `home setup` prints what it would change; before Ansible is installed the system step is not checked."""
-    code, lines, _ = run_setup(sandbox, capsys)
+    """Rule 4 and E1: `hal setup` prints what it would change; before Ansible is installed the system step is not checked."""
+    code, lines, error = run_setup(sandbox, capsys)
 
-    assert (code, lines) == (
-        0,
+    assert (code, lines, error) == (
+        ExitCode.OK,
         [
             "  ~ commit hook     will change",
             "  · timers          unchanged",
@@ -113,6 +110,7 @@ def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, 
             "  · secrets         complete",
             "~ setup plan · 2 open, 2 unchanged · 47s · run hal setup --apply",
         ],
+        "",
     )
     assert uv_installs(sandbox) == []
     assert sandbox.system.playbook.calls == []
@@ -125,7 +123,7 @@ def test_apply_installs_pinned_quality_engines_and_both_hooks_then_activates(san
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
     layout = sandbox.layout
-    assert (code, lines) == (0, FRESH_APPLY)
+    assert (code, lines) == (ExitCode.OK, FRESH_APPLY)
     assert uv_installs(sandbox) == [
         f"tool install --force {QUALITY_SOURCE}",
         f"tool install --force {ANSIBLE_SOURCE}",
@@ -150,7 +148,7 @@ def test_second_apply_reports_every_step_unchanged_and_reinstalls_nothing(sandbo
     run_setup(sandbox, capsys, "--apply")
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines) == (0, REPEATED_APPLY)
+    assert (code, lines) == (ExitCode.OK, REPEATED_APPLY)
     assert len(uv_installs(sandbox)) == 2
 
 
@@ -161,10 +159,10 @@ def test_a_walk_that_stored_everything_ends_setup_with_its_verdict_and_next_hal_
     use_manifest(GENERATED_SECRET)
     at_the_keyboard = Boundaries(Terminal(lambda: True, lambda _: "", lambda _: "", lambda _: True), lambda *_: None, lambda _: None)
 
-    code = main(["setup", "--apply"], home=sandbox.home, secrets_setup_boundaries=at_the_keyboard)
+    code = run_hal_setup("--apply", home=sandbox.home, secrets_setup_boundaries=at_the_keyboard)
     lines = capsys.readouterr().out.splitlines()
 
-    assert code == 0
+    assert code == ExitCode.OK
     assert "  ✓ secrets         stored" in lines
     assert lines[-2:] == ["✓ setup done · 3 changed, 1 unchanged · 47s", "next: hal apply"]
     assert [line for line in lines if line.startswith("next:") or "offen" in line] == ["next: hal apply"]
@@ -179,7 +177,7 @@ def test_failing_quality_install_leaves_hooks_path_untouched_and_exits_nonzero(
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines) == (
-        1,
+        ExitCode.FAILURE,
         [
             "  ✗ commit hook     failed         uv could not install quality",
             NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
@@ -200,7 +198,7 @@ def test_failing_engines_install_stops_before_hooks_and_activation(
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines) == (
-        1,
+        ExitCode.FAILURE,
         [
             "  ✗ commit hook     failed         the quality engines did not install",
             NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
@@ -222,7 +220,7 @@ def test_failing_activation_is_a_failed_last_step(sandbox: Sandbox, capsys: pyte
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines) == (
-        1,
+        ExitCode.FAILURE,
         [
             "  ✗ commit hook     failed         git could not set core.hooksPath",
             NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
@@ -241,7 +239,7 @@ def test_apply_repoints_a_hooks_path_that_differs(sandbox: Sandbox, capsys: pyte
 
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
-    assert (code, lines[0]) == (0, "  ✓ commit hook     changed")
+    assert (code, lines[0]) == (ExitCode.OK, "  ✓ commit hook     changed")
     assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
 
 
@@ -293,7 +291,7 @@ def test_apply_reinstalls_a_tool_when_uv_recorded_another_requirement(
 
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
-    assert code == 0
+    assert code == ExitCode.OK
     assert CHANGED_ROW[row] in lines
 
 
@@ -326,20 +324,20 @@ def test_unwritable_hook_directory_fails_the_hook_step_by_name_and_skips_activat
 
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
-    assert code == 1
+    assert code == ExitCode.FAILURE
     assert lines[0].startswith("  ✗ commit hook     failed         could not write the hook files:")
     assert error.splitlines() == ["error: setup stopped at commit hook", f"next: {RERUN}"]
     assert global_hooks_path(sandbox) == ""
 
 
 def test_dry_run_with_a_non_executable_quality_reports_instead_of_crashing(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """Rule 4: the reporting-only `home setup` copes with a quality that is present but not executable."""
+    """Rule 4: the reporting-only `hal setup` copes with a quality that is present but not executable."""
     run_setup(sandbox, capsys, "--apply")
     sandbox.layout.quality_executable.chmod(0o644)
 
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines[0]) == (0, "  ~ commit hook     will change")
+    assert (code, lines[0]) == (ExitCode.OK, "  ~ commit hook     will change")
 
 
 def test_apply_tightens_a_hook_whose_mode_is_wider_than_755(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
@@ -367,7 +365,7 @@ def test_the_system_step_comes_after_the_activation_and_asks_for_sudo_once(sandb
     code, lines, _ = run_setup(sandbox, capsys, "--apply")
 
     (argv,) = sandbox.system.playbook.calls
-    assert (code, lines) == (0, FRESH_APPLY)
+    assert (code, lines) == (ExitCode.OK, FRESH_APPLY)
     assert argv[:2] == [str(sandbox.layout.ansible_playbook_executable), str(system_step.PLAYBOOK)]
     assert ("--ask-become-pass" in argv, "--diff" in argv, "--check" in argv) == (False, True, False)
 
@@ -421,7 +419,7 @@ def test_setup_fails_loud_instead_of_guessing_the_role_when_agent_shares_the_run
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines, error.splitlines()) == (
-        1,
+        ExitCode.FAILURE,
         [],
         [f"error: uid 1001 has the names {names[0]}, {names[1]}; agent must have a uid of its own"],
     )
@@ -495,7 +493,7 @@ def test_every_user_but_the_agent_still_fails_the_system_step_without_a_terminal
     sandbox.system.terminal = False
     code, _, err = run_setup(sandbox, capsys, "--apply")
 
-    assert code == 1
+    assert code == ExitCode.FAILURE
     assert err.splitlines()[0] == "error: setup stopped at system · /etc unchanged"
 
 
@@ -549,7 +547,7 @@ def test_a_dry_run_at_a_terminal_checks_with_ansible_and_shows_whether_the_syste
 
     code, lines, _ = run_setup(sandbox, capsys)
 
-    assert (code, lines) == (0, expected)
+    assert (code, lines) == (ExitCode.OK, expected)
     assert playbook_runs(sandbox) == ["apply", "check"]
 
 
@@ -597,7 +595,7 @@ def test_without_a_terminal_apply_refuses_the_system_step_naming_the_command(san
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines) == (
-        1,
+        ExitCode.FAILURE,
         [
             FRESH_APPLY[0],
             FRESH_APPLY[1],
@@ -614,13 +612,13 @@ def test_without_a_terminal_apply_refuses_the_system_step_naming_the_command(san
 
 
 def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """Rule 2, rule 7 and cells 12, 13, 17: a wrong password or a missing tunnel id fails only the last step, with exit 1."""
+    """Rule 2, rule 7 and cells 12, 13, 17: a wrong password or a missing tunnel id fails only the last step, with exit 3."""
     sandbox.system.playbook.succeeds = False
 
     code, lines, error = run_setup(sandbox, capsys, "--apply")
 
     assert (code, lines) == (
-        1,
+        ExitCode.FAILURE,
         [
             FRESH_APPLY[0],
             FRESH_APPLY[1],
@@ -644,7 +642,7 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
     code, lines, error = run_setup(sandbox, capsys)
 
     assert (code, lines[2:]) == (
-        1,
+        ExitCode.FAILURE,
         [
             "  ✗ system          failed         Ansible's check did not finish · its output above says why",
             NOT_RUN[SECRETS],
@@ -656,33 +654,18 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
     ]
 
 
+def test_setup_help_warns_that_the_system_step_restarts_docker(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        hal_cli.main(["setup", "--help"])
+
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "restarts Docker while its default driver is not journald: every container stops meanwhile" in help_text
+    assert "--apply" in help_text
+
+
 def test_the_running_user_is_the_operator_the_polkit_rule_names(tmp_path: Path) -> None:
-    """Rule 5: @OPERATOR_USER@ is whoever runs `home`, the owner of the files it creates."""
+    """Rule 5: @OPERATOR_USER@ is whoever runs `hal setup`, the owner of the files it creates."""
     assert system_step.TERMINAL_BOUNDARIES.operator_user() == tmp_path.owner()
-
-
-def run_hal_setup(capsys: pytest.CaptureFixture[str], *flags: str) -> tuple[int, list[str], str]:
-    """`hal setup` in process; the sandbox's HOME is the process's HOME, so hal finds the same world `home` was handed."""
-    code = hal_cli.main(["setup", *flags])
-    captured = capsys.readouterr()
-    return code, captured.out.splitlines(), captured.err
-
-
-def test_hal_setup_shows_what_home_setup_shows(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    home_result = run_setup(sandbox, capsys)
-
-    assert run_hal_setup(capsys) == (ExitCode.OK, home_result[1], "")
-
-
-def test_hal_setup_apply_runs_what_home_setup_apply_runs(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    code, lines, _ = run_hal_setup(capsys, "--apply")
-
-    assert (code, lines) == (ExitCode.OK, FRESH_APPLY)
-    assert uv_installs(sandbox) == [
-        f"tool install --force {QUALITY_SOURCE}",
-        f"tool install --force {ANSIBLE_SOURCE}",
-    ]
-    assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
 
 
 def test_hal_setup_without_a_terminal_refuses_the_system_step_naming_itself_and_exits_3(
@@ -690,7 +673,7 @@ def test_hal_setup_without_a_terminal_refuses_the_system_step_naming_itself_and_
 ) -> None:
     sandbox.system.terminal = False
 
-    code, lines, error = run_hal_setup(capsys, "--apply")
+    code, lines, error = run_captured_hal_setup(capsys, "--apply")
 
     assert (code, lines[2]) == (
         ExitCode.FAILURE,

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from home_tools.layout import Layout
-from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries, Terminal, TokenVerifier, run_setup
+from home_tools.secrets_setup import TERMINAL_BOUNDARIES, Boundaries, Terminal, TokenVerifier, WalkEnd, run_setup
 
 WIZARD_NOW = datetime(2026, 10, 17, 9, 0)
 
@@ -82,6 +82,6 @@ def guided_boundaries(ask_hidden: Callable[[str], str], verify: TokenVerifier) -
     return Boundaries(terminal, verify, lambda _descriptor: None)
 
 
-def run_wizard(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES, now: datetime = WIZARD_NOW) -> int:
-    """The walk `hal setup --apply` runs for its secrets step, and its exit number."""
-    return run_setup(Layout(home), boundaries, now).exit_code
+def run_wizard(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES, now: datetime = WIZARD_NOW) -> WalkEnd:
+    """The walk `hal setup --apply` runs for its secrets step, and how it ended."""
+    return run_setup(Layout(home), boundaries, now)

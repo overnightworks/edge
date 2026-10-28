@@ -33,7 +33,7 @@ topics are not set at all.
 
 ### Import clashes
 
-They matter only inside one environment. Tools (`aco`, `home`, `quality`,
+They matter only inside one environment. Tools (`aco`, `hal`, `quality`,
 `edge`) run in their own uv environments. Only the libraries (`webauth`,
 `agent_runtime*`) enter foreign environments. Each change proves its import
 with `python -I -c "import X; print(X.__file__)"` resolving into our tree, and
@@ -63,7 +63,7 @@ The `hal` command's name and verbs have one code owner, `hal_output.command`; ev
 | Stem (was) | Distribution(s) | Import(s) | CLI | Units / compose | Sonar key | Hosts and Keycloak (unchanged) |
 |---|---|---|---|---|---|---|
 | `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco serve` | none | `overnightworks_aco` | none until AC2, then `/apps/aco` |
-| `home` (home-tools) | `overnightworks-home` | `home` | `home` ✓ | `home-check` ✓ | `overnightworks_home` | none |
+| `home` (home-tools) | `overnightworks-home` | `home` | `hal` ✓ | `home-check` ✓ | `overnightworks_home` | none |
 | `quality` ✓ | `overnightworks-quality` | `quality` | `quality` | check `quality / verdict` ✓ | ✓ | none |
 | `edge` ✓ | `overnightworks-edge` | `edge` (`edge.check`, `edge.backup`) | `edge check`, `edge backup ...` | `edge-backup`, `edge-backup-restore-test` ✓; compose `edge` ✓ | none yet | `auth.hallucinai.de` |
 | `atelier` (marketplace) | `overnightworks-atelier` (dev only) | none | plugin and marketplace `atelier` ✓ | none | `overnightworks_atelier` | none |
