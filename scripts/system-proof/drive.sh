@@ -39,9 +39,11 @@ at_terminal() {  # at_terminal <log> <command>: as tester at a pseudo-terminal, 
 }
 
 at_coloured_terminal() {  # at_coloured_terminal <log> <command>: as tester at a pseudo-terminal, as a person sees it; the exit code is the command's
-    local log=$1 command=$2
-    /proof/terminal.exp "$command" >"$EVIDENCE/$log.log" 2>&1
-    return
+    local log=$1 command=$2 code=0
+    /proof/terminal.exp "$command" >"$EVIDENCE/$log.log" 2>&1 || code=$?
+    # 26.04's su marks each session with an OSC 3008 context sequence that no person sees; it must not sit in front of a row or glue itself to PROMPTS=.
+    sed -i 's/\x1b\]3008;[^\x1b]*\x1b\\//g' "$EVIDENCE/$log.log"
+    return "$code"
 }
 
 without_terminal() {  # without_terminal <log> <command>: as tester with no terminal on any end
@@ -567,7 +569,7 @@ cell_7() {
     boot_diagnosis boot-7
     systemctl show cloudflared -p ActiveState >"$EVIDENCE/cell7.txt"
     verdict 7 "with the marker the unit is condition-skipped after a reboot" \
-        'grep -qx ActiveState=inactive "$EVIDENCE/cell7.txt" && grep -q "was skipped because of an unmet condition check (ConditionPathExists=!" "$EVIDENCE/boot-7.txt"'
+        'grep -qx ActiveState=inactive "$EVIDENCE/cell7.txt" && grep -q "skipped, unmet condition check ConditionPathExists=!" "$EVIDENCE/boot-7.txt"'
     return
 }
 
@@ -892,8 +894,7 @@ install_wheel_for() {  # install_wheel_for <user>: the packaged `home`, in that 
 }
 
 A1_NEXT_AS_AGENT="1. hal setup --apply (beliebiges Terminal) — erwartet: quality, Engines, Hook-Dateien, Aktivierung: changed
-   warum: without the hook no commit is checked for secrets
-Außerdem zum Einsortieren: ~/README.md fehlt. Das macht ein Agent: sag „räum home auf“."
+   warum: without the hook no commit is checked for secrets"
 
 cell_a1_4_and_5() {
     local dry apply next
@@ -905,7 +906,7 @@ cell_a1_4_and_5() {
          row_in_log a1-4-dry timers skipped && row_in_log a1-4-dry system skipped && row_in_log a1-4-dry secrets skipped'
     run_as agent a1-4-next "$AGENT_HOME/.local/bin/home" next
     next=$?
-    verdict A1-4 "home next exits 0 and lists exactly the per-user step and the bookkeeping line, none of the operator's steps" \
+    verdict A1-4 "home next exits 0 and lists exactly the per-user step, none of the operator's steps" \
         '[ $next -eq 0 ] && [[ $(<"$EVIDENCE/a1-4-next.log") == "$A1_NEXT_AS_AGENT" ]]'
     run_as agent a1-5-apply "$AGENT_HOME/.local/bin/home" setup --apply
     apply=$?
