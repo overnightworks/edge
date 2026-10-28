@@ -1,7 +1,7 @@
 """The host check (#138): what Cloudflare actually holds against each host's declared exposure.
 
 Pure over a `Snapshot`; `check_hosts` is the entry for callers (the command, later `apply` and
-`edge start --all`). The `problem` values and the four finding keys are a contract for `hal`.
+`hal online`). The `problem` values and the four finding keys are a contract for `hal`.
 """
 
 import json

@@ -1728,7 +1728,7 @@ def point_at_a_password_url(real_main: Path, _origin: Path) -> None:
     ("arrange", "line"),
     [
         pytest.param(remove_the_repository,
-                     "`git fetch` exited 128: fatal: Could not read from remote repository.",
+                     "`git fetch` exited 128: fatal: Could not read from remote repository",
                      id="B5 the remote removed"),
         pytest.param(point_at_a_password_url,
                      "`git fetch` exited 128: fatal: URL 'https://<redacted>@127.0.0.1:1/x' "
@@ -1860,7 +1860,7 @@ def test_plain_apply_without_a_terminal_refuses_in_the_local_part_and_publishes_
     assert exit_code == 1
     err = capsys.readouterr().err
     assert "error: refused, stdin and stdout must be a terminal" in err
-    assert "edge apply: nothing published" in err
+    assert "hal apply: nothing published" in err
 
 
 @pytest.mark.parametrize(
@@ -2740,7 +2740,7 @@ def test_start_from_b_of_a_unit_that_is_not_set_up_is_refused_before_the_prompt(
     exit_code, out, err = start()
 
     assert exit_code == 1
-    assert "step-ca is not set up: run `step-ca/init`, then `edge start step-ca` again" in err
+    assert "step-ca is not set up: run `step-ca/init`, then `hal start step-ca` again" in err
     assert "step-ca/init --check: no keys" in err
     assert "start step-ca" not in out
     assert scripted.changing_verbs() == []

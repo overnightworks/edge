@@ -46,7 +46,7 @@ def apply_command(
                     tree or tofu.PROJECT_ROOT, home, git
                 ):
                     return refused
-                planned_catalog = _valid_catalog("apply")
+                planned_catalog = _valid_catalog(apply.SENDER)
                 if planned_catalog is None:
                     return apply.ApplyExit.CANNOT_PLAN
                 return _refusal_unreadable_cloudflare_read_file(home)
@@ -70,7 +70,7 @@ def apply_command(
                 return outcome.exit
 
             exit_code = _guarded(
-                "apply",
+                apply.SENDER,
                 home,
                 secrets.Access.WRITE,
                 plan_and_apply,
@@ -106,7 +106,7 @@ def _exit_after_interrupt(run: _ApplyRun) -> int:
         line = _CLOSING_LINES[(closing, INTERRUPTED)]
     else:
         line = "interrupted, nothing was applied"
-    print(f"edge external apply: {line}", file=sys.stderr)
+    print(f"{apply.SENDER}: {line}", file=sys.stderr)
     return apply.ApplyExit.REFUSED
 
 
@@ -154,7 +154,7 @@ def _close_on_host_check(
             apply_exit if check_exit == host_check.CheckExit.CLEAN else apply.ApplyExit.REFUSED
         )
         if line := _CLOSING_LINES.get((closing, check_exit)):
-            print(f"edge external apply: {line}", file=sys.stderr)
+            print(f"{apply.SENDER}: {line}", file=sys.stderr)
         return run.committed_exit
 
 
@@ -163,7 +163,7 @@ def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
     try:
         secrets.read_cloudflare_token(home)
     except secrets.SecretFileError as error:
-        print(f"edge external apply: {error}", file=sys.stderr)
+        print(f"{apply.SENDER}: {error}", file=sys.stderr)
         return apply.ApplyExit.CANNOT_PLAN
     return None
 
@@ -240,11 +240,11 @@ def check_command(
     prober: Callable[[], host_probe.Prober] | None = None,
     emit: Callable[[str], None] = _write_line_to_stdout,
 ) -> int:
-    """The host check that closes `edge external apply`: its findings on stdout, why it could not
+    """The host check that closes the publish: its findings on stdout, why it could not
     run on stderr."""
     outcome = run_host_check(home, cloudflare=cloudflare, prober=prober, emit=emit)
     for line in outcome.cause:
-        print(f"edge external apply: host check: cannot check, {line}", file=sys.stderr)
+        print(f"{apply.SENDER}: host check: cannot check, {line}", file=sys.stderr)
     return outcome.exit_code
 
 
@@ -262,7 +262,7 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
     else:
         refusals = []
     for line in refusals:
-        print(f"edge external apply: {line}", file=sys.stderr)
+        print(f"{apply.SENDER}: {line}", file=sys.stderr)
     return apply.ApplyExit.CANNOT_PLAN if refusals else None
 
 
@@ -291,17 +291,17 @@ def _read_catalog() -> _ValidCatalog:
     return _ValidCatalog(raw, document, catalog.hosts(document))
 
 
-def _valid_catalog(command: str) -> _ValidCatalog | None:
+def _valid_catalog(sender: str) -> _ValidCatalog | None:
     """The catalog tofu reads, or None after naming the key when it is not valid (#131 rule 5)."""
     try:
         return _read_catalog()
     except catalog.CatalogError as error:
-        print(f"edge external {command}: {error}", file=sys.stderr)
+        print(f"{sender}: {error}", file=sys.stderr)
         return None
 
 
 def _guarded(
-    command: str,
+    sender: str,
     home: Path,
     access: secrets.Access,
     run: Callable[[Path, dict[str, str]], int],
@@ -321,29 +321,29 @@ def _guarded(
         token_values = secrets.read_secrets(home, access)
         return run(home, token_values)
     except (secrets.SecretFileError, tofu.TofuError) as error:
-        _report(f"edge external {command}: {error}", error, token_values, command)
+        _report(f"{sender}: {error}", error, token_values, sender)
     except apply.StepFailed as failure:
         _report(
-            f"edge external {command}: {failure.step} failed, {_describe(failure.cause)}",
+            f"{sender}: {failure.step} failed, {_describe(failure.cause)}",
             failure.cause,
             token_values,
-            command,
+            sender,
         )
         return failure.exit_code
     except OSError as error:
         _report(
-            f"edge external {command}: cannot plan, {_describe(error)}",
+            f"{sender}: cannot plan, {_describe(error)}",
             error,
             token_values,
-            command,
+            sender,
         )
     except ValueError as error:
         # Only the type: a decode error's message can quote bytes of a token file.
         _report(
-            f"edge external {command}: cannot plan, {type(error).__name__}",
+            f"{sender}: cannot plan, {type(error).__name__}",
             error,
             token_values,
-            command,
+            sender,
         )
     return cannot_plan
 
@@ -356,7 +356,7 @@ def _describe(error: Exception) -> str:
     return f"{type(error).__name__}: {error.strerror}{where}"
 
 
-def _report(message: str, error: Exception, token_values: dict[str, str], command: str) -> None:
+def _report(message: str, error: Exception, token_values: dict[str, str], sender: str) -> None:
     print(secrets.redact(message, token_values), file=sys.stderr)
     for note in getattr(error, "__notes__", []):
-        print(secrets.redact(f"edge external {command}: {note}", token_values), file=sys.stderr)
+        print(secrets.redact(f"{sender}: {note}", token_values), file=sys.stderr)

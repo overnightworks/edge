@@ -413,9 +413,10 @@ def test_a_missing_token_file_is_not_replaced_by_the_inherited_credential(
 
 def test_a_token_file_that_is_not_utf8_exits_2_without_quoting_it(home, fake_tofu, capsys, publish):
     """#40 rule 4: an unreadable token file is exit 2, not a traceback with exit 1."""
-    (home / ".secrets/cloudflare/fleet-read").write_bytes(b"\xff\xfe")
+    token_file = home / ".secrets/cloudflare/fleet-read"
+    token_file.write_bytes(b"\xff\xfe")
     assert publish() == 2
-    assert "not valid UTF-8" in capsys.readouterr().err
+    assert capsys.readouterr().err == f"{REFUSAL}{token_file} is not valid UTF-8\n"
     assert fake_tofu.calls() == []
 
 
@@ -742,9 +743,10 @@ def with_a_stray_tfvars(live_checkout, _tmp_path) -> Path:
     return live_checkout
 
 
-REFUSAL = "edge external apply: "
+REFUSAL = "cloudflare: "
 LIVE_ONLY = f"{REFUSAL}runs only from the live checkout ~/git/edge ("
 MAIN_ONLY = f"{REFUSAL}runs only on main ("
+APPLY_INTERRUPTED = f"{REFUSAL}interrupted during tofu apply, live services may be partly changed"
 
 
 @pytest.mark.parametrize(
@@ -793,7 +795,7 @@ def test_apply_with_a_failing_git_exits_2_saying_it_cannot_read_the_checkout(
     broken_git.chmod(0o755)
     apply = terminal()
     assert apply.finish() == 2
-    assert "edge external apply: cannot read the live checkout, " in apply.output
+    assert "cloudflare: cannot read the live checkout, " in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -877,7 +879,7 @@ def test_apply_with_an_invalid_catalog_exits_2_before_any_token_or_tofu(
     without_tokens(home)
     apply = terminal()
     assert apply.finish() == 2
-    assert f"edge external apply: {CATALOG_LINE}" in apply.output
+    assert f"cloudflare: {CATALOG_LINE}" in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -915,7 +917,7 @@ def test_apply_with_only_one_of_stdin_and_stdout_a_terminal_exits_1_before_tofu(
     """#45 rule 2: stdin and stdout must both be terminals."""
     apply = terminal(**terminals)
     assert apply.finish() == 1
-    assert "must be a terminal" in apply.output
+    assert apply_line("refused, stdin and stdout must be a terminal") in apply.output
     assert fake_tofu.calls() == []
 
 
@@ -1043,7 +1045,7 @@ def test_an_interrupt_during_apply_lets_tofu_stop_gracefully_and_names_the_step(
         assert apply.finish() == 1
     assert fake_tofu.stopped_gracefully
     assert "tofu stopped gracefully" in apply.output
-    assert "interrupted during tofu apply, live services may be partly changed" in apply.output
+    assert APPLY_INTERRUPTED in apply.output
     assert "run hal check hosts" in " ".join(apply.output.split())
     assert apply.checks() == []
 
@@ -1095,7 +1097,7 @@ def test_a_tofu_that_vanishes_after_the_confirmation_fails_the_apply_step_with_e
     (fake_tofu.directory / "tofu").unlink()
     apply.type("yes\n")
     assert apply.finish() == 1
-    assert "tofu apply failed" in apply.output
+    assert apply_line("tofu apply failed") in apply.output
     assert "cannot plan" not in apply.output
     assert plan_files(home) == []
     assert len(apply.checks()) == 1
@@ -1116,7 +1118,7 @@ def test_a_leftover_plan_file_is_deleted_and_named_at_the_next_apply(home, fake_
     apply = terminal()
     assert apply.finish() == 0
     assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in apply.output
+    assert apply_line(f"removed the leftover plan file {leftover}") in apply.output
     assert ".lock" not in apply.output
 
 
@@ -1128,8 +1130,8 @@ def test_a_non_terminal_apply_still_deletes_and_names_a_leftover_before_refusing
     assert external_cli.apply_command(home) == 1
     error = capsys.readouterr().err
     assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in error
-    assert "terminal" in error
+    assert apply_line(f"removed the leftover plan file {leftover}") in error
+    assert apply_line("refused, stdin and stdout must be a terminal") in error
     assert fake_tofu.calls() == []
 
 
@@ -1139,7 +1141,7 @@ def test_a_plan_file_whose_lock_is_gone_is_a_leftover(home, capsys):
     leftover.with_suffix(".lock").unlink()
     external_apply.remove_leftover_plans(home)
     assert plan_files(home) == []
-    assert f"removed the leftover plan file {leftover}" in capsys.readouterr().err
+    assert apply_line(f"removed the leftover plan file {leftover}") in capsys.readouterr().err
 
 
 def test_a_sweep_keeps_the_files_of_a_live_run_that_replaced_the_lock_it_opened(home):
@@ -1232,7 +1234,7 @@ def test_an_interrupted_cleanup_exits_1_and_warns_of_live_changes_only_after_app
     outcome = external_apply.apply_plan(home, {}, plan_file_scope=interrupted_when_leaving)
     assert outcome.exit == 1
     error = capsys.readouterr().err
-    assert "interrupted during the cleanup" in error
+    assert apply_line("interrupted during the cleanup") in error
     assert ("live services may be partly changed" in error) is live_services_may_have_changed
     assert ("hal check hosts" in error) is live_services_may_have_changed
     assert outcome.closing is (
@@ -1667,7 +1669,7 @@ def said(output: str) -> str:
 
 
 def apply_line(text: str) -> str:
-    return f"edge external apply: {text}"
+    return f"cloudflare: {text}"
 
 
 @pytest.mark.parametrize(
@@ -1730,7 +1732,7 @@ def test_apply_ends_on_the_host_check_and_maps_its_verdict_to_the_exit(
     assert ("apply" in commands) is (configuration is not EMPTY_PLAN)
     printed = said(apply.output)
     if line is None:
-        assert "edge external apply:" not in printed
+        assert f"{external_apply.SENDER}:" not in printed
     else:
         assert apply_line(line) in printed
     if configuration is EMPTY_PLAN:
@@ -2142,7 +2144,7 @@ def test_a_cleanup_failure_of_any_kind_after_an_interrupted_apply_still_reports_
     assert failure.value.step is external_apply.Step.CLEANUP
     assert failure.value.closing is external_apply.ClosingCheck.NO_CHECK_INTERRUPTED
     error = capsys.readouterr().err
-    assert "interrupted during tofu apply, live services may be partly changed" in error
+    assert APPLY_INTERRUPTED in error
 
 
 @pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM])
@@ -2161,8 +2163,7 @@ def test_a_signal_while_the_interrupt_line_is_published_shows_it_exactly_once(
     monkeypatch.setattr(sys, "stdout", SignallingOnce("published-after-the-apply", interrupt))
     reader = FakeReader(CLEAN_SNAPSHOT)
     assert apply_in_process(reader) == 1
-    line = "interrupted during tofu apply, live services may be partly changed"
-    assert stderr.getvalue().count(line) == 1
+    assert stderr.getvalue().count(APPLY_INTERRUPTED) == 1
     assert reader.tokens == []
 
 
@@ -2180,8 +2181,7 @@ def test_a_signal_as_the_interrupt_is_recorded_as_reported_shows_the_line_exactl
         external_apply.report_interrupt, "progress.reported = True", interrupt
     ):
         assert apply_in_process(reader) == 1
-    line = "interrupted during tofu apply, live services may be partly changed"
-    assert capsys.readouterr().err.count(line) == 1
+    assert capsys.readouterr().err.count(APPLY_INTERRUPTED) == 1
     assert reader.tokens == []
 
 
@@ -2428,7 +2428,7 @@ def assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, erro
     assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
     assert reader.reads == 0
     assert plan_files(home) == []
-    assert "nothing applied" in error
+    assert apply_line("refused, a ready host does not answer, nothing applied") in error
     assert "deleted" not in error
 
 
@@ -2480,7 +2480,7 @@ def test_only_the_host_that_does_not_answer_is_named_and_the_whole_plan_is_refus
     )
     error = capsys.readouterr().err
     assert_refused_before_yes(home, fake_tofu, confirmations, reader, code, error)
-    assert f"{DOCS} did not answer /ready" in error
+    assert apply_line(f"{DOCS} did not answer /ready") in error
     assert AUTH not in error
 
 
@@ -2582,10 +2582,9 @@ def test_a_signal_during_the_ready_probe_leaves_nothing_applied_and_no_plan_file
     apply.wait_until_probing()
     apply.signal(interrupt)
     assert apply.finish() == 1
-    assert (
+    assert apply_line(
         "interrupted during the readiness check, nothing was applied; the plan file is deleted"
-        in said(apply.output)
-    )
+    ) in said(apply.output)
     assert plan_files(home) == []
     assert PROMPT not in said(apply.output)
     assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
@@ -2700,7 +2699,7 @@ def test_a_plan_file_that_cannot_be_deleted_after_the_readiness_step_is_named_no
     error = said(capsys.readouterr().err)
     out_argument = next(a for a in fake_tofu.call("plan")["argv"] if a.startswith("-out="))
     assert code == 1
-    assert said_of_the_end in error
+    assert apply_line(said_of_the_end) in error
     assert apply_line("the cleanup failed,") in error
     assert "deleted" not in error
     assert reader.reads == 0

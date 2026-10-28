@@ -3,7 +3,7 @@
 
 Runs steps 2-6 (as `--help` numbers them) and the end of step 7, asks for the operator's admin
 name and first password (step 6), and stops for the human part, the browser (TOTP and passkey,
-step 7). It ends unpublished: its last line names `edge apply`. Every step checks its own
+step 7). It ends unpublished: its last line names `hal apply`. Every step checks its own
 done-state first, so a run after an interruption continues at the first unfinished step. No secret
 is printed: command output is captured and a failure shows one scrubbed line.
 
@@ -90,7 +90,7 @@ CONTAINER_REALM_ATTRIBUTES = (
     "--realm master --client config-cli --fields attributes"
 )
 
-NEXT_STEP = f"Last: `edge apply` publishes {PUBLIC_HOST} once the catalog declares it."
+NEXT_STEP = f"Last: `hal apply` publishes {PUBLIC_HOST} once the catalog declares it."
 
 
 class StepFailure(Exception):
@@ -214,7 +214,7 @@ class GoLive:
             return None
         return (
             f"{UNIT} is switched off (since {switches.describe_since(since)}); "
-            f"`edge start {UNIT}` ends the switch"
+            f"`hal start {UNIT}` ends the switch"
         )
 
     @contextmanager

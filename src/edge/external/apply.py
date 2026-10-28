@@ -1,4 +1,4 @@
-"""`edge external apply`: the plan is shown, written encrypted, applied only after `yes`.
+"""The publish of `hal apply`: the plan is shown, written encrypted, applied only after `yes`.
 
 Exit 0 applied or nothing to apply, 1 refused, aborted or failed, 2 cannot plan; `ClosingCheck`
 says whether the host check follows, and `cli.apply_command` maps its verdict into the exit.
@@ -23,6 +23,7 @@ from edge.external import host_probe, secrets, tofu
 from hal_output import confirmed
 from hal_output.command import Verb, command
 
+SENDER = "cloudflare"
 PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
 _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
@@ -102,7 +103,7 @@ class StepFailed(Exception):
 
 def refusal_without_terminal() -> ApplyExit | None:
     """The refusal of a run that is not at a terminal; asked before any token is read."""
-    if terminal.refused_without_terminal("edge external apply"):
+    if terminal.refused_without_terminal(SENDER):
         return ApplyExit.REFUSED
     return None
 
@@ -145,7 +146,7 @@ def remove_leftover_plans(
 def _remove_leftover(plan_file: Path) -> None:
     if plan_file.exists():
         plan_file.unlink()
-        print(f"edge external: removed the leftover plan file {plan_file}", file=sys.stderr)
+        print(f"{SENDER}: removed the leftover plan file {plan_file}", file=sys.stderr)
 
 
 def _names_the_open_file(descriptor: int, path: Path) -> bool:
@@ -305,7 +306,7 @@ def report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> N
     plan_file = "; the plan file is deleted" if plan_file_deleted else ""
     with signals_ignored():  # the line and the record that it was printed are one step
         print(
-            f"\nedge external apply: interrupted during {step}, {consequence}{plan_file}",
+            f"\n{SENDER}: interrupted during {step}, {consequence}{plan_file}",
             file=sys.stderr,
         )
         progress.reported = True
@@ -351,21 +352,21 @@ def _show_confirm_apply(
         return ApplyExit.APPLIED_OR_NOTHING
     if planned.exit_code != tofu.PlanExit.CHANGES:
         show_tofu_output(shown, sys.stderr)
-        print(f"edge external apply: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
+        print(f"{SENDER}: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
         return ApplyExit.CANNOT_PLAN
     show_tofu_output(shown.rstrip("\n"), sys.stdout)
     progress.step = Step.READINESS
     if unanswered := _unanswered(hosts, prober_for):
         for line in unanswered:
-            print(f"edge external apply: {line}", file=sys.stderr)
+            print(f"{SENDER}: {line}", file=sys.stderr)
         print(
-            "edge external apply: refused, a ready host does not answer, nothing applied",
+            f"{SENDER}: refused, a ready host does not answer, nothing applied",
             file=sys.stderr,
         )
         return ApplyExit.REFUSED
     progress.step = Step.CONFIRMATION
     if not confirmed("apply exactly this plan"):
-        print("edge external apply: aborted, nothing applied", file=sys.stderr)
+        print(f"{SENDER}: aborted, nothing applied", file=sys.stderr)
         return ApplyExit.REFUSED
     progress.step = Step.APPLY
     progress.apply_reached = True
@@ -374,6 +375,6 @@ def _show_confirm_apply(
     progress.apply_exit_code = applied.exit_code
     progress.step = Step.CLEANUP
     if applied.exit_code != 0:
-        print(f"edge external apply: tofu apply failed (exit {applied.exit_code})", file=sys.stderr)
+        print(f"{SENDER}: tofu apply failed (exit {applied.exit_code})", file=sys.stderr)
         return ApplyExit.REFUSED
     return ApplyExit.APPLIED_OR_NOTHING
