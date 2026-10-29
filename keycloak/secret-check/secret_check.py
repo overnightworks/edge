@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["pyyaml==6.0.2"]
+# dependencies = ["pyyaml==6.0.3"]
 #
 # [tool.uv]
 # exclude-newer = "2026-10-16T00:00:00Z"
