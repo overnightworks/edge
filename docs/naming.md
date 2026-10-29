@@ -63,7 +63,7 @@ The `hal` command's name and verbs have one code owner, `hal.output.command`; ev
 | Stem (was) | Distribution(s) | Import(s) | CLI | Units / compose | Sonar key | Hosts and Keycloak (unchanged) |
 |---|---|---|---|---|---|---|
 | `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco serve` | none | `overnightworks_aco` | none until AC2, then `/apps/aco` |
-| `hal` (was `edge` and `home`) | `overnightworks-hal` | `hal` ✓ (`hal.stack`, `hal.backup`, `hal.exposure`, `hal.output`, `hal.workstation`) | `hal` ✓ | `hal-backup`, `hal-backup-restore-test`, `hal-check` ✓; compose `edge` (H5i renames it) | `overnightworks_hal` | `auth.hallucinai.de` |
+| `hal` (was `edge` and `home`) | `overnightworks-hal` ✓ | `hal` ✓ (`hal.stack`, `hal.backup`, `hal.exposure`, `hal.output`, `hal.workstation`) | `hal` ✓ | `hal-backup`, `hal-backup-restore-test`, `hal-check` ✓; compose `edge` (H5i renames it) | `overnightworks_hal` | `auth.hallucinai.de` |
 | `quality` ✓ | `overnightworks-quality` | `quality` | `quality` | check `quality / verdict` ✓ | ✓ | none |
 | `atelier` (marketplace) | `overnightworks-atelier` (dev only) | none | plugin and marketplace `atelier` ✓ | none | `overnightworks_atelier` | none |
 | `webauth` ✓ | ✓ | ✓ | none | none | ✓ | none |
