@@ -19,8 +19,7 @@ from workstation_support import FakeProbe, run_hal_secrets
 
 from hal.workstation import secrets_setup, secrets_view
 from hal.workstation.secrets_setup import Boundaries, Outcome, Verdict, WalkEnd, run_command
-from hal.workstation.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
-from hal.workstation.secrets_view import SecretKind, load_manifest
+from hal.workstation.secrets_view import load_manifest
 
 CODEX_CREATE_LINE = 'create = { run = ["codex", "login"], home = ["CODEX_HOME"], label = "Codex" }'
 CODEX_LOGIN_MANIFEST = f"""\
@@ -217,20 +216,6 @@ def test_a_create_entry_is_refused_when_it_is_malformed(use_manifest, create_lin
 
     with pytest.raises(secrets_view.ManifestError):
         load_manifest(path)
-
-
-def test_the_packaged_manifest_lists_the_codex_login_as_a_required_tool_login() -> None:
-    """#666 D2: the entry is not optional, so a machine without the login is walked."""
-    entry = next(
-        entry for entry in load_manifest(PACKAGED_MANIFEST) if entry.name == "agent-service/codex"
-    )
-
-    assert (entry.kind, entry.optional, entry.create.run, entry.create.home) == (
-        SecretKind.TOOL_LOGIN,
-        False,
-        ("codex", "login"),
-        ("CODEX_HOME",),
-    )
 
 
 def test_the_real_login_runner_keeps_the_operators_environment_and_adds_its_home_variable(

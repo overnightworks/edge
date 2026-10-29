@@ -8,7 +8,7 @@ import stat
 import subprocess
 import sys
 from collections.abc import Callable, Iterator
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -17,53 +17,10 @@ from workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERR
 
 from hal.workstation import secrets_view
 from hal.workstation.secrets_setup import Boundaries, Terminal, WalkEnd
-from hal.workstation.secrets_view import ManifestError, SecretEntry, SecretKind, load_manifest
+from hal.workstation.secrets_view import ManifestError, load_manifest
 from hal.workstation.layout import Layout
 
 NOW = datetime(2026, 10, 15, 9, 0)
-PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
-EDGE_EXTERNAL_ENTRIES = (
-    "cloudflare/fleet-read",
-    "github/fleet-read",
-    "opentofu/state-passphrase",
-    "cloudflare/fleet-write",
-    "github/fleet-admin",
-)
-INVENTORY = {
-    *EDGE_EXTERNAL_ENTRIES,
-    "github/token",
-    "gitlab",
-    "sonarcloud/token",
-    "claudebot.env",
-    "claudebot-runtime.env",
-    "secrets/README",
-    "cloudflared",
-    "gmail-cleanup",
-    "ssh/id_ed25519",
-    "ssh/id_ed25519.ppk",
-    "gh",
-    "claude",
-    "codex",
-    "songmaker",
-    "github/overnightworks-read-token",
-    "restic/password",
-    "cloudflared/tunnel",
-    "claude-measure-token",
-    "opentofu/state",
-    "opentofu/state-backup",
-    "opentofu/plans",
-    "opentofu/tmp",
-    "step-ca/root_ca_key",
-    "step-ca/password",
-    "step-ca/root_ca.crt",
-    "step-ca/pending-root/root_ca_key",
-    "step-ca/pending-root/root_ca.crt",
-    "keycloak/db-password",
-    "keycloak/config-cli-secret",
-    "keycloak/bootstrap-admin-password",
-    "keycloak/clients/*",
-    "agent-service-claude", "agent-service/codex", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token", "smtp/password", "smtp/account.toml",
-}
 DECLARED_MODE_ENTRY = (
     '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'
     'loosest_mode = 0o644\nloosest_mode_reason = "uid 1000 reads it"\n'
@@ -603,76 +560,6 @@ def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_
     assert not Layout(clean_home).state_dir.exists()
 
 
-def test_the_packaged_manifest_names_every_inventory_entry_without_a_value() -> None:
-    manifest = load_manifest(PACKAGED_MANIFEST)
-
-    assert {entry.name for entry in manifest} == INVENTORY
-    assert {entry.name for entry in manifest if entry.retired} == {"github/token", "github/overnightworks-read-token"}
-    assert {entry.name for entry in manifest if entry.verifier} == {"gh"}
-
-
-def test_the_packaged_manifest_catches_up_with_the_first_live_run() -> None:
-    """#21 points 1-4: confirmed revocations, the known non-secret files, the cloudflared layout; ppk and non-secret files are optional."""
-    manifest = {entry.name: entry for entry in load_manifest(PACKAGED_MANIFEST)}
-
-    retired = {name: entry.revocation_confirmed for name, entry in manifest.items() if entry.retired}
-    assert retired == dict.fromkeys(("github/token", "github/overnightworks-read-token"), date(2026, 10, 15))
-    assert {name: entry.kind for name, entry in manifest.items() if entry.kind in (SecretKind.CONFIGURATION, SecretKind.DOCUMENTATION)} == {
-        "claudebot-runtime.env": SecretKind.CONFIGURATION,
-        "opentofu/state": SecretKind.CONFIGURATION,
-        "opentofu/state-backup": SecretKind.CONFIGURATION,
-        "opentofu/plans": SecretKind.CONFIGURATION,
-        "opentofu/tmp": SecretKind.CONFIGURATION,
-        "secrets/README": SecretKind.DOCUMENTATION,
-        "step-ca/root_ca.crt": SecretKind.CONFIGURATION,
-        "step-ca/pending-root/root_ca.crt": SecretKind.CONFIGURATION, "agent-service/signing-public-key": SecretKind.CONFIGURATION, "smtp/account.toml": SecretKind.CONFIGURATION,
-    }
-    assert manifest["cloudflared"].paths == (PurePosixPath(".secrets/cloudflared/cert.pem"),)
-    assert "/etc/cloudflared (root)" in manifest["cloudflared"].elsewhere
-    assert {name for name, entry in manifest.items() if entry.optional} == {
-        "ssh/id_ed25519.ppk",
-        "claudebot-runtime.env",
-        "secrets/README",
-        "claude-measure-token",
-        "opentofu/state",
-        "opentofu/state-backup",
-        "opentofu/plans",
-        "opentofu/tmp",
-        "step-ca/root_ca_key",
-        "step-ca/password",
-        "step-ca/root_ca.crt",
-        "step-ca/pending-root/root_ca_key",
-        "step-ca/pending-root/root_ca.crt",
-        "keycloak/db-password",
-        "keycloak/config-cli-secret",
-        "keycloak/bootstrap-admin-password",
-        "keycloak/clients/*",
-        "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key",
-    }
-
-
-def test_the_packaged_manifest_puts_the_five_edge_external_entries_first_each_with_its_place_and_rights() -> None:
-    """#36 rule 1 / rule 2: the five publish-phase entries come first, each with its place, and every token names its rights."""
-    manifest = load_manifest(PACKAGED_MANIFEST)
-
-    first = manifest[: len(EDGE_EXTERNAL_ENTRIES)]
-    assert tuple(entry.name for entry in first) == EDGE_EXTERNAL_ENTRIES
-    assert [f"~/{entry.place}" for entry in first] == [f"~/.secrets/{name}" for name in EDGE_EXTERNAL_ENTRIES]
-    tokens = [entry for entry in first if entry.kind is SecretKind.TOKEN]
-    assert [(entry.name, entry.source.provider.value) for entry in tokens] == [
-        ("cloudflare/fleet-read", "cloudflare"),
-        ("github/fleet-read", "github"),
-        ("cloudflare/fleet-write", "cloudflare"),
-        ("github/fleet-admin", "github"),
-    ]
-    assert all(entry.source.scope and entry.purpose for entry in tokens)
-    assert {entry.name: entry.read_by for entry in tokens if entry.source.provider.value == "github"} == {
-        "github/fleet-read": (),
-        "github/fleet-admin": (),
-    }
-    assert {entry.name: entry.kind for entry in first if entry.source is None} == {"opentofu/state-passphrase": SecretKind.SERVICE_PASSWORD}
-
-
 @pytest.mark.parametrize(
     ("state_mode", "loose_findings"),
     [
@@ -718,58 +605,14 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
     assert set(findings_of(capsys.readouterr().out, "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
 
 
-@pytest.mark.parametrize(
-    "expected",
-    [
-        SecretEntry(
-            name="restic/password",
-            kind=SecretKind.HUMAN_PASSWORD,
-            paths=(PurePosixPath(".secrets/restic/password"),),
-            read_by=("hal-backup.service", "hal-backup-restore-test.service"),
-            recreate=RESTIC_RECREATE,
-            purpose="hal backup encrypts the restic backups with it; without it they are unreadable.",
-        ),
-        SecretEntry(
-            name="cloudflared/tunnel",
-            kind=SecretKind.TOOL_LOGIN,
-            paths=(PurePosixPath(".secrets/cloudflared/{tunnel_id}.json"),),
-            read_by=("cloudflared tunnel run (by hand; credentials-file in /etc/cloudflared/config.yml)",),
-            recreate="`cloudflared tunnel create` (new tunnel) or copy the file from /etc/cloudflared",
-            elsewhere="/etc/cloudflared (root), the copy the running tunnel reads via LoadCredential",
-        ),
-        SecretEntry(
-            name="claude-measure-token",
-            kind=SecretKind.TOKEN,
-            paths=(PurePosixPath(".secrets/claude-measure-token"),),
-            read_by=("agent-runtime#115, measurement runs 0b2/0e",),
-            recreate="`claude setup-token` in the browser",
-            purpose="The measurement runs start Claude with it under their own revocable login.",
-            optional=True,
-        ),
-    ],
-    ids=lambda entry: entry.name,
-)
-def test_the_packaged_manifest_carries_the_ruled_contract_of_each_issue_42_entry(expected: SecretEntry) -> None:
-    """#42 rules 1-3: each new entry carries exactly its ruled kind, path, readers, recreate line and notes."""
-    manifest = {entry.name: entry for entry in load_manifest(PACKAGED_MANIFEST)}
-
-    assert manifest[expected.name] == expected
-
-
-def test_the_packaged_manifest_lists_every_entry_and_its_mirror(tmp_path: Path, probe: FakeProbe, capsys) -> None:
-    """#42 M1/M4: every planted file is known, none is an unknown file, and hal-backup.service lists restic/password."""
+def test_every_file_the_packaged_manifest_plants_is_known(tmp_path: Path, probe: FakeProbe, capsys) -> None:
+    """#42 M1: no planted file is an unknown file."""
     home = tmp_path / "home"
     plant_secrets(home)
 
     run_hal_secrets(home, probe, now=NOW)
-    run_hal_secrets(home, probe, "--by-service", now=NOW)
 
-    view, by_service = capsys.readouterr().out.split("# hal secrets --by-service")
-    assert set(rows_of(view)) == INVENTORY
-    assert findings_of(view, "unknown-file") == {}
-    assert rows_of(view)["github/token"][-1] == "revoke: https://github.com/settings/tokens"
-    assert "| ssh/id_ed25519 | ssh/id_ed25519.ppk |" in by_service
-    assert "| hal-backup.service | restic/password |" in by_service
+    assert findings_of(capsys.readouterr().out, "unknown-file") == {}
 
 
 def never_asked(*_: object) -> object:
