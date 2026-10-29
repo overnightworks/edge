@@ -571,19 +571,19 @@ Type <span class="w">yes</span> to set up 2 open rows: yes
         <figcaption><span class="tag fail">neu path, kaputt</span> ein fremder Eintrag: der Plan scheitert, vor jeder Änderung, ohne Frage</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="d">  · commit hook     unchanged</span>
-<span class="r">  ✗</span> path            failed         <span class="d">~/.local/bin/hal is a file of its own, not a link; you decide: move it away or delete it, then rerun</span>
+<span class="r">  ✗</span> path            failed         <span class="d">~/.local/bin/hal is not a hal link · move or delete it, then rerun</span>
 <span class="d">  · timers          not run</span>
 <span class="d">  · system          not run</span>
 <span class="d">  · secrets         not run</span>
-<span class="rw">error:</span> setup stopped at path
+<span class="rw">error:</span> setup stopped at path · nothing changed
 <span class="c">next:</span> hal setup</pre>
-        <p class="was">Exit 3. Bei einem Verzeichnis steht <code>a directory, not a link</code>, bei einem Link woandershin <code>a link to &lt;Ziel&gt;, not a hal checkout</code>.</p>
+        <p class="was">Exit 3. Derselbe Satz gilt für eine Datei, ein Verzeichnis und einen Link woandershin; welcher Eintrag es ist, zeigt <code>ls -l</code>.</p>
       </figure>
     </div>
   </div>
   <ul class="why">
     <li><span class="tag new">neu path</span> <b>Eine Zeile für den Link:</b> <code>~/.local/bin/hal → &lt;checkout&gt;/bin/hal</code>, das Zuhause als <code>~</code>. Der Plan liest nur; angelegt oder umgesetzt wird nach dem yes. Der Ordner ist der, aus dem <code>hal</code> gerade läuft; ein Link in einen anderen hal-Ordner (auch nach einem Umzug) wird nach dem yes umgesetzt, alles andere ist eine Weigerung im Plan.</li>
-    <li><span class="tag new">neu path</span> <b>Die Weigerung</b> nennt den Eintrag und was der Operator tut: <code>you decide: move it away or delete it, then rerun</code>. Spätere Zeilen sind <code>not run</code>, Exit 3, kein yes.</li>
+    <li><span class="tag new">neu path</span> <b>Die Weigerung</b> nennt den Eintrag und was der Operator tut: <code>move or delete it, then rerun</code>. Spätere Zeilen sind <code>not run</code>, Exit 3, kein yes.</li>
   </ul>
 </section>
 

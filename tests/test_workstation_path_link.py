@@ -147,6 +147,13 @@ def link_to_a_tree_without_pyproject(home: Path) -> None:
     entry_of(home).symlink_to(bare / "bin" / "hal")
 
 
+def link_to_a_pyproject_whose_project_is_no_table(home: Path) -> None:
+    foreign = home / "git" / "foreign"
+    make_checkout(foreign, project=None)
+    (foreign / "pyproject.toml").write_text('project = "other"\n')
+    entry_of(home).symlink_to(foreign / "bin" / "hal")
+
+
 def link_to_a_missing_tree_outside_git(home: Path) -> None:
     entry_of(home).symlink_to(home / "elsewhere" / "gone" / "bin" / "hal")
 
@@ -164,21 +171,22 @@ def link_to_a_hal_file_outside_a_bin_directory(home: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("arrange", "kind"),
+    "arrange",
     [
-        (a_regular_file, "a file of its own"),
-        (a_directory, "a directory"),
-        (link_to_a_system_binary, "a link to /usr/bin/true"),
-        (link_to_an_older_clone_of_another_project, "a link to"),
-        (link_to_a_tree_without_pyproject, "a link to"),
-        (link_to_a_missing_tree_outside_git, "a link to"),
-        (link_to_a_missing_tree_deeper_in_git, "a link to"),
-        (link_to_a_missing_file_not_named_hal, "a link to"),
-        (link_to_a_hal_file_outside_a_bin_directory, "a link to"),
+        a_regular_file,
+        a_directory,
+        link_to_a_system_binary,
+        link_to_an_older_clone_of_another_project,
+        link_to_a_tree_without_pyproject,
+        link_to_a_pyproject_whose_project_is_no_table,
+        link_to_a_missing_tree_outside_git,
+        link_to_a_missing_tree_deeper_in_git,
+        link_to_a_missing_file_not_named_hal,
+        link_to_a_hal_file_outside_a_bin_directory,
     ],
 )
 def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_never_replaced(
-    link: PathLink, home: Path, arrange: Callable[[Path], None], kind: str
+    link: PathLink, home: Path, arrange: Callable[[Path], None]
 ) -> None:
     arrange(home)
     before = (
@@ -189,8 +197,7 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     with pytest.raises(StepFailed) as refusal:
         link.check()
 
-    assert str(refusal.value).startswith(f"~/.local/bin/hal is {kind}")
-    assert "you decide: move it away or delete it, then rerun" in str(refusal.value)
+    assert str(refusal.value) == "~/.local/bin/hal is not a hal link · move or delete it, then rerun"
     with pytest.raises(StepFailed):
         link.apply()
     assert (
@@ -209,7 +216,17 @@ def test_the_refusal_escapes_what_a_terminal_would_act_on(link: PathLink, home: 
     assert "\n" not in str(refusal.value)
 
 
-def test_no_entry_named_home_or_edge_is_created_or_read(link: PathLink, home: Path) -> None:
+def test_an_unrelated_file_beside_the_link_survives_the_creation_untouched(link: PathLink, home: Path) -> None:
+    for name in (".hal.new", "home"):
+        entry_of(home).with_name(name).write_text(f"{name} of the person\n")
+
+    link.apply()
+
+    assert sorted(path.name for path in entry_of(home).parent.iterdir()) == [".hal.new", "hal", "home"]
+    assert entry_of(home).with_name(".hal.new").read_text() == ".hal.new of the person\n"
+
+
+def test_an_entry_named_home_beside_the_link_is_left_as_it_was_and_no_other_name_appears(link: PathLink, home: Path) -> None:
     dead_home = entry_of(home).with_name("home")
     dead_home.symlink_to(home / "git" / "edge" / "bin" / "home")
 

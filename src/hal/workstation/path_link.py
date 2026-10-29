@@ -8,6 +8,7 @@ A hal that runs from an installed wheel has no checkout and leaves the entry alo
 from __future__ import annotations
 
 import os
+import secrets
 import tomllib
 from pathlib import Path
 
@@ -17,7 +18,6 @@ from hal.workstation.system_step import Applied, CheckState, StepFailed
 
 DISTRIBUTION_NAME = "overnightworks-hal"
 LAUNCHER = Path("bin") / "hal"
-DECISION = "you decide: move it away or delete it, then rerun"
 
 
 class PathLink:
@@ -40,10 +40,13 @@ class PathLink:
         if target is None or not self.is_open():
             return Applied.UNCHANGED
         self.entry.parent.mkdir(parents=True, exist_ok=True)
-        beside = self.entry.with_name(f".{self.entry.name}.new")
-        beside.unlink(missing_ok=True)
+        beside = self.entry.with_name(f".{self.entry.name}.{secrets.token_hex(4)}.new")
         beside.symlink_to(target)
-        beside.replace(self.entry)
+        try:
+            beside.replace(self.entry)
+        except OSError:
+            beside.unlink()
+            raise
         return Applied.CHANGED
 
     def is_open(self) -> bool:
@@ -52,21 +55,13 @@ class PathLink:
             return False
         if not self.entry.is_symlink():
             if self.entry.exists():
-                raise StepFailed(
-                    self.refusal(
-                        "a directory, not a link"
-                        if self.entry.is_dir()
-                        else "a file of its own, not a link"
-                    )
-                )
+                raise StepFailed(self.refusal())
             return True
         current = self.current_target()
         if current == self.target:
             return False
         if not self.is_hal_checkout_launcher(current):
-            raise StepFailed(
-                self.refusal(f"a link to {printable(str(current))}, not a hal checkout")
-            )
+            raise StepFailed(self.refusal())
         return True
 
     def current_target(self) -> Path:
@@ -79,14 +74,15 @@ class PathLink:
             return False
         try:
             with (root / "pyproject.toml").open("rb") as pyproject:
-                return tomllib.load(pyproject).get("project", {}).get("name") == DISTRIBUTION_NAME
+                project = tomllib.load(pyproject).get("project")
+                return isinstance(project, dict) and project.get("name") == DISTRIBUTION_NAME
         except FileNotFoundError:
             return not root.exists() and root.parent == self.clones_directory
         except (OSError, tomllib.TOMLDecodeError):
             return False
 
-    def refusal(self, kind: str) -> str:
-        return f"{self.shown(self.entry)} is {kind}; {DECISION}"
+    def refusal(self) -> str:
+        return f"{self.shown(self.entry)} is not a hal link · move or delete it, then rerun"
 
     def shown(self, path: Path) -> str:
         """The path with the home as `~`, and what a terminal would act on escaped."""

@@ -73,8 +73,8 @@ def test_a_foreign_entry_at_the_link_fails_the_plan_before_any_change_and_the_la
 
     code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
 
-    assert (code, err.splitlines()[0]) == (ExitCode.FAILURE, "error: setup stopped at path")
-    assert "  ✗ path            failed         ~/.local/bin/hal is a file of its own, not a link; you decide: move it away or delete it, then rerun" in out.splitlines()
+    assert (code, err.splitlines()[0]) == (ExitCode.FAILURE, "error: setup stopped at path · nothing changed")
+    assert "  ✗ path            failed         ~/.local/bin/hal is not a hal link · move or delete it, then rerun" in out.splitlines()
     assert "  · system          not run" in out.splitlines()
     assert "Type yes" not in out
     assert entry.read_text() == "my own\n"

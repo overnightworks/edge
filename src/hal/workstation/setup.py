@@ -584,7 +584,7 @@ def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStoppe
         case error:
             outcome = Outcome(SetupEvent.FAILED, _failure_sentence(step, error))
             leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
-            detail = f" · {leaves}" if rows[position] is SetupRow.SYSTEM else ""
+            detail = {SetupRow.SYSTEM: f" · {leaves}", SetupRow.PATH: " · nothing changed"}.get(rows[position], "")
     write_row(outcome.row(rows[position]))
     for later in rows[position + 1 :]:
         write_row(Outcome(SetupEvent.NOT_RUN).row(later))
