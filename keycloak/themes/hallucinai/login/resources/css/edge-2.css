@@ -7,7 +7,7 @@
   --accent: #7a18c0;
   --on-accent: #ffffff;
   --grid-line: rgba(212, 26, 10, 0.04);
-  --h-bad: #ff4444;
+  --h-bad: var(--fail);
   --h-action: var(--accent);
 }
 
@@ -28,7 +28,7 @@
   --grid-line: rgba(255, 50, 32, 0.04);
 }
 
-/* ---------- ground: deep black, grid, red and violet glows ---------- */
+/* ---------- ground: the kit's deep background, grid, red and violet glows ---------- */
 
 html.login-pf {
   background: var(--bg-deep);

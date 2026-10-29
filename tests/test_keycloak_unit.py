@@ -210,7 +210,7 @@ def test_a_theme_loads_the_pinned_appkit_stylesheet_first_and_every_other_entry_
 
     assert first == f"appkit-{metadata.version(appkit_step.DISTRIBUTION)}/appkit.css"
     assert all((resources / entry).is_file() or entry == PARENT_STYLESHEET for entry in others)
-    assert others[-1] == "css/edge.css"
+    assert others[-1] == "css/edge-2.css"
 
 
 def test_no_tracked_theme_stylesheet_carries_a_font_face_or_a_family_token():
@@ -237,6 +237,14 @@ def test_no_tracked_theme_stylesheet_carries_a_font_face_or_a_family_token():
     assert not [
         name for name in tracked if name.endswith((".woff2", "OFL-oswald.txt", "OFL-open-sans.txt"))
     ]
+
+
+@pytest.mark.parametrize("area", THEME_AREAS)
+def test_the_error_colour_follows_appkits_fail_token_in_light_and_dark(area):
+    """#663: appkit owns the state colours; a fixed hex fails contrast on the light card."""
+    stylesheet = REPOSITORY / "keycloak/themes/hallucinai" / area / "resources/css/edge-2.css"
+
+    assert re.findall(r"--h-bad:\s*([^;]+);", stylesheet.read_text()) == ["var(--fail)"]
 
 
 def test_the_account_console_offers_no_groups_page():
