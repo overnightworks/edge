@@ -552,7 +552,8 @@ def test_the_ca_allows_only_wildcards_under_never_public_names(ca_config):
     """#38 rule 2: `*.` under a never-public name (ICANN, RFC 6761/6762)."""
     never_public = {"internal", "test", "invalid", "localhost", "local"}
     allowed = ca_config["authority"]["policy"]["x509"]["allow"]["dns"]
-    assert allowed and all(pattern.startswith("*.") for pattern in allowed)
+    assert allowed
+    assert all(pattern.startswith("*.") for pattern in allowed)
     assert all(pattern.rsplit(".", 1)[-1] in never_public for pattern in allowed)
 
 
