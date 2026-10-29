@@ -39,12 +39,12 @@ from urllib.parse import quote, urlencode, urlsplit
 from hal.output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from hal.output.command import Verb, command
 from hal.workstation import secrets_view
+from hal.workstation.secrets_create import CreateCommand
 from hal.workstation.secrets_view import (
     HOME_PREFIX,
     LOOSEST_DIRECTORY_MODE,
     LOOSEST_FILE_MODE,
     PROBE_STOP_SIGNALS,
-    CreateCommand,
     Presence,
     Provider,
     SecretEntry,
