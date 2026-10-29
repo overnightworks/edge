@@ -38,8 +38,8 @@ from hal.workstation.user_units import UnitsApplied, UserUnits
 if TYPE_CHECKING:
     from hal.workstation.ports import Ports
 
-# Quality v0.5.1. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
-QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@d3a0466fc6dc87898431b722e9488921d729be42"
+# Quality v0.8.0. A commit SHA cannot move; a bump is a one-line change here.
+QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@64009e7eba23ba7d3c5d2b2df0e7d68b71b27a73"
 # The engine of the system step; a bump is a one-line change here.
 ANSIBLE_SOURCE = "ansible-core==2.21.5"
 HOOK_NAMES = ("pre-commit", "pre-merge-commit")
