@@ -740,7 +740,7 @@ der `.venv/bin/hal` des Checkouts ausführt; der Link
 unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet; den Link legt der Schritt `path` von `hal setup` an
 und zieht ihn nach, wenn der Checkout umzieht. Die erzeugten systemd-Units rufen
 `~/srv/hal/.venv/bin/hal` direkt auf und hängen so an keinem Link. `hal`
-läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
+läuft mit dem Python der `.venv` (`requires-python >= 3.14`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
 ausführen (oder `hal` über `bin/hal` aufrufen), bevor der Timer läuft.
