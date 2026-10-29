@@ -118,7 +118,7 @@ read-only into the `keycloak` service, so a change of look changes theme files
 only, never the realm. The email and admin themes, the master realm and the
 admin console stay Keycloak's own.
 
-The themes give both pages the look of hallucinai.de, always dark, with the
+The themes give both pages the look of hallucinai.de, light and dark by the device, with the
 violet main button of songmaker's vocabulary (`docs/design/keycloak-theme.html`
 is the picture): the wordmark, hallucinai's colours and shapes over
 Keycloak's PatternFly, the favicon, and Impressum and Datenschutz in the sign-in
