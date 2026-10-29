@@ -154,6 +154,13 @@ def link_to_a_pyproject_whose_project_is_no_table(home: Path) -> None:
     entry_of(home).symlink_to(foreign / "bin" / "hal")
 
 
+def link_to_a_tree_with_an_unreadable_pyproject(home: Path) -> None:
+    broken = home / "git" / "broken"
+    make_checkout(broken, project=None)
+    (broken / "pyproject.toml").write_text("[project\n")
+    entry_of(home).symlink_to(broken / "bin" / "hal")
+
+
 def link_to_a_missing_tree_outside_git(home: Path) -> None:
     entry_of(home).symlink_to(home / "elsewhere" / "gone" / "bin" / "hal")
 
@@ -179,6 +186,7 @@ def link_to_a_hal_file_outside_a_bin_directory(home: Path) -> None:
         link_to_an_older_clone_of_another_project,
         link_to_a_tree_without_pyproject,
         link_to_a_pyproject_whose_project_is_no_table,
+        link_to_a_tree_with_an_unreadable_pyproject,
         link_to_a_missing_tree_outside_git,
         link_to_a_missing_tree_deeper_in_git,
         link_to_a_missing_file_not_named_hal,
@@ -212,8 +220,7 @@ def test_the_plan_fact_escapes_what_a_terminal_would_act_on_in_the_checkout_path
 
     fact = PathLink(Layout(home), checkout).fact()
 
-    assert "\x1b" not in fact
-    assert "\n" not in fact
+    assert fact.isprintable()
 
 
 def test_an_unrelated_file_beside_the_link_survives_the_creation_untouched(link: PathLink, home: Path) -> None:
@@ -234,3 +241,17 @@ def test_an_entry_named_home_beside_the_link_is_left_as_it_was_and_no_other_name
 
     assert sorted(path.name for path in entry_of(home).parent.iterdir()) == ["hal", "home"]
     assert dead_home.readlink() == home / "git" / "edge" / "bin" / "home"
+
+
+def test_a_failed_replacement_leaves_the_entry_and_no_temporary_link_behind(
+    link: PathLink, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(self: Path, target: Path) -> Path:
+        raise PermissionError("no replacing today")
+
+    monkeypatch.setattr(Path, "replace", refuse)
+
+    with pytest.raises(PermissionError):
+        link.apply()
+
+    assert list(entry_of(home).parent.iterdir()) == []
