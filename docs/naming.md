@@ -90,7 +90,7 @@ Rulings of overnightworks/edge#24 recorded in the table:
 
 ### P1: repository rename
 
-1. Before: `aco status` in that repo shows no claim and no live lane.
+1. Before: `aco status` in that repo shows no claim and no live lane other than the rename's own (P2 step 1).
 2. The operator approves; an agent runs `gh repo rename` (for a repository with
    `sonar-project.properties`, after P2 steps 1-2).
 3. The operator runs `hal rename OLD NEW` in their own terminal: it shows the moves, asks
