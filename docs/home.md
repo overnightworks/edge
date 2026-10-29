@@ -456,7 +456,7 @@ come before the system step, which is the one that asks for sudo:
    Inhalt, der abweicht, ein verlorenes Ausführungsrecht oder ein anderer Modus als 755 wird
    repariert.
 5. **Aktivierung.** `git config --global core.hooksPath` auf dieses
-   Verzeichnis. It comes after the three steps above, so a failure in one of
+   Verzeichnis. It comes after the four steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
 6. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
    restore test and `hal check`) are written as a `.service` and a `.timer` file each into

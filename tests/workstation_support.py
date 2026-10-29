@@ -3,12 +3,14 @@ from __future__ import annotations
 import email.message
 import email.policy
 import fnmatch
+import http.client
 import hashlib
 import json
 import os
 import re
 import stat
 import time
+import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -338,6 +340,24 @@ def serve_half(_url: str, writer: BinaryIO) -> None:
 def time_out(_url: str, writer: BinaryIO) -> None:
     writer.write(FAKE_MISE[:4])
     raise TimeoutError("timed out")
+
+
+def cut_off_mid_transfer(url: str, writer: BinaryIO) -> None:
+    """The real download boundary over a chunked response that ends early, which `http.client` reports as an HTTPException."""
+
+    class CutOffResponse:
+        def __enter__(self) -> CutOffResponse:
+            return self
+
+        def __exit__(self, *_exception: object) -> None:
+            return None
+
+        def read(self, _size: int = -1) -> bytes:
+            raise http.client.IncompleteRead(b"#!/bin/sh\n", 100)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(urllib.request, "urlopen", lambda _url, timeout: CutOffResponse())
+        home_ports.download_release(url, writer)
 
 
 def fail_to_write(_url: str, _writer: BinaryIO) -> None:

@@ -276,6 +276,21 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
 
 
 @pytest.fixture
+def executable_staging_grants(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
+    """The bytes of every staged mise when it is made executable: proof that rejected bytes never are."""
+    grants: list[bytes] = []
+    real_chmod = Path.chmod
+
+    def record_grant(path: Path, mode: int, **options: bool) -> None:
+        if mode & 0o111 and path.name.startswith(".mise-"):
+            grants.append(path.read_bytes())
+        real_chmod(path, mode, **options)
+
+    monkeypatch.setattr(Path, "chmod", record_grant)
+    return grants
+
+
+@pytest.fixture
 def quiet_pc(
     sandbox: Sandbox, clean_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -14,7 +14,7 @@ from typing import BinaryIO
 
 import pytest
 from workstation_secrets_support import never_run
-from workstation_support import FAKE_MISE, STALE_MISE, FakeClock, RecordingDownload, Sandbox, bin_entries, fail_to_write, plant_mise
+from workstation_support import FAKE_MISE, STALE_MISE, FakeClock, RecordingDownload, Sandbox, bin_entries, cut_off_mid_transfer, fail_to_write, plant_mise
 from workstation_support import run_captured_hal_setup, run_hal_setup, serve_half, serve_wrong_bytes, time_out
 
 import hal.workstation
@@ -22,7 +22,7 @@ from hal import cli as hal_cli
 from hal.grammar import ExitCode
 from hal.workstation import ports, system_step
 from hal.workstation.secrets_setup import Boundaries, Terminal
-from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, MISE_VERSION, QUALITY_SOURCE, RERUN, ExecutionRole
+from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, MISE_URL, QUALITY_SOURCE, RERUN, ExecutionRole
 from hal.workstation.system_step import AGENT_USER, CheckState, SystemStep
 
 COMMIT_HOOK, PATH, TIMERS, SYSTEM, SECRETS = "commit hook", "path", "timers", "system", "secrets"
@@ -645,16 +645,17 @@ def run_setup_with(sandbox: Sandbox, *flags: str, **port_overrides) -> int:
     return run_hal_setup(*flags, home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, **port_overrides)
 
 
-def test_apply_installs_the_pinned_mise_from_its_release_url_through_a_private_staging_file(sandbox: Sandbox) -> None:
-    """#679: the pinned release binary is downloaded into a file only its owner can touch, then published executable and complete."""
+def test_apply_installs_the_pinned_mise_from_its_release_url_through_a_private_staging_file(sandbox: Sandbox, executable_staging_grants: list[bytes]) -> None:
+    """#679: the pinned release binary is downloaded into a file only its owner can touch, made executable once its bytes are complete, then published."""
     download = RecordingDownload()
 
     code = run_setup_with(sandbox, download=download)
 
     mise = sandbox.layout.mise_executable
     assert code == ExitCode.OK
-    assert download.urls == [f"https://github.com/jdx/mise/releases/download/v{MISE_VERSION}/mise-v{MISE_VERSION}-linux-x64"]
+    assert download.urls == [MISE_URL]
     assert download.staging_modes == [0o600]
+    assert executable_staging_grants == [FAKE_MISE]
     assert (mise.read_bytes(), oct(mise.stat().st_mode & 0o777)) == (FAKE_MISE, "0o755")
     assert bin_entries(sandbox.home) == {"mise", "quality", "ansible-playbook"}
 
@@ -709,13 +710,19 @@ def test_the_agents_account_installs_mise_like_quality(sandbox: Sandbox) -> None
         (serve_half, "the download of mise does not match its pinned sha256"),
         (time_out, "mise could not be downloaded: timed out"),
         (fail_to_write, "mise could not be downloaded: No space left on device"),
+        (cut_off_mid_transfer, "mise could not be downloaded: IncompleteRead(10 bytes read, 100 more expected)"),
     ],
-    ids=["mismatch", "truncated", "timeout", "write error"],
+    ids=["mismatch", "truncated", "timeout", "write error", "response cut off"],
 )
 def test_a_failed_download_publishes_nothing_keeps_an_existing_mise_and_leaves_no_staging_file(
-    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], download: Callable[[str, BinaryIO], None], sentence: str, existing: bool
+    sandbox: Sandbox,
+    capsys: pytest.CaptureFixture[str],
+    executable_staging_grants: list[bytes],
+    download: Callable[[str, BinaryIO], None],
+    sentence: str,
+    existing: bool,
 ) -> None:
-    """#679: a download that fails or does not hash to the pin fails the commit hook row with its own sentence."""
+    """#679: a download that fails or does not hash to the pin fails the commit hook row with its own sentence and never makes its bytes executable."""
     if existing:
         plant_mise(sandbox.home)
 
@@ -725,6 +732,7 @@ def test_a_failed_download_publishes_nothing_keeps_an_existing_mise_and_leaves_n
     assert (code, lines[0]) == (ExitCode.FAILURE, f"  ✗ commit hook     failed         {sentence}")
     assert (mise.read_bytes() if mise.exists() else None) == (STALE_MISE if existing else None)
     assert bin_entries(sandbox.home) == ({"mise"} if existing else set())
+    assert executable_staging_grants == []
 
 
 @pytest.mark.parametrize("existing", [False, True], ids=["fresh", "existing binary"])

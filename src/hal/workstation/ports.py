@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import shutil
 import time
 import urllib.request
@@ -27,8 +28,11 @@ DOWNLOAD_TIMEOUT_SECONDS = 60
 
 
 def download_release(url: str, writer: BinaryIO) -> None:
-    with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
-        shutil.copyfileobj(response, writer)
+    try:
+        with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            shutil.copyfileobj(response, writer)
+    except http.client.HTTPException as error:
+        raise OSError(repr(error)) from error
 
 
 @dataclass(frozen=True)

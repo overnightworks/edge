@@ -307,9 +307,21 @@ def test_git_that_cannot_be_run_makes_the_check_fail_instead_of_clean(machine: M
         hook_check.collect_findings(machine.layout, run)
 
 
-def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_check_as_failed(machine: Machine, capsys) -> None:
-    """`hal check` joins a hook finding into its one report and shows a broken hook check as failed."""
-    delete_quality(machine)
+@pytest.mark.parametrize(
+    ("damage", "rule", "executable"),
+    [
+        (delete_quality, "quality", lambda layout: layout.quality_executable),
+        (delete_mise, "mise", lambda layout: layout.mise_executable),
+        (make_mise_not_executable, "mise", lambda layout: layout.mise_executable),
+        (drift_mise, "mise", lambda layout: layout.mise_executable),
+    ],
+    ids=["quality missing", "mise missing", "mise not executable", "mise at another hash"],
+)
+def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_check_as_failed(
+    machine: Machine, damage: Callable[[Machine], None], rule: str, executable: Callable[[Layout], Path]
+) -> None:
+    """`hal check` joins a hook finding, mise's included, into its one report with `hal setup` as the fix and shows a broken hook check as failed."""
+    damage(machine)
     layout = machine.layout
 
     code = home_check(machine.sandbox.home, delegating_to_git_only())
@@ -317,9 +329,10 @@ def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_c
     assert code == 1
     assert "# hook " in report
     assert "| Rule | Subject | Finding | Fix |" in report.splitlines()
-    assert f"| quality | {layout.quality_executable} |" in report
+    (row,) = [line for line in report.splitlines() if line.startswith(f"| {rule} |")]
+    assert str(executable(layout)) in row
+    assert row.endswith("| `hal setup` |")
 
     code = home_check(machine.sandbox.home, delegating_to_git_only(broken=["worktree"]))
     assert code == 3
     assert "check hook failed (HookCheckUnavailable)" in layout.check_report_file.read_text()
-
