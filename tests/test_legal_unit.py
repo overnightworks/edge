@@ -40,6 +40,7 @@ def test_the_unit_does_not_run_as_root_and_listens_on_the_port_traefik_routes_to
     )
     port = legal["labels"]["traefik.http.services.legal.loadbalancer.server.port"]
 
+    assert legal["image"].split(":")[0] == "nginxinc/nginx-unprivileged"
     assert str(legal.get("user", "nonroot")).split(":")[0] not in {"0", "root"}
     assert int(listen.group(1)) > 1023
     assert listen.group(1) == port

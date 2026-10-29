@@ -8,6 +8,7 @@ import subprocess
 from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -307,13 +308,18 @@ def test_a_client_with_a_back_channel_logout_address_has_its_own_back_channel_ne
     """The address is reached over the client's isolated network; a client given one without
     a network of its own would send keycloak's call through a shared route."""
     keycloak_networks = compose_document()["services"]["keycloak"]["networks"]
-    with_address = [
-        client_id
+    with_address = {
+        client_id: client
         for client_id, client in realm_clients().items()
         if "backchannel.logout.url" in client.get("attributes", {})
-    ]
+    }
 
     assert with_address
+    assert all(
+        urlsplit(client["attributes"]["backchannel.logout.url"]).hostname
+        == urlsplit(client["baseUrl"]).hostname
+        for client in with_address.values()
+    )
     assert all(f"backchannel-{client_id}" in keycloak_networks for client_id in with_address)
 
 

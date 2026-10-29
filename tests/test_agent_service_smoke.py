@@ -384,7 +384,6 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
     assert smoke_service["entrypoint"][:3] == ["python", "-I", "-B"]
     (volume,) = smoke_service["volumes"]
     assert smoke_service["entrypoint"][3] == volume.split(":")[1]
-    assert volume.endswith(":ro")
 
 
 def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):

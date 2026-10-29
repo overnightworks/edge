@@ -48,8 +48,8 @@ run "every_live_denied_path_reaches_a_blocking_rule_for_its_host" {
           for path in try(host.deny_public, []) : anytrue([
             for rule in cloudflare_ruleset.deny_public[0].rules :
             rule.action == "block"
-            && strcontains(rule.description, path)
-            && strcontains(rule.expression, host.name == "@" ? yamldecode(file("../fleet.yaml")).cloudflare.zone : "${host.name}.${yamldecode(file("../fleet.yaml")).cloudflare.zone}")
+            && startswith(rule.description, "${path} ")
+            && strcontains(rule.expression, "\"${host.name == "@" ? yamldecode(file("../fleet.yaml")).cloudflare.zone : "${host.name}.${yamldecode(file("../fleet.yaml")).cloudflare.zone}"}\"")
           ])
         ]
       ] if try(entry.run.enabled, true)
