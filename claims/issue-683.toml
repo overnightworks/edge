@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "3e7c6b2b12ca409c3ab5b4cfc654a8b1670dd17e"
 branch = "claude/issue-683-keycloak-tests-no-copies"
-scope = ["probe/keycloak/backchannel_cell.py", "tests/test_keycloak_go_live.py", "tests/test_keycloak_unit.py", "tests/test_realm_declared.py", "tests/test_realm_reconcile.py"]
+scope = ["probe/keycloak/backchannel_cell.py", "quality/baseline.toml", "tests/test_keycloak_go_live.py", "tests/test_keycloak_unit.py", "tests/test_realm_declared.py", "tests/test_realm_reconcile.py"]
 opened_commit = "a48b8c9775dd3d94657b774e154c8c3c725e0654"
 whole_reason = "Four Keycloak test modules and the backchannel probe share one realm declaration; splitting them would judge the same copied realm values twice"
