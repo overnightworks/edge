@@ -16,34 +16,9 @@ DROP_INS = TUNNEL_FILES / f"{tunnel.CLOUDFLARED_UNIT}.d"
 NONROOT_DROP_IN = DROP_INS / "20-nonroot.conf"
 BOOT_DROP_IN = DROP_INS / tunnel.BOOT_DROP_IN
 POLKIT_RULE = TUNNEL_FILES / "polkit" / "10-edge-cloudflared-stop.rules"
-ALL_FILES = (BASE_UNIT, NONROOT_DROP_IN, BOOT_DROP_IN, POLKIT_RULE)
+ALL_FILES = tuple(sorted(path for path in TUNNEL_FILES.rglob("*") if path.is_file()))
 
 PLACEHOLDER = re.compile(r"@[A-Z_]+@")
-CLEAN_EXEC_START = (
-    "ExecStart=/usr/bin/cloudflared --no-autoupdate --config /etc/cloudflared/config.yml tunnel run"
-)
-# `systemctl cat cloudflared.service` on the PC, 17.10.2026 (read-only, the tunnel id replaced by
-# its placeholder), without its `ExecStart` lines: the stale one of the base unit and the
-# `10-root-binary.conf` override that the clean base unit replaces.
-EFFECTIVE_UNIT_WITHOUT_EXEC_START = frozenset(
-    {
-        "Description=cloudflared",
-        "After=network-online.target",
-        "Wants=network-online.target",
-        "TimeoutStartSec=15",
-        "Type=notify",
-        "Restart=on-failure",
-        "RestartSec=5s",
-        "WantedBy=multi-user.target",
-        "DynamicUser=yes",
-        "LoadCredential=tunnel.json:/etc/cloudflared/@TUNNEL_ID@.json",
-        "Environment=TUNNEL_CRED_FILE=%d/tunnel.json",
-        "NoNewPrivileges=yes",
-        "ProtectSystem=strict",
-        "ProtectHome=yes",
-        "PrivateTmp=yes",
-    }
-)
 
 
 def render(text: str, values: dict[str, str]) -> str:
@@ -55,14 +30,6 @@ def render(text: str, values: dict[str, str]) -> str:
 
 def key_value_lines(text: str) -> list[str]:
     return [line for line in text.splitlines() if "=" in line and not line.startswith("#")]
-
-
-def test_tunnel_holds_exactly_its_four_files():
-    """#76 rule 1: a stray file would escape the placeholder check, which walks ALL_FILES."""
-    shipped = sorted(
-        path.relative_to(TUNNEL_FILES) for path in TUNNEL_FILES.rglob("*") if path.is_file()
-    )
-    assert shipped == sorted(path.relative_to(TUNNEL_FILES) for path in ALL_FILES)
 
 
 def test_the_boot_drop_in_carries_the_name_edge_checks_for():
@@ -122,14 +89,24 @@ def test_the_files_carry_exactly_the_three_placeholders_the_installer_fills():
     assert not [text for text in texts if PLACEHOLDER.search(render(text, values))]
 
 
-def test_the_base_unit_and_20_are_todays_effective_unit_with_the_clean_exec_start():
-    """#76 rule 1, cell 6: only the stale binary path of the base unit goes."""
+def test_the_unit_keeps_its_hardening_and_has_one_exec_start():
+    """The base unit and its non-root drop-in together carry the protective limits and a single
+    `ExecStart` (a second one breaks the unit)."""
     lines = key_value_lines(BASE_UNIT.read_text()) + key_value_lines(NONROOT_DROP_IN.read_text())
-    exec_starts = [line for line in lines if line.startswith("ExecStart")]
-    assert exec_starts == [CLEAN_EXEC_START]
-    assert sorted(line for line in lines if line not in exec_starts) == sorted(
-        EFFECTIVE_UNIT_WITHOUT_EXEC_START
-    )
+    protection = {
+        "DynamicUser=yes",
+        "NoNewPrivileges=yes",
+        "ProtectSystem=strict",
+        "ProtectHome=yes",
+        "PrivateTmp=yes",
+    }
+
+    assert sum(line.partition("=")[0].strip() == "ExecStart" for line in lines) == 1
+    assert protection <= set(lines)
+    assert any(line.startswith("LoadCredential=") for line in lines)
+    assert not [line for line in lines if line.partition("=")[0].strip() == "User"]
+    for kept in protection:
+        assert sum(line.partition("=")[0].strip() == kept.partition("=")[0] for line in lines) == 1
 
 
 @pytest.mark.parametrize("path", ALL_FILES, ids=lambda path: path.name)

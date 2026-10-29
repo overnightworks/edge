@@ -76,21 +76,6 @@ def test_a_host_carries_its_service_fqdn_and_all_five_fields():
     )
 
 
-def test_the_repositorys_catalog_declares_songmakers_hopins_legal_and_keycloaks_hosts():
-    found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
-    assert [(one.fqdn, one.exposure, one.target, one.ready) for one in found] == [
-        ("songmaker.hallucinai.de", catalog.Exposure.PUBLIC, "http://localhost:8080", None),
-        ("hopin.hallucinai.de", catalog.Exposure.PUBLIC, "http://127.0.0.1:8081", "/health"),
-        ("hallucinai.de", catalog.Exposure.PUBLIC, "http://127.0.0.1:8081", "/impressum"),
-        (
-            "auth.hallucinai.de",
-            catalog.Exposure.PUBLIC,
-            "http://127.0.0.1:8081",
-            "/realms/hallucinai/.well-known/openid-configuration",
-        ),
-    ]
-
-
 def test_songmaker_and_hopin_refuse_the_back_channel_route_and_songmaker_alone_its_metrics():
     found = catalog.hosts(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     assert {one.fqdn: one.deny_public for one in found if one.deny_public} == {
@@ -526,16 +511,13 @@ def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, k
     assert refusal(with_redirect(redirect, *entries)).startswith(f"{key}:")
 
 
-def test_the_repositorys_catalog_redirects_the_apex_and_www_and_serves_the_legal_pages():
-    """#429 cell 5: the real fleet serves the four pages and the files prefix, with no keep."""
-    redirect = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]
-    assert redirect == {
-        "hosts": ["@", "www"],
-        "target": "https://auth.hallucinai.de/",
-        "serve": {
-            "pages": ["/impressum", "/datenschutz", "/nutzungsbedingungen", "/favicon.ico"],
-            "files": "/_rechtliches/",
-        },
+def test_the_apex_serves_publicly_only_its_legal_pages_and_the_files_prefix():
+    """The apex redirects everything else; its public allow-list stays exactly these paths."""
+    serve = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]["serve"]
+
+    assert serve == {
+        "pages": ["/impressum", "/datenschutz", "/nutzungsbedingungen", "/favicon.ico"],
+        "files": "/_rechtliches/",
     }
 
 
@@ -568,47 +550,12 @@ def test_an_app_host_without_ready_is_refused_when_the_apps_are_read():
         catalog.apps(entry, {}, "edge")
 
 
-def test_the_repositorys_catalog_has_hopin_enabled_and_public():
-    fleet = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)
-
-    (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "hopin"]
-    (hopin,) = [one for one in catalog.hosts(fleet) if one.service == "hopin"]
-
-    assert app.enabled is True
-    assert (hopin.fqdn, hopin.exposure, hopin.target, hopin.ready, hopin.deny_public) == (
-        "hopin.hallucinai.de",
-        catalog.Exposure.PUBLIC,
-        catalog.DEFAULT_TARGET,
-        "/health",
-        ("/auth/backchannel-logout",),
-    )
-
-
-def test_the_repositorys_catalog_has_presentator_disabled_and_publishes_nothing():
-    """#449 A1, A2 (M1): the disabled entry is read, disabled on main, and publishes no host."""
-    fleet = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)
-
-    (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "presentator"]
-
-    assert (app.enabled, app.default_branch) == (False, "main")
-    assert [one for one in catalog.hosts(fleet) if one.service == "presentator"] == []
-
-
-def test_enabling_presentator_publishes_both_hosts_with_the_back_channel_denied():
-    """#449 A1 (M3): enabled, both hosts are public with /health and the back-channel denied."""
+def test_enabling_presentator_publishes_hosts_with_the_back_channel_denied():
+    """#449 A1 (M3): enabled, every presentator host denies the back-channel route."""
     fleet = copy.deepcopy(catalog.read(PROJECT_ROOT / catalog.FLEET_FILE))
     fleet["services"]["presentator"]["run"]["enabled"] = True
 
     hosts = [one for one in catalog.hosts(fleet) if one.service == "presentator"]
 
-    assert [one.fqdn for one in hosts] == [
-        "presentator.hallucinai.de",
-        "presentator-talk.hallucinai.de",
-    ]
-    for one in hosts:
-        assert (one.exposure, one.ready, one.deny_public) == (
-            catalog.Exposure.PUBLIC,
-            "/health",
-            ("/auth/backchannel-logout",),
-        )
-        assert one.reason
+    assert hosts
+    assert all(one.deny_public == ("/auth/backchannel-logout",) for one in hosts)

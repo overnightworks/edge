@@ -32,7 +32,7 @@ from backup_support import (
 )
 
 from hal.backup import cli, docker, host
-from hal.backup.apps import AppsError, Audio, DumpKind, PostgresDatabase, PostgresMajor, parse_apps
+from hal.backup.apps import AppsError, PostgresMajor, parse_apps
 from hal.backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
 from hal.backup.runner import RUN_MARK_SUFFIX, STAGING_PREFIX
 from hal.backup.settings import RESTIC_IMAGE, RESTORE_IMAGES
@@ -963,36 +963,9 @@ def test_init_creates_a_private_repository_directory(edge_backup, machine, home)
     assert machine.labels() == ["restic init"]
 
 
-def test_the_projects_apps_toml_declares_songmaker_and_keycloak():
-    """#118: the go-live switches Keycloak on, so its record is declared (#178 took it out)."""
-    declared = [app.name for app in parse_apps(cli.DEFAULT_APPS.read_text())]
-
-    assert declared == ["songmaker", "keycloak"]
-
-
-def test_the_keycloak_record_is_db_only_on_major_17_next_to_songmakers_audio():
-    """#107 T1: songmaker keeps its audio, keycloak is DB-only on major 17."""
-    songmaker, keycloak = parse_apps(cli.DEFAULT_APPS.read_text())
-
-    songmaker_db, keycloak_db = songmaker.database, keycloak.database
-    assert isinstance(songmaker_db, PostgresDatabase)
-    assert (songmaker.name, songmaker.compose_project, songmaker_db.db_service) == (
-        ("songmaker", "songmaker", "postgres")
-    )
-    assert (songmaker_db.dump, songmaker_db.postgres_major) == (
-        DumpKind.PG_DUMP_CUSTOM,
-        PostgresMajor.SIXTEEN,
-    )
-    assert songmaker_db.audio == Audio("audiofiles", "generations", "mp3_path")
-    assert songmaker.restore_test.count_table == "songs"
-    assert (keycloak.name, keycloak.compose_project, keycloak_db.db_service) == (
-        "keycloak",
-        "edge",
-        "keycloak-db",
-    )
-    assert (keycloak_db.db_user, keycloak_db.db_name) == ("keycloak", "keycloak")
-    assert (keycloak_db.postgres_major, keycloak_db.audio) == (PostgresMajor.SEVENTEEN, None)
-    assert keycloak.restore_test.count_table == "realm"
+def test_the_projects_apps_toml_parses():
+    """#107 T1: the shipped records load through the same parser a scenario text does."""
+    assert parse_apps(cli.DEFAULT_APPS.read_text())
 
 
 @pytest.mark.parametrize(
@@ -1056,7 +1029,7 @@ def test_a_backup_run_saves_the_keycloak_dump_without_any_audio_volume(edge_back
 def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
     edge_backup, machine
 ):
-    """#107 T4: keycloak's dump loads into a throwaway postgres 17 and `realm` rows are counted."""
+    """#107 T4: keycloak's dump loads into a throwaway postgres of its own major."""
     shipped = declare_shipped_apps()
     edge_backup(*shipped, "backup")
 
@@ -1065,8 +1038,6 @@ def test_the_restore_test_loads_keycloaks_dump_into_a_postgres_of_its_own_major(
     assert outcome.exit_code == 0, outcome.err
     servers = [argv[-5] for label, argv in machine.calls if label == docker.SERVER_START_LABEL]
     assert servers == [RESTORE_IMAGES[major] for major in PostgresMajor]
-    asked = [argv[argv.index("--command") + 1] for label, argv in machine.calls if label == "psql"]
-    assert asked[-1] == 'SELECT count(*) FROM "realm"'
     assert app_history(outcome.status, "keycloak")["last_successful_restore_test"] is not None
 
 

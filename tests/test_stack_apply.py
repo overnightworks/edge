@@ -920,18 +920,19 @@ def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
 
 
 @pytest.fixture
-def agent_service_unit(repository, scripted) -> None:
-    """The repository's `agent-service` unit and compose.yaml, the other units off."""
+def agent_service_unit(repository, scripted) -> set[str]:
+    """The repository's `agent-service` unit and compose.yaml, the other units off; its services."""
     real = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())["services"]["agent-service"]
     fleet = {"cloudflare": {"zone": ZONE}, "services": {"agent-service": real}}
     write_fleet(repository, yaml.safe_dump(fleet))
     shutil.copytree(REPOSITORY / "agent-service" / "image", repository / "agent-service" / "image")
     services = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]
-    for name, definition in services.items():
-        if "agent-service" in definition.get("profiles", ()):
-            scripted.config["services"][name] = definition | {
-                "volumes": [_resolved_mount(mount) for mount in definition.get("volumes", [])]
-            }
+    profile = {n: d for n, d in services.items() if "agent-service" in d.get("profiles", ())}
+    for name, definition in profile.items():
+        scripted.config["services"][name] = definition | {
+            "volumes": [_resolved_mount(mount) for mount in definition.get("volumes", [])]
+        }
+    return set(profile)
 
 
 def _resolved_mount(mount: str | dict) -> dict:
@@ -943,18 +944,17 @@ def _resolved_mount(mount: str | dict) -> dict:
     return {"type": "bind", "source": source, "target": target, "read_only": mode == ["ro"]}
 
 
-@pytest.mark.usefixtures("agent_service_unit")
 def test_the_repositorys_agent_service_unit_starts_both_services_and_then_changes_nothing(
-    switch, scripted, setup_check, repository
+    switch, scripted, setup_check, repository, agent_service_unit
 ):
-    """#214 S1: the real catalog line starts exactly the profile's two services; a second apply
+    """#214 S1: the real catalog line starts the profile's services; a second apply
     plans nothing. #234: it asks `agent-service/setup --check` before it switches on."""
     exit_code, out, _ = switch()
 
     assert exit_code == 0
     assert setup_check.commands == [[str(repository / "agent-service/setup"), "--check"]]
     assert "agent-service is on" in out
-    assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
+    assert scripted.containers == dict.fromkeys(agent_service_unit, "running")
 
     exit_code, out, _ = switch()
 

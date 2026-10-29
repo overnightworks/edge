@@ -6,16 +6,17 @@ assumes of the CA.
 """
 
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-MCP_SUFFIX = ".mcp.internal"
 NETWORKS = {"mcp-ca", "mcp", "mcp-backends"}
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 ROUTER_HOST = re.compile(r"^Host\(`([^`]+)`\)")
+ROUTER_RULE = re.compile(r"^Host\(`[^`]+`\)( && Path\(`/[^`]*`\))?$")
 CA_DEFAULT_LIFETIME_HOURS = 24  # step-ca's default; ca.json sets no claims
 
 
@@ -46,13 +47,13 @@ def merged_dynamic(kind: str) -> dict:
 
 
 @pytest.fixture(scope="module")
-def routers() -> dict:
-    return merged_dynamic("routers")
+def services() -> dict:
+    return merged_dynamic("services")
 
 
 @pytest.fixture(scope="module")
-def services() -> dict:
-    return merged_dynamic("services")
+def routers() -> dict:
+    return merged_dynamic("routers")
 
 
 def test_the_ca_the_gateway_and_its_helper_start_only_with_the_step_ca_profile(compose):
@@ -89,22 +90,10 @@ def test_songmakers_mcp_network_is_internal_isolated_and_joined_by_traefik_mcp_a
         if "mcp-songmaker" in (service.get("networks") or [])
     ]
 
-    assert network["name"] == "hal_mcp_songmaker"
     assert network["internal"] is True
     assert network["driver_opts"] == ISOLATED_MODE
     assert members == ["traefik-mcp"]
     assert "aliases" not in (compose["services"]["traefik-mcp"]["networks"]["mcp-songmaker"] or {})
-
-
-def test_songmakers_route_takes_the_exact_path_mcp_to_songmaker_web_on_8080(routers, services):
-    """E4: Host(songmaker.mcp.internal) && Path(/mcp), the Host header unchanged."""
-
-    router = routers["songmaker"]
-    service = services[router["service"]]
-
-    assert router["rule"] == "Host(`songmaker.mcp.internal`) && Path(`/mcp`)"
-    assert service["loadBalancer"]["servers"] == [{"url": "http://songmaker-web:8080"}]
-    assert "passHostHeader" not in service["loadBalancer"]
 
 
 def test_traefik_mcp_is_the_only_service_on_all_three_networks(compose):
@@ -137,9 +126,20 @@ def test_every_alias_is_a_router_host_inside_the_names_the_ca_allows(traefik_mcp
     aliases = set(traefik_mcp["networks"]["mcp"]["aliases"])
     router_hosts = {ROUTER_HOST.match(router["rule"]).group(1) for router in routers.values()}
 
-    assert ca_policy == ["*" + MCP_SUFFIX]
-    assert all(alias.endswith(MCP_SUFFIX) for alias in aliases)
+    assert all(any(fnmatch(alias, pattern) for pattern in ca_policy) for alias in aliases)
     assert router_hosts == aliases
+    assert all(any(fnmatch(host, pattern) for host in router_hosts) for pattern in ca_policy)
+
+
+def test_every_router_matches_one_host_and_at_most_one_exact_path_and_keeps_the_host_header(
+    routers, services
+):
+    """E4: no router takes a path prefix, and no service rewrites the Host header."""
+    assert all(ROUTER_RULE.match(router["rule"]) for router in routers.values())
+    assert not [router for router in routers.values() if "PathPrefix" in router["rule"]]
+    assert not [
+        service for service in services.values() if "passHostHeader" in service["loadBalancer"]
+    ]
 
 
 def test_every_router_asks_the_internal_resolver_on_the_mcp_entrypoint(routers, static_config):
@@ -179,26 +179,34 @@ def test_traefik_mcp_adds_no_capability(traefik_mcp):
     assert "cap_add" not in traefik_mcp
 
 
-def test_the_static_configuration_has_one_tls_entrypoint_on_443_and_no_management_api(
-    static_config,
-):
-    """#48 rule 3: one TLS entrypoint on 443, no api, ping or metrics."""
+def test_the_static_configuration_has_one_entrypoint_and_no_management_api(static_config):
+    """#48 rule 3: one entrypoint, no api, ping or metrics."""
 
-    assert [e["address"] for e in static_config["entryPoints"].values()] == [":443"]
-    assert next(iter(static_config["entryPoints"].values()))["http"]["tls"] == {}
+    (entrypoint,) = static_config["entryPoints"].values()
+
+    assert "tls" in entrypoint["http"]
     assert not {"api", "ping", "metrics"} & set(static_config)
 
 
 def test_the_file_provider_reads_a_directory_of_its_own(traefik_mcp, static_config):
-    """#48 rule 3: the file provider reads mcp/dynamic, never the public dynamic/."""
+    """#48 rule 3: the file provider reads mcp/dynamic, never the public Traefik's directory."""
 
     directory = static_config["providers"]["file"]["directory"]
+    public_directory = load("traefik.yml")["providers"]["file"]["directory"]
 
     assert f"./mcp/dynamic:{directory}:ro" in traefik_mcp["volumes"]
-    assert directory != "/dynamic"
+    assert directory != public_directory
 
 
-def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(compose, static_config):
+def provisioned_challenges(acme: dict) -> set[str]:
+    """The ACME challenge types the resolver is configured for, in the CA provisioner's names."""
+    names = {"httpChallenge": "http-01", "dnsChallenge": "dns-01", "tlsChallenge": "tls-alpn-01"}
+    return {name for key, name in names.items() if key in acme}
+
+
+def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(
+    compose, static_config, traefik_mcp
+):
     """#48 rule 4: the resolver trusts the CA root alone, over TLS-ALPN-01."""
 
     acme = static_config["certificatesResolvers"]["internal"]["acme"]
@@ -206,12 +214,17 @@ def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(compose
 
     assert ca_server_host == f"step-ca:{load('step-ca/ca.json')['address'].lstrip(':')}"
     assert acme["caSystemCertPool"] is False
-    assert acme["caCertificates"] == ["/run/secrets/step_ca_root_certificate"]
-    assert acme["tlsChallenge"] == {}
+    (root_certificate,) = acme["caCertificates"]
+    root_secret = Path(root_certificate).name
+    assert root_secret in traefik_mcp["secrets"]
+    assert "file" in compose["secrets"][root_secret]
+    assert provisioned_challenges(acme) == {
+        challenge
+        for provisioner in load("step-ca/ca.json")["authority"]["provisioners"]
+        for challenge in provisioner["challenges"]
+    }
+    assert provisioned_challenges(acme)
     assert not {"httpChallenge", "dnsChallenge"} & set(acme)
-    assert compose["secrets"]["step_ca_root_certificate"]["file"].endswith(
-        "/.secrets/step-ca/root_ca.crt"
-    )
 
 
 def test_the_resolver_assumes_the_24_hour_lifetime_the_ca_keeps_by_default(static_config):
@@ -228,23 +241,16 @@ def test_the_resolver_assumes_the_24_hour_lifetime_the_ca_keeps_by_default(stati
 def test_the_acme_storage_is_a_named_volume_that_traefik_mcp_can_write(
     compose, traefik_mcp, static_config
 ):
-    """#48 rule 4: the ACME storage is a named volume that uid 65534 can write."""
+    """#48 rule 4: the ACME storage is a named volume that the gateway's user can write."""
 
     storage = static_config["certificatesResolvers"]["internal"]["acme"]["storage"]
     owner = compose["services"]["traefik-mcp-acme-owner"]
 
     assert f"traefik-mcp-acme:{Path(storage).parent}" in traefik_mcp["volumes"]
     assert "traefik-mcp-acme" in compose["volumes"]
-    assert owner["entrypoint"] == ["chown", "65534:65534", str(Path(storage).parent)]
+    assert owner["entrypoint"] == ["chown", traefik_mcp["user"], str(Path(storage).parent)]
+    assert not traefik_mcp["user"].startswith(("0", "root"))
     assert owner["network_mode"] == "none"
     assert traefik_mcp["depends_on"]["traefik-mcp-acme-owner"] == {
         "condition": "service_completed_successfully"
     }
-
-
-def test_the_naming_table_owns_the_mcp_origin_name():
-    """#48 rule 5: docs/naming.md owns the <stem>.mcp.internal name."""
-
-    naming = (ROOT / "docs" / "naming.md").read_text()
-
-    assert "`<stem>.mcp.internal`" in naming

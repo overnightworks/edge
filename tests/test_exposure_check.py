@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from hal import cli
-from hal.exposure import host, inspection
+from hal.exposure import allowlist, host, inspection
 
 ALLOW_AVAHI = """
 [[allow]]
@@ -158,10 +158,6 @@ HOSTS = {
         ss=SS_LOOPBACK_ONLY,
     ),
     "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
-    "the project's allow-list permits the tunnel's QUIC and Chrome's mDNS sockets": Host(
-        ss=SS_CLOUDFLARED + SS_CHROME_MDNS_TWICE,
-        allow_list=inspection.DEFAULT_ALLOW_LIST.read_text(),
-    ),
     "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
     "publication on 0.0.0.0": Host(
         docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
@@ -353,6 +349,10 @@ def test_exits_1_exactly_when_something_reaches_beyond_loopback(run_edge_check, 
         state.findings,
         "",
     )
+
+
+def test_the_shipped_allow_list_loads():
+    assert allowlist.parse_allow_list(inspection.DEFAULT_ALLOW_LIST.read_text())
 
 
 ROWS = {

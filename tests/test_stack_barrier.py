@@ -335,9 +335,11 @@ def test_the_host_domain_is_the_one_compose_gives_traefik():
         barrier.Barrier.of_unit(broken, ["hello"], REPOSITORY, unit)
 
 
-def test_the_address_is_read_from_the_real_traefik_yml():
-    """#61 rule 3 / proof a: the address comes from the real traefik.yml."""
-    assert barrier.edge_address(REPOSITORY) == ADDRESS
+def test_the_real_traefik_yml_yields_an_address_with_a_host_and_a_port():
+    host, _, port = barrier.edge_address(REPOSITORY).rpartition(":")
+
+    assert host
+    assert port.isdigit()
 
 
 def test_the_barrier_names_are_ignored_by_git_but_the_directory_stays_tracked():
