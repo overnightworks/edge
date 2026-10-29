@@ -23,8 +23,6 @@ from hal.stack.realm.reconcile import RealmAction, RealmPlan, RealmRestart
 REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
 ATTRIBUTE = "de.adorsys.keycloak.config.import-checksum-default"
-
-
 GROUP = observe.GROUP.name
 
 
@@ -53,7 +51,6 @@ class World:
 
     root: Path
     events: list[str] = field(default_factory=list)
-    definition: str = "definition one"
     checksum: str = "checksum one"
     config_cli_running: bool = False
     failing: set[str] = field(default_factory=set)
@@ -84,9 +81,6 @@ class World:
         return {"services": {reconcile.CONFIG_CLI: {"volumes": binds}}}
 
     # the fakes ---------------------------------------------------------------------------------
-
-    def config_hashes(self, services: tuple[str, ...]) -> dict[str, str]:
-        return {service: self.definition for service in services}
 
     def states(self) -> dict[str, set[str]]:
         return {reconcile.CONFIG_CLI: {"running"}} if self.config_cli_running else {}
@@ -129,7 +123,7 @@ class World:
     def plan(
         self, gate: core.Gate | None = core.Gate.ON, restart: RealmRestart | None = None
     ) -> RealmPlan:
-        return reconcile.plan_realm(self, self, self.record, self.config, self.root, gate, restart)
+        return reconcile.plan_realm(self, self.record, self.config, self.root, gate, restart)
 
     def run(self, plan: RealmPlan, mark: switches.Mark | None = None) -> reconcile.StepResult:
         realm = reconcile.Realm(
@@ -168,11 +162,20 @@ def world(tmp_path: Path) -> World:
 # --- When the step runs ------------------------------------------------------------------------
 
 
-def test_nothing_changed_since_the_last_apply_plans_no_step_and_no_line(world: World) -> None:
-    """Cells 1 and 4: a second apply right after the first does nothing, quietly."""
+@pytest.mark.parametrize(
+    ("moved", "gate"),
+    [(False, core.Gate.ON), (True, core.Gate.ON), (False, core.Gate.OFF)],
+    ids=["same checkout root", "another root", "keycloak off"],
+)
+def test_nothing_changed_since_the_last_apply_plans_no_step_and_no_line(
+    world: World, tmp_path: Path, moved: bool, gate: core.Gate
+) -> None:
+    """Cells 1 and 4: a second apply does nothing, wherever it is checked out."""
     assert world.applied_once().failure is None
-
-    plan = world.plan()
+    if moved:
+        record, world = world.record, World(tmp_path / "moved")
+        world.record = record
+    plan = world.plan(gate)
 
     assert (plan.action, plan.settled) == (RealmAction.NOTHING, True)
 
@@ -200,15 +203,11 @@ def test_no_recorded_apply_plans_the_step(world: World) -> None:
             "keycloak/entrypoint.sh changed",
         ),
         (
-            lambda world: setattr(world, "definition", "definition two"),
-            "config-cli's definition changed",
-        ),
-        (
             lambda world: setattr(world, "checksum", "restored from an older snapshot"),
             "Keycloak's import checksum is not the recorded one",
         ),
     ],
-    ids=["realm file", "master file", "entrypoint", "config-cli definition", "database restored"],
+    ids=["realm file", "master file", "entrypoint", "database restored"],
 )
 def test_each_input_that_changed_plans_the_step_and_names_it(
     world: World, change: Callable[[World], None], why: str
@@ -245,12 +244,6 @@ def test_a_changed_file_while_keycloak_is_off_is_one_line_and_reads_nothing(
     assert plan.settled
     assert (plan.why, plan.gate) == ("no realm apply is recorded", gate)
     assert world.events == []
-
-
-def test_unchanged_files_while_keycloak_is_off_say_nothing(world: World) -> None:
-    world.applied_once()
-
-    assert world.plan(core.Gate.OFF).action is RealmAction.NOTHING
 
 
 def test_keycloak_starting_in_this_run_is_not_checked_and_one_line_says_so(world: World) -> None:
@@ -586,17 +579,23 @@ def test_the_entry_of_a_finished_step_survives_a_json_round_trip(world: World) -
 # --- What the step leaves alone, and what it says when a part breaks ---------------------------
 
 
-def test_a_settled_plan_makes_no_backup_no_config_cli_and_leaves_the_record_bytes_unchanged(
-    world: World,
-) -> None:
+@pytest.mark.parametrize("old_hash", [False, True], ids=["after an apply", "after Compose's hash"])
+def test_a_settled_plan_runs_nothing_and_keeps_the_record(world: World, old_hash: bool) -> None:
+    """An old hash plans RUN; the successful apply replaces it, so the next plan is quiet."""
     world.applied_once()
+    if old_hash:
+        name = reconcile.CONFIG_CLI
+        old = world.record.read().entries[name] | {reconcile.DEFINITION_KEY: "Compose's hash"}
+        world.record.write(name, old, {name})
+        plan = world.plan()
+        assert (plan.action, plan.why) == (RealmAction.RUN, "config-cli's definition changed")
+        assert world.run(plan).failure is None
     recorded = world.record.path.read_bytes()
     plan = world.plan()
     world.events.clear()
-
     result = world.run(plan)
 
-    assert (result, world.events) == (reconcile.StepResult(), [])
+    assert (plan.action, result, world.events) == (RealmAction.NOTHING, reconcile.StepResult(), [])
     assert world.record.path.read_bytes() == recorded
 
 
