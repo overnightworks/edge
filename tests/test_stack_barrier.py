@@ -679,7 +679,8 @@ class TickingClock:
 
 
 def barely_buffered(address: tuple[str, int], seconds: float) -> socket.socket:
-    """Connect with the smallest receive buffer, so a read never returns more than a few KB."""
+    """Connect with the smallest receive buffer, so a read never returns more than a few KB and
+    the deadline, not the parser's line limit, ends the read."""
     opened = socket.socket()
     opened.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1)
     opened.settimeout(seconds)
@@ -689,12 +690,9 @@ def barely_buffered(address: tuple[str, int], seconds: float) -> socket.socket:
 
 def flood(head: bytes) -> Script:
     """Send `head`, then bytes for as long as the client takes them; the send blocks while the
-    client does not read and fails once the client has closed. The send buffer is the smallest, so
-    the bytes in flight stay far below the parser's line limit however far the sender runs ahead:
-    the clock's deadline, not a parser limit, is what ends the read."""
+    client does not read and fails once the client has closed."""
 
     def script(connection: socket.socket, ended: threading.Event) -> None:
-        connection.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1)
         connection.recv(4096)
         try:
             connection.sendall(head)
