@@ -1,8 +1,0 @@
-claim_id = "a413a6adddfa47018eaddbc24c6fe3f6"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "cfd86efb90932f67d128bab79df2aa16e1861761"
-branch = "claude/issue-691-s3a-of-661-the-realm-record-stops-naming"
-scope = ["docs/architecture.md", "docs/keycloak.md", "probe/keycloak/probe.py", "quality/baseline.toml", "src/hal/stack/apply.py", "src/hal/stack/core.py", "src/hal/stack/realm/reconcile.py", "tests/test_realm_definition.py", "tests/test_realm_reconcile.py", "tests/test_stack_apply.py"]
-opened_commit = "ae79912a3c6208da89da6954c0bf04dc6b1060f9"
-whole_reason = "The digest's one writer and reader live in reconcile.py, its two callers in apply.py and the Keycloak probe follow the signature, and its two test modules, two docs and core.py's docstring state it; splitting leaves a caller or a doc on the old hash."
