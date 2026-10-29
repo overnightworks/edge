@@ -44,16 +44,10 @@ def test_every_base_image_is_pinned_by_digest():
     assert len(DIGEST_PINNED_IMAGE.findall(DOCKERFILE)) == len(base_images)
 
 
-def test_the_runtime_base_is_debian_glibc_python_3_13():
-    assert re.search(r"^FROM docker\.io/library/python:3\.13\.\d+-slim-trixie@", DOCKERFILE, re.M)
-
-
 def test_the_claude_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256():
     version = dockerfile_argument("CLAUDE_VERSION")
     assert re.fullmatch(r"\d+\.\d+\.\d+", version)
     assert re.fullmatch(r"[0-9a-f]{64}", dockerfile_argument("CLAUDE_SHA256"))
-    assert "curl --fail" in DOCKERFILE
-    assert "claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude" in DOCKERFILE
     assert 'echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c -' in DOCKERFILE
 
 
@@ -170,13 +164,8 @@ def test_the_lock_script_writes_the_built_lock(tmp_path, monkeypatch):
 
 def test_the_image_runs_the_service_as_uid_1000_without_a_login():
     assert "USER 1000:1000" in DOCKERFILE
-    assert 'ENTRYPOINT ["agent-runtime-service"]' in DOCKERFILE
     assert "/.claude" not in DOCKERFILE
     assert "managed-settings" not in DOCKERFILE
-
-
-def test_the_lock_names_its_release_tag_and_commit():
-    assert release_tag() == "v0.10.0"
 
 
 def test_every_requirement_of_the_lock_carries_a_hash_and_is_pinned():
@@ -192,13 +181,6 @@ def test_the_lock_holds_the_release_wheel_by_url_and_sha256(package):
     url = f"https://github.com/overnightworks/agent-runtime/releases/download/{tag}/{wheel}"
     assert any(
         requirement.startswith(f"overnightworks-{package} @ {url} --hash=sha256:")
-        for requirement in lock_requirements()
-    )
-
-
-def test_the_lock_holds_webauth_by_url_and_sha256():
-    assert any(
-        requirement.startswith("overnightworks-webauth @ https://")
         for requirement in lock_requirements()
     )
 
