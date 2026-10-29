@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "1f275118a6fe9e48ade3f7b69328cc3b94f45b01"
 branch = "claude/issue-655-path-link"
-scope = ["README.md", "docs/design/hal-output.html", "docs/home.md", "docs/naming.md", "src/hal/setup_commands.py", "src/hal/workstation/path_link.py", "src/hal/workstation/ports.py", "src/hal/workstation/setup.py", "tests/conftest.py", "tests/test_workstation_path_link.py", "tests/test_workstation_setup.py", "tests/test_workstation_setup_yes.py"]
+scope = ["README.md", "docs/design/hal-output.html", "docs/home.md", "docs/naming.md", "docs/stack.md", "src/hal/setup_commands.py", "src/hal/workstation/path_link.py", "src/hal/workstation/ports.py", "src/hal/workstation/setup.py", "tests/conftest.py", "tests/test_workstation_path_link.py", "tests/test_workstation_setup.py", "tests/test_workstation_setup_yes.py"]
 opened_commit = "8739abb1f5559880a8fc02976970b958160aa73d"
 whole_reason = "The row, its step, the Ports seam and the sandbox fixture are one behaviour: the five-row change alters every setup verdict count, so the production edit, the tests that pin the counts and the docs and picture that show the rows land in one commit."
