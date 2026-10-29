@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "90c952879424bd2ad2b3dba0e0e7b211e284cbdf"
 branch = "claude/issue-697-s1-of-472-ruff-accepts-reasoned-s-and-t2"
-scope = ["docs/home.md", "pyproject.toml", "sonar-project.properties", "uv.lock"]
+scope = ["docs/home.md", "keycloak/secret-check/secret_check.py", "keycloak/secret-check/secret_check.py.lock", "pyproject.toml", "sonar-project.properties", "uv.lock"]
 opened_commit = "c916d2dd13f3a19220e0d761ea8b3206b8ae5f98"
 whole_reason = "One fact, the Python floor, pinned in four files that must agree, plus the ruff external line; splitting would land disagreeing pins."
