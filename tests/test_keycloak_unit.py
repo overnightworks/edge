@@ -225,7 +225,7 @@ def test_no_tracked_theme_stylesheet_carries_a_font_face_or_a_family_token():
     ).stdout.split()
     stylesheets = [REPOSITORY / name for name in tracked if name.endswith(".css")]
     family_token = re.compile(
-        r"(?<![\w-])--(?:h-)?(?:bg|bg-deep|surface|surface-hover|border|text|text-muted|card-bg|glow-primary|header-bg|font-display|font-body)\s*:"
+        r"(?<![\w-])--(?:h-)?(?:bg|bg-deep|surface|surface-hover|border|text|text-muted|card-bg|header-bg|font-display|font-body)\s*:"
     )
 
     assert stylesheets

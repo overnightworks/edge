@@ -3,15 +3,33 @@
    docs/design/keycloak-theme.html is the picture. */
 
 :root {
-  color-scheme: dark;
-  --primary: #ff3220;
-  --accent: #a020f0;
+  --primary: #d41a0a;
+  --accent: #7a18c0;
   --on-accent: #ffffff;
+  --grid-line: rgba(212, 26, 10, 0.04);
   --h-bad: #ff4444;
   --h-action: var(--accent);
 }
 
-/* PatternFly's dark palette, re-pointed at the hallucinai tokens. */
+/* The dark values follow appkit's mechanism: the device, unless data-theme forces a look. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --primary: #ff3220;
+    --accent: #b45cf5;
+    --on-accent: #111111;
+    --grid-line: rgba(255, 50, 32, 0.04);
+  }
+}
+
+:root[data-theme="dark"] {
+  --primary: #ff3220;
+  --accent: #b45cf5;
+  --on-accent: #111111;
+  --grid-line: rgba(255, 50, 32, 0.04);
+}
+
+/* PatternFly's palette, light and dark, re-pointed at the hallucinai tokens. */
+:root,
 :root.pf-v5-theme-dark {
   --pf-v5-global--BackgroundColor--100: var(--bg);
   --pf-v5-global--BackgroundColor--150: var(--surface);
@@ -49,6 +67,7 @@ body {
 
 /* ---------- masthead: the wordmark replaces the Keycloak logo ---------- */
 
+:root .pf-v5-c-masthead,
 :root.pf-v5-theme-dark .pf-v5-c-masthead {
   --pf-v5-c-masthead--BackgroundColor: var(--header-bg);
   --pf-v5-c-masthead--c-toolbar--BackgroundColor: var(--header-bg);

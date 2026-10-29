@@ -1,7 +1,8 @@
 <!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Rechtsseiten Bild</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&family=Open+Sans:wght@400;600&display=swap">
 <style>
-:root{color-scheme:dark;--bg:#0b0b0e;--ink:#e6e6e6;--soft:#9a9aa3;--line:#2a2a31}
+:root{color-scheme:light dark;--bg:#f4f4f6;--ink:#1a1a1e;--soft:#555;--line:#d0d0d4}
+@media (prefers-color-scheme:dark){:root{--bg:#0b0b0e;--ink:#e6e6e6;--soft:#9a9aa3;--line:#2a2a31}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 'Open Sans',Arial,sans-serif}
 .sheet{max-width:1900px;margin:0 auto;padding:28px 16px 80px}
 h1{font:700 26px 'Oswald',sans-serif;margin:0 0 6px}
@@ -17,7 +18,7 @@ figcaption span{margin-left:10px;color:#666}
 iframe{display:block;border:0;max-width:none}
 </style></head><body><div class="sheet">
 <div class="top"><h1>Die drei Rechtsseiten (edge#110)</h1>
-<p>Das gesegnete Bild der öffentlichen Seiten ohne Anmeldung: <code>/impressum</code>, <code>/datenschutz</code>, <code>/nutzungsbedingungen</code>. Aussehen wie hallucinai.de und die Keycloak-Anmeldung (immer dunkel, Wortmarke, Oswald und Open Sans, Raster und Glühen). Jede Seite je einmal bei 390 px und bei 1440 px; die Rahmen scrollen.</p>
+<p>Das gesegnete Bild der öffentlichen Seiten ohne Anmeldung: <code>/impressum</code>, <code>/datenschutz</code>, <code>/nutzungsbedingungen</code>. Aussehen wie hallucinai.de und die Keycloak-Anmeldung (hell und dunkel, wie das Gerät, Wortmarke, Oswald und Open Sans, Raster und Glühen). Jede Seite je einmal bei 390 px und bei 1440 px; die Rahmen scrollen.</p>
 <p>Die Abschnitte von songmaker sind seine Texte (<code>LegalContent.svelte</code>, Stand 21.10.2026), Wort für Wort; der gemeinsame Teil der Datenschutzerklärung ist neu geprüft. Gebaut ist es in <code>legal/</code>.</p></div>
 <section class="spec" id="impressum">
 <header><h2>hallucinai.de/impressum</h2>
@@ -28,18 +29,19 @@ iframe{display:block;border:0;max-width:none}
 &lt;meta charset=&quot;utf-8&quot;&gt;
 &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
 &lt;title&gt;Impressum – HALLUCINAI&lt;/title&gt;
-&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
---border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
---display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:light;--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--bg-deep:#e8e8ec;--bg:#f4f4f6;--surface:#fff;--border:#d0d0d4;--text:#1a1a1e;--muted:#555;--card:rgba(255,255,255,.9);--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme=&quot;dark&quot;]{color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}
+:root{--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
 body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -72,7 +74,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app&gt;h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
@@ -120,18 +122,19 @@ h1{font-size:34px}
 &lt;meta charset=&quot;utf-8&quot;&gt;
 &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
 &lt;title&gt;Impressum – HALLUCINAI&lt;/title&gt;
-&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
---border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
---display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:light;--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--bg-deep:#e8e8ec;--bg:#f4f4f6;--surface:#fff;--border:#d0d0d4;--text:#1a1a1e;--muted:#555;--card:rgba(255,255,255,.9);--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme=&quot;dark&quot;]{color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}
+:root{--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
 body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -164,7 +167,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app&gt;h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
@@ -216,18 +219,19 @@ h1{font-size:34px}
 &lt;meta charset=&quot;utf-8&quot;&gt;
 &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
 &lt;title&gt;Datenschutzerklärung – HALLUCINAI&lt;/title&gt;
-&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
---border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
---display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:light;--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--bg-deep:#e8e8ec;--bg:#f4f4f6;--surface:#fff;--border:#d0d0d4;--text:#1a1a1e;--muted:#555;--card:rgba(255,255,255,.9);--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme=&quot;dark&quot;]{color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}
+:root{--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
 body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -260,7 +264,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app&gt;h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
@@ -352,18 +356,19 @@ h1{font-size:34px}
 &lt;meta charset=&quot;utf-8&quot;&gt;
 &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
 &lt;title&gt;Datenschutzerklärung – HALLUCINAI&lt;/title&gt;
-&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
---border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
---display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:light;--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--bg-deep:#e8e8ec;--bg:#f4f4f6;--surface:#fff;--border:#d0d0d4;--text:#1a1a1e;--muted:#555;--card:rgba(255,255,255,.9);--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme=&quot;dark&quot;]{color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}
+:root{--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
 body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -396,7 +401,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app&gt;h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
@@ -492,18 +497,19 @@ h1{font-size:34px}
 &lt;meta charset=&quot;utf-8&quot;&gt;
 &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
 &lt;title&gt;Nutzungsbedingungen – HALLUCINAI&lt;/title&gt;
-&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
---border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
---display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:light;--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--bg-deep:#e8e8ec;--bg:#f4f4f6;--surface:#fff;--border:#d0d0d4;--text:#1a1a1e;--muted:#555;--card:rgba(255,255,255,.9);--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme=&quot;dark&quot;]{color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}
+:root{--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
 body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -536,7 +542,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app&gt;h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
@@ -595,18 +601,19 @@ h1{font-size:34px}
 &lt;meta charset=&quot;utf-8&quot;&gt;
 &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;
 &lt;title&gt;Nutzungsbedingungen – HALLUCINAI&lt;/title&gt;
-&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;
---border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--glow:rgba(255,50,32,.03);
---display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
+&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.googleapis.com&quot;&gt;&lt;link rel=&quot;preconnect&quot; href=&quot;https://fonts.gstatic.com&quot; crossorigin&gt;&lt;link rel=&quot;stylesheet&quot; href=&quot;https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;family=Open+Sans:wght@400;600&amp;display=swap&quot;&gt;&lt;style&gt;:root{color-scheme:light;--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--bg-deep:#e8e8ec;--bg:#f4f4f6;--surface:#fff;--border:#d0d0d4;--text:#1a1a1e;--muted:#555;--card:rgba(255,255,255,.9);--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme=&quot;dark&quot;]{color-scheme:dark;--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--bg-deep:#050508;--bg:#0d0d0d;--surface:#111;--border:#333;--text:#e0e0e0;--muted:#888;--card:rgba(13,13,13,.85);--grid-line:rgba(255,50,32,.04)}
+:root{--display:&#x27;Oswald&#x27;,Impact,sans-serif;--body:&#x27;Open Sans&#x27;,Arial,sans-serif}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--body);position:relative;overflow-x:hidden}
 body::before{content:&quot;&quot;;position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow) 1px,transparent 1px),linear-gradient(90deg,var(--glow) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:&quot;&quot;;position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -639,7 +646,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app&gt;h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--display);text-transform:uppercase;letter-spacing:.5px}
