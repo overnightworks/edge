@@ -187,12 +187,6 @@ def test_no_recorded_apply_plans_the_step(world: World) -> None:
     assert plan.why == "no realm apply is recorded"
 
 
-def record_old_definition(world: World) -> None:
-    entry = world.record.read().entries[reconcile.CONFIG_CLI]
-    entry[reconcile.DEFINITION_KEY] = "a hash Compose computed"
-    world.record.write(reconcile.CONFIG_CLI, entry, {reconcile.CONFIG_CLI})
-
-
 @pytest.mark.parametrize(
     ("change", "why"),
     [
@@ -208,13 +202,12 @@ def record_old_definition(world: World) -> None:
             lambda world: world.write_file("entrypoint.sh", "#!/bin/sh\nexit 1\n"),
             "keycloak/entrypoint.sh changed",
         ),
-        (record_old_definition, "config-cli's definition changed"),
         (
             lambda world: setattr(world, "checksum", "restored from an older snapshot"),
             "Keycloak's import checksum is not the recorded one",
         ),
     ],
-    ids=["realm file", "master file", "entrypoint", "old definition hash", "database restored"],
+    ids=["realm file", "master file", "entrypoint", "database restored"],
 )
 def test_each_input_that_changed_plans_the_step_and_names_it(
     world: World, change: Callable[[World], None], why: str
@@ -586,17 +579,23 @@ def test_the_entry_of_a_finished_step_survives_a_json_round_trip(world: World) -
 # --- What the step leaves alone, and what it says when a part breaks ---------------------------
 
 
-def test_a_settled_plan_makes_no_backup_no_config_cli_and_leaves_the_record_bytes_unchanged(
-    world: World,
-) -> None:
+@pytest.mark.parametrize("old_hash", [False, True], ids=["after an apply", "after Compose's hash"])
+def test_a_settled_plan_runs_nothing_and_keeps_the_record(world: World, old_hash: bool) -> None:
+    """An old hash plans RUN; the successful apply replaces it, so the next plan is quiet."""
     world.applied_once()
+    if old_hash:
+        name = reconcile.CONFIG_CLI
+        old = world.record.read().entries[name] | {reconcile.DEFINITION_KEY: "Compose's hash"}
+        world.record.write(name, old, {name})
+        plan = world.plan()
+        assert (plan.action, plan.why) == (RealmAction.RUN, "config-cli's definition changed")
+        assert world.run(plan).failure is None
     recorded = world.record.path.read_bytes()
     plan = world.plan()
     world.events.clear()
-
     result = world.run(plan)
 
-    assert (result, world.events) == (reconcile.StepResult(), [])
+    assert (plan.action, result, world.events) == (RealmAction.NOTHING, reconcile.StepResult(), [])
     assert world.record.path.read_bytes() == recorded
 
 
