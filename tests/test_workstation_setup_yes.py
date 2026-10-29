@@ -11,7 +11,8 @@ import pytest
 from workstation_support import Sandbox, run_hal_setup, split_at_the_prompt
 
 from hal.grammar import ExitCode
-from hal.workstation.system_step import AGENT_USER
+from hal.workstation.path_link import PathLink
+from hal.workstation.system_step import AGENT_USER, Applied
 
 PROMPT = "Type yes to set up 2 open rows: "
 SUDO_ANNOUNCEMENT = "  › system          needs sudo     tunnel, polkit, journal, mail, agent account"
@@ -79,6 +80,23 @@ def test_a_foreign_entry_at_the_link_fails_the_plan_before_any_change_and_the_la
     assert "Type yes" not in out
     assert entry.read_text() == "my own\n"
     assert nothing_was_done(sandbox)
+
+
+def test_a_path_failure_after_the_yes_does_not_claim_nothing_changed_because_the_commit_hook_was_installed(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#655 L1: `nothing changed` belongs to a refusal before any change; after the yes the hook row already changed."""
+    checkout = a_checkout_under(sandbox.home)
+    def unwritable_directory(self: PathLink) -> Applied:
+        raise PermissionError(13, "Permission denied", str(self.entry.parent))
+
+    monkeypatch.setattr(PathLink, "apply", unwritable_directory)
+
+    code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+
+    assert code == ExitCode.FAILURE
+    assert split_at_the_prompt(out)[1][0] == "  ✓ commit hook     changed"
+    assert err.splitlines()[0] == "error: setup stopped at path"
 
 
 def test_setup_prints_the_plan_asks_the_yes_and_then_runs_with_one_sudo_after_it(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
