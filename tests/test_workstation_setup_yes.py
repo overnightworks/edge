@@ -39,7 +39,7 @@ def run_at_the_prompt(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *fla
 
 
 def a_checkout_under(home: Path) -> Path:
-    root = home / "git" / "hal"
+    root = home / "git" / "edge"
     (root / "bin").mkdir(parents=True)
     (root / "bin" / "hal").write_text("#!/bin/sh\n")
     return root
@@ -49,30 +49,30 @@ def test_the_path_row_plans_the_link_changes_nothing_before_the_yes_and_creates_
     """#655 L1, L2: the plan names the link, the yes creates it, and the second run is `unchanged` and asks nothing for it."""
     checkout = a_checkout_under(sandbox.home)
     entry = sandbox.home / ".local" / "bin" / "hal"
-    planned_only = run_at_the_prompt(sandbox, capsys, "--dry-run", checkout=checkout)
+    planned_only = run_at_the_prompt(sandbox, capsys, "--dry-run")
     assert not entry.is_symlink()
 
-    code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+    code, out, err = run_at_the_prompt(sandbox, capsys)
     plan, run = split_at_the_prompt(out)
 
     assert (code, err) == (ExitCode.OK, "")
-    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/hal/bin/hal" in planned_only[1].splitlines()
-    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/hal/bin/hal" in plan
+    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/edge/bin/hal" in planned_only[1].splitlines()
+    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/edge/bin/hal" in plan
     assert "  ✓ path            changed" in run
     assert entry.readlink() == checkout / "bin" / "hal"
 
-    again = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+    again = run_at_the_prompt(sandbox, capsys)
     assert "  · path            unchanged" in again[1].splitlines()
 
 
 def test_a_foreign_entry_at_the_link_fails_the_plan_before_any_change_and_the_later_rows_are_not_run(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     """#655 L1: a file of the person's own is named, never replaced; no question is asked and nothing runs."""
-    checkout = a_checkout_under(sandbox.home)
+    a_checkout_under(sandbox.home)
     entry = sandbox.home / ".local" / "bin" / "hal"
     entry.parent.mkdir(parents=True)
     entry.write_text("my own\n")
 
-    code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+    code, out, err = run_at_the_prompt(sandbox, capsys)
 
     assert (code, err.splitlines()[0]) == (ExitCode.FAILURE, "error: setup stopped at path · nothing changed")
     assert "  ✗ path            failed         ~/.local/bin/hal is not a hal link · move or delete it, then rerun" in out.splitlines()
@@ -86,13 +86,14 @@ def test_a_path_failure_after_the_yes_does_not_claim_nothing_changed_because_the
     sandbox: Sandbox, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#655 L1: `nothing changed` belongs to a refusal before any change; after the yes the hook row already changed."""
-    checkout = a_checkout_under(sandbox.home)
+    a_checkout_under(sandbox.home)
+
     def unwritable_directory(self: PathLink) -> Applied:
         raise PermissionError(13, "Permission denied", str(self.entry.parent))
 
     monkeypatch.setattr(PathLink, "apply", unwritable_directory)
 
-    code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+    code, out, err = run_at_the_prompt(sandbox, capsys)
 
     assert code == ExitCode.FAILURE
     assert split_at_the_prompt(out)[1][0] == "  ✓ commit hook     changed"
