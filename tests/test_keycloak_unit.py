@@ -13,6 +13,7 @@ import pytest
 import yaml
 
 from hal.stack import appkit_step, catalog, compose, unit_plans
+from hal.stack.realm import reconcile
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 KEYCLOAK_SERVICES = ("keycloak-db", "keycloak")
@@ -486,20 +487,20 @@ def backchannel_cell(monkeypatch):
         ),
         pytest.param(
             "hopin",
-            {"backchannel.logout.session.required": "true"},
+            {"backchannel.logout.session.required": "differs"},
             {"backchannel.logout.session.required"},
             id="hopin session required",
         ),
         pytest.param(
             "hopin",
-            {"use.refresh.tokens": "false"},
+            {"use.refresh.tokens": "differs"},
             {"use.refresh.tokens"},
             id="hopin refresh tokens",
         ),
         pytest.param("songmaker", {}, set(), id="songmaker as ruled"),
         pytest.param(
             "songmaker",
-            {"use.refresh.tokens": "false"},
+            {"use.refresh.tokens": "differs"},
             {"use.refresh.tokens"},
             id="songmaker with the refresh line",
         ),
@@ -514,7 +515,7 @@ def backchannel_cell(monkeypatch):
         ),
         pytest.param(
             "presentator",
-            {"use.refresh.tokens": "false"},
+            {"use.refresh.tokens": "differs"},
             {"use.refresh.tokens"},
             id="presentator with the refresh line",
         ),
@@ -527,6 +528,10 @@ def test_wrong_logout_settings_names_what_differs_from_the_ruling(
     attributes = backchannel_cell.ruled_settings(client_id) | changes
 
     assert set(backchannel_cell.wrong_logout_settings(client_id, attributes)) == wrong
+
+
+def test_the_config_cli_the_reconcile_follows_is_a_compose_service():
+    assert reconcile.CONFIG_CLI in compose_document()["services"]
 
 
 def test_wrong_logout_settings_names_every_ruled_setting_a_client_lacks(backchannel_cell):
