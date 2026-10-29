@@ -34,6 +34,25 @@ def test_the_image_is_pinned_by_digest(legal):
     assert "@sha256:" in legal["image"]
 
 
+def test_the_unit_does_not_run_as_root_and_listens_on_the_port_traefik_routes_to(legal):
+    listen = re.search(
+        r"^\s*listen\s+(\d+);", (ROOT / "legal/nginx/default.conf").read_text(), re.M
+    )
+    port = legal["labels"]["traefik.http.services.legal.loadbalancer.server.port"]
+
+    assert legal["image"].split(":")[0] == "nginxinc/nginx-unprivileged"
+    assert str(legal.get("user", "nonroot")).split(":")[0] not in {"0", "root"}
+    assert int(listen.group(1)) > 1023
+    assert listen.group(1) == port
+
+
+def test_the_router_serves_the_edge_entrypoint_by_a_host_rule(legal):
+    labels = legal["labels"]
+
+    assert labels["traefik.http.routers.legal.entrypoints"]
+    assert labels["traefik.http.routers.legal.rule"].startswith("Host(")
+
+
 def test_the_unit_has_no_route_out_and_no_published_port(document, legal):
     assert legal["networks"] == ["legal"]
     assert document["networks"]["legal"] == {"internal": True}

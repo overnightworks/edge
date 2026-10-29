@@ -378,7 +378,6 @@ def test_a_home_where_neither_unit_is_set_up_has_no_finding_about_their_files(tm
     (home / ".secrets").mkdir(parents=True, mode=0o700)
 
     run_hal_secrets(home, probe, now=NOW)
-
     subjects = finding_subjects(capsys.readouterr().out)
     assert not {subject for subject in subjects if subject.startswith(("step-ca/", "keycloak/", "~/.secrets/step-ca", "~/.secrets/keycloak"))}
 
@@ -550,7 +549,6 @@ def test_a_folder_on_the_way_that_cannot_hold_a_secret_is_a_finding_with_its_fix
 
 def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_home: Path, probe: FakeProbe, capsys) -> None:
     code = run_hal_secrets(clean_home, probe, "--by-service", now=NOW)
-
     output = capsys.readouterr().out
     assert code == 0
     assert output.splitlines()[0] == "# hal secrets --by-service | declared dependencies"
@@ -558,6 +556,12 @@ def test_by_service_inverts_read_by_under_a_declared_dependencies_heading(clean_
     assert "Derived copies" not in output
     assert probe.calls == []
     assert not Layout(clean_home).state_dir.exists()
+
+
+def test_no_service_reads_a_github_token_that_can_write_or_administer() -> None:
+    powerful = [e for e in load_manifest(secrets_view.MANIFEST_PATH) if e.source and any(r.endswith((":admin", ":write")) for r in e.source.scope)]
+    assert powerful
+    assert all(entry.read_by == () for entry in powerful)
 
 
 @pytest.mark.parametrize(
@@ -599,9 +603,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
     stray = home / ".secrets" / "opentofu" / "fleet.tfstate.json"
     stray.write_text("plaintext state")
     stray.chmod(0o600)
-
     run_hal_secrets(home, probe, now=NOW)
-
     assert set(findings_of(capsys.readouterr().out, "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
 
 
@@ -609,9 +611,7 @@ def test_every_file_the_packaged_manifest_plants_is_known(tmp_path: Path, probe:
     """#42 M1: no planted file is an unknown file."""
     home = tmp_path / "home"
     plant_secrets(home)
-
     run_hal_secrets(home, probe, now=NOW)
-
     assert findings_of(capsys.readouterr().out, "unknown-file") == {}
 
 

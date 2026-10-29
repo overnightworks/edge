@@ -150,6 +150,7 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     assert identity["audience"] in clients
     assert identity["subscription_groups"]
     assert set(identity["subscription_groups"]) <= groups
+    assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
 def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrides_no_model(
@@ -173,10 +174,9 @@ def test_the_service_declares_no_paid_api_route(configuration):
     assert not {"purposes", "route", "api", "profiles"} & configuration.keys()
 
 
-def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_mcp_origin(
-    configuration,
-):
-    assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
+@pytest.mark.parametrize("app", ["presentator", "hopin"])
+def test_an_app_that_serves_no_mcp_has_no_tools_and_no_mcp_origin(configuration, app):
+    assert not {"tools", "mcp_origin"} & configuration["apps"][app].keys()
 
 
 def test_the_default_model_is_one_the_anthropic_login_serves(configuration):

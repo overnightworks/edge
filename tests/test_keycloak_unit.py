@@ -8,6 +8,7 @@ import subprocess
 from importlib import metadata
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -290,6 +291,14 @@ def realm_clients() -> dict[str, dict]:
     return {client["clientId"]: client for client in realm["clients"]}
 
 
+def clients_with_a_back_channel_logout_address() -> dict[str, dict]:
+    return {
+        client_id: client
+        for client_id, client in realm_clients().items()
+        if "backchannel.logout.url" in client.get("attributes", {})
+    }
+
+
 def test_a_back_channel_logout_call_needs_no_session_id():
     """#293: webauth ends every session of the subject and ignores `sid`, so a client that
     requires one would never be logged out."""
@@ -301,6 +310,35 @@ def test_a_back_channel_logout_call_needs_no_session_id():
 
     assert attributes
     assert [a for a in attributes if a["backchannel.logout.session.required"] != "false"] == []
+
+
+def test_a_client_with_a_back_channel_logout_address_has_its_own_back_channel_network_on_keycloak():
+    """The address is reached over the client's isolated network; a client given one without
+    a network of its own would send keycloak's call through a shared route."""
+    keycloak_networks = compose_document()["services"]["keycloak"]["networks"]
+    with_address = clients_with_a_back_channel_logout_address()
+
+    assert with_address
+    assert all(f"backchannel-{client_id}" in keycloak_networks for client_id in with_address)
+
+
+def test_a_back_channel_logout_address_points_at_its_clients_own_host():
+    """A logout address on another host would carry keycloak's call off the client's back
+    channel."""
+    with_address = clients_with_a_back_channel_logout_address()
+
+    assert with_address
+    assert all(
+        urlsplit(client["attributes"]["backchannel.logout.url"]).hostname
+        == urlsplit(client["baseUrl"]).hostname
+        for client in with_address.values()
+    )
+
+
+def test_the_account_console_offers_no_groups_page():
+    content = REPOSITORY / "keycloak/themes/hallucinai/account/resources/content.json"
+
+    assert "groups" not in [entry["label"] for entry in json.loads(content.read_text())]
 
 
 def test_hopin_has_a_workload_service_account_in_no_group_and_without_personal_scopes():

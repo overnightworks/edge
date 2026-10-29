@@ -347,6 +347,12 @@ def services() -> dict:
     return yaml.safe_load((ROOT / "compose.yaml").read_text())["services"]
 
 
+def test_agent_smoke_is_a_one_off_so_its_tokens_on_stdin_reach_no_journal(services):
+    """The one-offs are the services of the `apply` profile, which test_compose_one_offs.py shows
+    log to none."""
+    assert services["agent-smoke"]["profiles"] == services["realm-observer"]["profiles"]
+
+
 def test_agent_smoke_is_hardened_like_the_realm_observer(services):
     smoke_service, observer = services["agent-smoke"], services["realm-observer"]
 
