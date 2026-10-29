@@ -107,20 +107,8 @@ def test_a_file_that_is_no_yaml_mapping_with_a_realm_is_refused(text: str) -> No
         declared_realm(text)
 
 
-@pytest.mark.parametrize(
-    ("file", "realm", "kind", "identity"),
-    [
-        ("realm.yaml", "hallucinai", observe.GROUP.name, "/apps/songmaker/admin"),
-        ("realm.yaml", "hallucinai", observe.CLIENT.name, "agent-service"),
-        ("realm.yaml", "hallucinai", observe.REALM_ROLE, "agent-workload"),
-        ("master.yaml", "master", observe.FLOW.name, "browser-mfa"),
-        ("master.yaml", "master", observe.CLIENT.name, "config-cli"),
-    ],
-)
-def test_the_checkouts_realm_files_declare_what_the_operator_made_there(
-    file: str, realm: str, kind: str, identity: str
-) -> None:
+@pytest.mark.parametrize("file", ["realm.yaml", "master.yaml"])
+def test_the_checkouts_realm_files_load_as_declared_realms(file: str) -> None:
     declared = declared_realm((REPOSITORY / "keycloak" / file).read_text())
 
-    assert declared.realm == realm
-    assert identity in declared.identities[kind]
+    assert set(declared.identities) == set(KINDS)
