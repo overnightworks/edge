@@ -519,6 +519,20 @@ def test_a_write_that_fails_after_the_temporary_exists_leaves_none_and_a_fresh_a
     machine.assert_complete()
 
 
+def test_the_generated_wants_links_in_a_symlinked_wants_directory_are_accepted_on_a_rerun(
+    machine: Machine, tmp_path: Path
+) -> None:
+    (tmp_path / "elsewhere").mkdir()
+    machine.wants.symlink_to(tmp_path / "elsewhere")
+    machine.step.apply()
+    machine.systemctl.calls.clear()
+
+    machine.step.apply()
+
+    machine.assert_complete()
+    assert machine.systemctl.changes == []
+
+
 @pytest.mark.parametrize("verb", ["daemon-reload", "enable", "show"])
 def test_a_failing_systemctl_fails_the_step_as_partial_and_a_fresh_apply_recovers(
     machine: Machine, verb: str

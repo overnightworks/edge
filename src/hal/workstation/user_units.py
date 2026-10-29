@@ -206,7 +206,9 @@ class UserUnits:
                     continue
                 if self.is_timer_link_into(directory, entry, self.user_units):
                     continue
-                if self.is_timer_link_into(directory, entry, self.legacy_directory):
+                if not directory.is_symlink() and self.is_timer_link_into(
+                    directory, entry, self.legacy_directory
+                ):
                     legacy_wants_links.append(entry.name)
                     continue
                 raise not_written_by_hal(entry.relative_to(self.user_units))
@@ -215,7 +217,6 @@ class UserUnits:
     def is_timer_link_into(self, directory: Path, entry: Path, units_directory: Path) -> bool:
         return (
             directory.name == TIMERS_WANTS_DIRECTORY
-            and not directory.is_symlink()
             and entry.name in self.timer_names
             and entry.is_symlink()
             and entry.readlink() == units_directory / entry.name
