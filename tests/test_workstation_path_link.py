@@ -114,6 +114,12 @@ def relative_link_to_a_moved_clone(home: Path) -> None:
     entry_of(home).symlink_to(Path("..") / ".." / "git" / "edge" / "bin" / "hal")
 
 
+def link_to_a_moved_clone_while_git_is_a_symlink(home: Path) -> None:
+    (home / "git").rename(home / "real-git")
+    (home / "git").symlink_to(home / "real-git")
+    entry_of(home).symlink_to(home / "git" / "edge" / "bin" / "hal")
+
+
 @pytest.mark.parametrize(
     "arrange",
     [
@@ -121,12 +127,14 @@ def relative_link_to_a_moved_clone(home: Path) -> None:
         link_to_another_hal_clone,
         relative_link_to_another_hal_clone,
         relative_link_to_a_moved_clone,
+        link_to_a_moved_clone_while_git_is_a_symlink,
     ],
     ids=[
         "missing clone directly under ~/git",
         "existing clone named overnightworks-hal",
         "relative target",
         "relative target to a missing clone directly under ~/git",
+        "missing clone under ~/git when ~/git is a symlink",
     ],
 )
 def test_a_link_into_another_hal_checkout_is_repointed_atomically_after_the_plan(
@@ -196,6 +204,12 @@ def link_through_a_symlinked_directory_and_dot_dot_to_a_foreign_tree(home: Path)
     entry_of(home).symlink_to(home / "git" / "alias" / ".." / "foreign" / "bin" / "hal")
 
 
+def link_through_a_self_looping_directory(home: Path) -> None:
+    (home / "git").mkdir(exist_ok=True)
+    (home / "git" / "loop").symlink_to("loop")
+    entry_of(home).symlink_to(home / "git" / "loop" / "bin" / "hal")
+
+
 def link_to_a_missing_tree_outside_git(home: Path) -> None:
     entry_of(home).symlink_to(home / "elsewhere" / "gone" / "bin" / "hal")
 
@@ -224,6 +238,7 @@ def link_to_a_hal_file_outside_a_bin_directory(home: Path) -> None:
         link_to_a_tree_with_an_unreadable_pyproject,
         link_to_a_pyproject_that_is_not_utf8,
         link_through_a_symlinked_directory_and_dot_dot_to_a_foreign_tree,
+        link_through_a_self_looping_directory,
         link_to_a_missing_tree_outside_git,
         link_to_a_missing_tree_deeper_in_git,
         link_to_a_missing_file_not_named_hal,

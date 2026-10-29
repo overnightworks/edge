@@ -7,6 +7,7 @@ A hal that runs from an installed wheel has no checkout and leaves the entry alo
 
 from __future__ import annotations
 
+import os
 import secrets
 import tomllib
 from pathlib import Path
@@ -69,7 +70,7 @@ class PathLink:
     @staticmethod
     def directory_resolved(launcher: Path) -> Path:
         """The launcher with its directory resolved by the filesystem (a dot-dot after a symlink), and the launcher itself left unfollowed."""
-        return launcher.parent.resolve() / launcher.name
+        return Path(os.path.realpath(launcher.parent)) / launcher.name
 
     def is_hal_checkout_launcher(self, launcher: Path) -> bool:
         """A `<root>/bin/hal` whose root names this project, or is gone and sits directly under `~/git`, where clones move within."""
@@ -81,7 +82,7 @@ class PathLink:
                 project = tomllib.load(pyproject).get("project")
                 return isinstance(project, dict) and project.get("name") == DISTRIBUTION_NAME
         except FileNotFoundError:
-            return not root.exists() and root.parent == self.clones_directory.resolve()
+            return not root.exists() and root.parent == Path(os.path.realpath(self.clones_directory))
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
             return False
 
