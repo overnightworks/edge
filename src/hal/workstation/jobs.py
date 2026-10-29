@@ -31,6 +31,7 @@ TIMER_JOBS: tuple[TimerJob, ...] = (
         name="hal-backup",
         service_description=f"{command(Verb.BACKUP)}: encrypted restic backup of the declared apps",
         timer_description=f"{command(Verb.BACKUP)} weekly, Sunday 03:00",
+        # The checkout lives at ~/git/edge and `uv sync` has built the .venv that ExecStart runs.
         verb=Verb.BACKUP,
         arguments=(),
         on_calendar="Sun *-*-* 03:00:00",

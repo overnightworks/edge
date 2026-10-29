@@ -176,6 +176,38 @@ def test_a_fresh_apply_writes_six_marker_files_reloads_then_enables_the_three_ti
 
 
 EXPECTED_UNIT_TEXTS = {
+    "hal-backup.service": """\
+[Unit]
+Description=hal backup: encrypted restic backup of the declared apps
+Documentation=file://%h/git/edge/docs/backup.md
+
+[Service]
+Type=oneshot
+ExecStart=%h/git/edge/.venv/bin/hal backup
+TimeoutStartSec=6h
+""",
+    "hal-backup.timer": """\
+[Unit]
+Description=hal backup weekly, Sunday 03:00
+
+[Timer]
+OnCalendar=Sun *-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+""",
+    "hal-check.timer": """\
+[Unit]
+Description=Daily hal check
+
+[Timer]
+OnCalendar=*-*-* 09:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+""",
     "hal-check.service": """\
 [Unit]
 Description=hal check: reports what is wrong on this machine and in the secrets manifest; mails only when a finding appears or goes
@@ -349,6 +381,11 @@ def dependency_link_of_another_target(machine: Machine, unit: Path) -> str:
     return "custom.target.requires/hal-backup.service"
 
 
+def directory_named_like_a_unit(machine: Machine, unit: Path) -> str:
+    unit.mkdir()
+    return unit.name
+
+
 def file_inside_a_wants_directory(machine: Machine, unit: Path) -> str:
     machine.wants.mkdir()
     (machine.wants / "hal-backup.timer").write_text("[Timer]\n")
@@ -362,6 +399,7 @@ def file_inside_a_wants_directory(machine: Machine, unit: Path) -> str:
         link_elsewhere,
         mask,
         symlink_to_a_marker_file,
+        directory_named_like_a_unit,
         dependency_link_of_another_target,
         file_inside_a_wants_directory,
     ],
@@ -395,14 +433,61 @@ def test_a_failed_replacement_after_one_success_leaves_a_mixed_tree_a_fresh_appl
     tmp_path: Path,
 ) -> None:
     machine = Machine(tmp_path / "home", replace=FailingSecondReplace())
+    machine.arrange_legacy_links(dangling=False)
 
     with pytest.raises(UnitsPartial, match="^.*hal-.*: No space left on device$"):
         machine.step.apply()
 
-    assert [path.name for path in machine.user_units.iterdir()] == [UNIT_NAMES[0]]
+    entries = [machine.user_units / name for name in UNIT_NAMES]
+    assert [entry.is_symlink() for entry in entries] == [False, *[True] * 5]
+    assert all(
+        entry.readlink().parent == machine.legacy_directory
+        for entry in entries
+        if entry.is_symlink()
+    )
     machine.step = UserUnits(machine.layout, DECLARED_JOBS, machine.systemctl)
     machine.step.apply()
     machine.assert_complete()
+    assert not any(
+        target.startswith(str(machine.legacy_directory))
+        for kind, target in machine.tree().values()
+        if kind == "link"
+    )
+
+
+def test_a_timer_of_another_job_in_the_wants_directory_is_left_alone(machine: Machine) -> None:
+    other = machine.wants / "other.timer"
+    machine.wants.mkdir()
+    other.symlink_to(machine.user_units.parent / "other.timer")
+
+    machine.step.apply()
+
+    assert other.readlink() == machine.user_units.parent / "other.timer"
+    machine.assert_complete()
+
+
+def test_a_marker_file_with_undecodable_bytes_is_rewritten(machine: Machine) -> None:
+    machine.arrange_complete_state()
+    (machine.user_units / "hal-check.service").write_bytes(GENERATED_MARKER.encode() + b"\n\xff")
+
+    machine.step.apply()
+
+    machine.assert_complete()
+    assert machine.unit_text("hal-check.service") == (
+        GENERATED_MARKER + "\n" + EXPECTED_UNIT_TEXTS["hal-check.service"]
+    )
+
+
+def test_an_entry_of_the_person_at_the_temporary_name_survives_a_failed_apply(
+    machine: Machine,
+) -> None:
+    temporary = machine.user_units / ".hal-backup.service.tmp"
+    temporary.write_text("mine\n")
+
+    with pytest.raises(UnitsPartial):
+        machine.step.apply()
+
+    assert temporary.read_text() == "mine\n"
 
 
 @pytest.mark.parametrize("verb", ["daemon-reload", "enable", "show"])

@@ -190,7 +190,7 @@ class UserUnits:
             elif os.path.lexists(entry):
                 if not self.is_marker_file(entry):
                     raise not_written_by_hal(name)
-                if entry.read_text() != text:
+                if entry.read_bytes() != text.encode():
                     to_write.append(name)
             else:
                 to_write.append(name)
@@ -243,11 +243,11 @@ class UserUnits:
         path.chmod(UNIT_FILE_MODE)
 
     def replace_through_temporary(self, destination: Path, create: Callable[[Path], None]) -> None:
-        """Rename a fresh temporary entry over `destination`, so no moment lacks the entry."""
+        """Rename a fresh temporary entry over `destination`, so no moment lacks the entry. Creation
+        is exclusive: an entry already at the temporary name is the person's and is never removed."""
         temporary = destination.with_name(f".{destination.name}.tmp")
-        temporary.unlink(missing_ok=True)
+        create(temporary)
         try:
-            create(temporary)
             self.replace(temporary, destination)
         except OSError:
             temporary.unlink(missing_ok=True)
