@@ -466,8 +466,8 @@ def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
     )
 
 
-def _path_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    link = PathLink(layout, ports.checkout)
+def _path_steps(layout: Layout) -> tuple[Step, ...]:
+    link = PathLink(layout)
     return (
         Step(
             "PATH link",
@@ -531,7 +531,7 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
 
 def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_path_steps(layout, ports), *_system_steps(layout, ports), _secrets_step(layout, ports))
+    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_path_steps(layout), *_system_steps(layout, ports), _secrets_step(layout, ports))
 
 
 def _role(ports: Ports) -> ExecutionRole:

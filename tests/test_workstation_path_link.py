@@ -1,4 +1,4 @@
-"""The path step of `hal setup`: the link `~/.local/bin/hal` to the `bin/hal` of the checkout hal runs from (#655)."""
+"""The path step of `hal setup`: the link `~/.local/bin/hal` to the `bin/hal` of the live checkout (#655, #670)."""
 
 from __future__ import annotations
 
@@ -32,14 +32,14 @@ def home(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def running(home: Path) -> Path:
-    return home / "git" / "hal"
+def live(home: Path) -> Path:
+    return Layout(home).live_checkout
 
 
 @pytest.fixture
-def link(home: Path, running: Path) -> PathLink:
-    make_checkout(running)
-    return PathLink(Layout(home), running)
+def link(home: Path, live: Path) -> PathLink:
+    make_checkout(live)
+    return PathLink(Layout(home))
 
 
 def entry_of(home: Path) -> Path:
@@ -47,29 +47,29 @@ def entry_of(home: Path) -> Path:
 
 
 def test_a_missing_link_is_created_and_the_plan_shows_it_with_the_home_as_a_tilde(
-    link: PathLink, home: Path, running: Path
+    link: PathLink, home: Path, live: Path
 ) -> None:
     assert link.check() is CheckState.WOULD_CHANGE
-    assert link.fact() == "~/.local/bin/hal → ~/git/hal/bin/hal"
+    assert link.fact() == "~/.local/bin/hal → ~/git/edge/bin/hal"
     assert not entry_of(home).is_symlink()
 
     assert link.apply() is Applied.CHANGED
-    assert entry_of(home).readlink() == running / "bin" / "hal"
+    assert entry_of(home).readlink() == live / "bin" / "hal"
 
 
 def test_a_missing_bin_directory_is_created_with_the_link(tmp_path: Path) -> None:
     home = tmp_path / "bare-home"
-    running = home / "git" / "hal"
-    make_checkout(running)
+    live = Layout(home).live_checkout
+    make_checkout(live)
 
-    assert PathLink(Layout(home), running).apply() is Applied.CHANGED
-    assert entry_of(home).readlink() == running / "bin" / "hal"
+    assert PathLink(Layout(home)).apply() is Applied.CHANGED
+    assert entry_of(home).readlink() == live / "bin" / "hal"
 
 
 def test_a_link_that_already_points_here_is_unchanged_and_stays_the_same_link(
-    link: PathLink, home: Path, running: Path
+    link: PathLink, home: Path, live: Path
 ) -> None:
-    entry_of(home).symlink_to(running / "bin" / "hal")
+    entry_of(home).symlink_to(live / "bin" / "hal")
     before = entry_of(home).lstat().st_ino
 
     assert link.check() is CheckState.UNCHANGED
@@ -77,26 +77,33 @@ def test_a_link_that_already_points_here_is_unchanged_and_stays_the_same_link(
     assert entry_of(home).lstat().st_ino == before
 
 
-def test_a_relative_link_that_already_points_here_is_unchanged(
-    link: PathLink, home: Path
-) -> None:
-    entry_of(home).symlink_to(Path("..") / ".." / "git" / "hal" / "bin" / "hal")
+def test_a_relative_link_that_already_points_here_is_unchanged(link: PathLink, home: Path) -> None:
+    entry_of(home).symlink_to(Path("..") / ".." / "git" / "edge" / "bin" / "hal")
 
     assert link.check() is CheckState.UNCHANGED
     assert link.apply() is Applied.UNCHANGED
 
 
-def test_a_wheel_without_a_checkout_touches_nothing(home: Path) -> None:
+def test_a_missing_live_launcher_leaves_the_link_alone_and_the_row_unchanged(home: Path) -> None:
     entry_of(home).write_text("uv's own script\n")
-    wheel = PathLink(Layout(home), None)
+    absent = PathLink(Layout(home))
 
-    assert wheel.check() is CheckState.UNCHANGED
-    assert wheel.apply() is Applied.UNCHANGED
+    assert absent.check() is CheckState.UNCHANGED
+    assert absent.fact() == ""
+    assert absent.apply() is Applied.UNCHANGED
     assert entry_of(home).read_text() == "uv's own script\n"
 
 
+def test_setup_run_from_another_tree_links_the_live_checkout(home: Path, live: Path) -> None:
+    make_checkout(live)
+    make_checkout(home / "git-worktrees" / "issue-1-lane")
+
+    assert PathLink(Layout(home)).apply() is Applied.CHANGED
+    assert entry_of(home).readlink() == live / "bin" / "hal"
+
+
 def link_to_a_moved_clone(home: Path) -> None:
-    entry_of(home).symlink_to(home / "git" / "edge" / "bin" / "hal")
+    entry_of(home).symlink_to(home / "git" / "hal" / "bin" / "hal")
 
 
 def link_to_another_hal_clone(home: Path) -> None:
@@ -111,13 +118,13 @@ def relative_link_to_another_hal_clone(home: Path) -> None:
 
 
 def relative_link_to_a_moved_clone(home: Path) -> None:
-    entry_of(home).symlink_to(Path("..") / ".." / "git" / "edge" / "bin" / "hal")
+    entry_of(home).symlink_to(Path("..") / ".." / "git" / "hal" / "bin" / "hal")
 
 
 def link_to_a_moved_clone_while_git_is_a_symlink(home: Path) -> None:
     (home / "git").rename(home / "real-git")
     (home / "git").symlink_to(home / "real-git")
-    entry_of(home).symlink_to(home / "git" / "edge" / "bin" / "hal")
+    entry_of(home).symlink_to(home / "git" / "hal" / "bin" / "hal")
 
 
 @pytest.mark.parametrize(
@@ -138,7 +145,7 @@ def link_to_a_moved_clone_while_git_is_a_symlink(home: Path) -> None:
     ],
 )
 def test_a_link_into_another_hal_checkout_is_repointed_atomically_after_the_plan(
-    link: PathLink, home: Path, running: Path, arrange: Callable[[Path], None]
+    link: PathLink, home: Path, live: Path, arrange: Callable[[Path], None]
 ) -> None:
     arrange(home)
     before = entry_of(home).readlink()
@@ -146,7 +153,7 @@ def test_a_link_into_another_hal_checkout_is_repointed_atomically_after_the_plan
     assert link.check() is CheckState.WOULD_CHANGE
     assert entry_of(home).readlink() == before
     assert link.apply() is Applied.CHANGED
-    assert entry_of(home).readlink() == running / "bin" / "hal"
+    assert entry_of(home).readlink() == live / "bin" / "hal"
     assert sorted(path.name for path in entry_of(home).parent.iterdir()) == ["hal"]
 
 
@@ -257,7 +264,9 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     with pytest.raises(StepFailed) as refusal:
         link.check()
 
-    assert str(refusal.value) == "~/.local/bin/hal is not a hal link · move or delete it, then rerun"
+    assert (
+        str(refusal.value) == "~/.local/bin/hal is not a hal link · move or delete it, then rerun"
+    )
     with pytest.raises(StepFailed):
         link.apply()
     after = (
@@ -267,26 +276,25 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     assert after == before
 
 
-def test_the_plan_fact_escapes_what_a_terminal_would_act_on_in_the_checkout_path(home: Path) -> None:
-    checkout = home / "git" / "\x1b[31mred\nline"
-    make_checkout(checkout)
-
-    fact = PathLink(Layout(home), checkout).fact()
-
-    assert fact.isprintable()
-
-
-def test_an_unrelated_file_beside_the_link_survives_the_creation_untouched(link: PathLink, home: Path) -> None:
+def test_an_unrelated_file_beside_the_link_survives_the_creation_untouched(
+    link: PathLink, home: Path
+) -> None:
     for name in (".hal.new", "home"):
         entry_of(home).with_name(name).write_text(f"{name} of the person\n")
 
     link.apply()
 
-    assert sorted(path.name for path in entry_of(home).parent.iterdir()) == [".hal.new", "hal", "home"]
+    assert sorted(path.name for path in entry_of(home).parent.iterdir()) == [
+        ".hal.new",
+        "hal",
+        "home",
+    ]
     assert entry_of(home).with_name(".hal.new").read_text() == ".hal.new of the person\n"
 
 
-def test_an_entry_named_home_beside_the_link_is_left_as_it_was_and_no_other_name_appears(link: PathLink, home: Path) -> None:
+def test_an_entry_named_home_beside_the_link_is_left_as_it_was_and_no_other_name_appears(
+    link: PathLink, home: Path
+) -> None:
     dead_home = entry_of(home).with_name("home")
     dead_home.symlink_to(home / "git" / "edge" / "bin" / "home")
 
