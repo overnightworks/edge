@@ -102,7 +102,7 @@ ways:
 
 `hal setup` deviates in one way:
 
-- **E4:** `hal setup` prints four rows and a verdict, and a stop as an `error:`/`next:` pair
+- **E4:** `hal setup` prints five rows and a verdict, and a stop as an `error:`/`next:` pair
   ([docs/home.md](home.md), `hal setup`); it shows its plan and asks one `yes` before it acts (`--dry-run` only shows); it ends with 0 when nothing failed or
   nothing was open, 1 when the `yes` was declined, 3 for a failed step, 4 without a terminal (after the plan, before any
   step). Ansible's own stream stays until
