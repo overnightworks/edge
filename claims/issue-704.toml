@@ -1,0 +1,8 @@
+claim_id = "7293a14f8f7e44c995ee47cbc01ca799"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "4c3b9d837b4c8094a867a659c855ebcc6f31ca52"
+branch = "claude/issue-704-s4-of-472-rename-and-wizard-helpers"
+scope = ["quality/baseline.toml", "tests/hal_rename/conftest.py", "tests/hal_rename/rename_support.py", "tests/hal_rename/test_rename.py", "tests/hal_rename/test_rename_yes.py", "tests/hal_rename/test_rows.py", "tests/support/rename_support.py", "tests/support/terminal_support.py", "tests/support/workstation_secrets_report.py", "tests/support/workstation_secrets_wizard.py", "tests/terminal_support.py", "tests/test_hal_output.py", "tests/test_rename_commands.py", "tests/test_rename_commands_yes.py", "tests/test_rename_rows.py", "tests/test_workstation_app_secrets.py", "tests/test_workstation_secrets_setup.py", "tests/test_workstation_secrets_verification.py", "tests/test_workstation_secrets_view.py", "tests/workstation_support.py"]
+opened_commit = "7dbb744633da935647d55dd260f1e4a2795c2dd3"
+whole_reason = "One helper move: the rename tests and the secrets wizard helpers change folder together with their fixtures and every importer, or the test modules would import names that are gone."
