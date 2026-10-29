@@ -28,10 +28,21 @@ class Ports:
     system: system_step.Boundaries
     timer_jobs: tuple[TimerJob, ...]
     disk_space: DiskSpaceReader
+    checkout: Path | None
 
 
 # Looked up per call, so the tests can keep every run's time off this machine's clock.
 MONOTONIC_CLOCK: Callable[[], float] = time.monotonic
+
+
+def _running_checkout() -> Path | None:
+    """The tree two levels above the `hal` package, when it is a checkout; a wheel install has none."""
+    root = Path(__file__).resolve().parents[3]
+    return root if (root / ".git").exists() and (root / "bin" / "hal").is_file() else None
+
+
+# Looked up per call, so the test sandbox can keep every setup run off this machine's checkout.
+RUNNING_CHECKOUT: Callable[[], Path | None] = _running_checkout
 
 
 def build_layout_and_ports(
@@ -43,6 +54,7 @@ def build_layout_and_ports(
     system_boundaries: system_step.Boundaries | None = None,
     disk_space: DiskSpaceReader | None = None,
     clock: Callable[[], float] | None = None,
+    checkout: Path | None = None,
 ) -> tuple[Layout, Ports]:
     """The one owner of the real layout and boundaries; every `hal` verb over `hal.workstation` builds its own here."""
     # The system boundaries and the timer jobs are looked up per call, so the test sandbox can keep every test away from sudo, Ansible and systemctl.
@@ -57,4 +69,5 @@ def build_layout_and_ports(
         system,
         jobs.TIMER_JOBS,
         disk_space or read_disk_space,
+        checkout or RUNNING_CHECKOUT(),
     )

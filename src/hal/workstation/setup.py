@@ -33,6 +33,7 @@ from hal.workstation.system_step import (
     UnresolvableRunningUser,
 )
 from hal.workstation.layout import CommandRunner, Layout
+from hal.workstation.path_link import PathLink
 from hal.workstation.user_units import UnitsApplied, UnitsPartial, UserUnits
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ HOOK_NAMES = ("pre-commit", "pre-merge-commit")
 HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
 HOOK_WHY = "without the hook no commit is checked for secrets"
+PATH_WHY = "without the link your terminal finds no hal, or the one of a checkout that has moved"
 UNITS_WHY = "without the units and the reload the timers run no hal job, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
 SYSTEM_WHY = (
@@ -59,9 +61,10 @@ APPLY_PLAN = command(Verb.APPLY)
 
 
 class SetupRow(StrEnum):
-    """The four rows `hal setup` prints, in the order it runs them."""
+    """The five rows `hal setup` prints, in the order it runs them."""
 
     COMMIT_HOOK = "commit hook"
+    PATH = "path"
     TIMERS = "timers"
     SYSTEM = "system"
     SECRETS = "secrets"
@@ -463,6 +466,22 @@ def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
     )
 
 
+def _path_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
+    link = PathLink(layout, ports.checkout)
+    return (
+        Step(
+            "PATH link",
+            SetupRow.PATH,
+            link.check,
+            link.apply,
+            PATH_WHY,
+            "the link could not be made",
+            open_fact=link.fact,
+            operators_only=True,
+        ),
+    )
+
+
 def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     run = ports.run
     system = SystemStep(layout, ports.system)
@@ -512,7 +531,7 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
 
 def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_system_steps(layout, ports), _secrets_step(layout, ports))
+    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_path_steps(layout, ports), *_system_steps(layout, ports), _secrets_step(layout, ports))
 
 
 def _role(ports: Ports) -> ExecutionRole:
@@ -561,6 +580,8 @@ def _failure_detail(row: SetupRow, error: OSError | StepFailed, step: Step, mode
         case SetupRow.SYSTEM:
             leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
             return f" · {leaves}"
+        case SetupRow.PATH:
+            return " · nothing changed" if mode is not Pass.RUN else ""
         case SetupRow.TIMERS:
             return " · units may be partial" if isinstance(error, UnitsPartial) else " · nothing changed"
     return ""

@@ -434,19 +434,21 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
 <span class="sys">[sudo: authenticate] Passwort:</span>  <span class="n">← der Prompt deines sudo</span>
 <span class="live">  <span class="spin"></span> system          Read the default log driver Docker reports · 9s</span>  <span class="n">← nur live</span>
 <span class="d">  · system          unchanged</span>
 <span class="d">  · secrets         complete</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 47s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu, kaputt</span> Docker antwortet nicht: hal merkt es vor dem Passwort</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="r">  ✗</span> system          failed         <span class="d">Docker does not answer `docker info`</span>
 <span class="d">  · secrets         not run</span>
@@ -461,7 +463,7 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
     <li><b>Ansibles Aufgaben</b> stehen live in einer Zeile (aktuelle Aufgabe, Zeit) und verschwinden danach. Die ganze Ausgabe zeigt <code>-v</code>.</li>
     <li><b>Docker-Neustart</b> wird nur angesagt, wenn er kommt: <code>docker info</code> zeigt den Log-Treiber ohne sudo. Dann steht vor dem Passwort <code>! docker  restarts  all containers stop · 2 stay down</code> (die zwei ohne Restart-Policy). Antwortet Docker gar nicht, endet der Schritt dort, ohne Passwort.</li>
     <li><b>Scheitert der Play selbst,</b> ist sein Grund der Fakt der roten Zeile. Die <code>fail_msg</code> im Playbook werden dafür kurz, ohne <code>; nothing was written</code>: was geschrieben wurde, sagt die <code>error:</code>-Zeile.</li>
-    <li><b>Vier Zeilen statt acht Schritten:</b> quality, Engines, Hook-Dateien und Aktivierung sind für dich ein Ding, der Commit-Hook; Ansible gehört zu system. Scheitert einer, nennt die rote Zeile ihn.</li>
+    <li><b>Fünf Zeilen statt acht Schritten:</b> quality, Engines, Hook-Dateien und Aktivierung sind für dich ein Ding, der Commit-Hook; der Link <code>~/.local/bin/hal</code> ist <code>path</code>; Ansible gehört zu system. Scheitert einer, nennt die rote Zeile ihn.</li>
     <li><b>Falsches Passwort:</b> sudo sagt es selbst, in seinen Worten. Gibt es auf, folgt <code>✗ system  failed  sudo refused</code> und <code>error:</code> mit <code>/etc may be partial</code>.</li>
   </ul>
 </section>
@@ -473,25 +475,28 @@ hal setup: Schritt „System“ ist fehlgeschlagen; die späteren Schritte sind 
   <div class="pair">
     <div class="stack">
       <figure id="f-setup-yes">
-        <figcaption><span class="tag new">neu H5q</span> am Terminal: Plan, yes, Lauf, Urteil</figcaption>
+        <figcaption><span class="tag new">neu H5q</span> am Terminal: Plan, yes, Lauf, Urteil <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="b">  ~</span> commit hook     will change
+<span class="d">  · path            unchanged</span>
 <span class="d">  · timers          unchanged</span>
 <span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
 <span class="d">  · secrets         complete</span>
 Type <span class="w">yes</span> to set up 2 open rows: yes
 <span class="g">  ✓</span> commit hook     changed
+<span class="d">  · path            unchanged</span>
 <span class="d">  · timers          unchanged</span>
 <span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
 <span class="sys">[sudo: authenticate] Passwort:</span>  <span class="n">← der Prompt deines sudo, erst nach dem yes</span>
 <span class="d">  · system          unchanged</span>
 <span class="d">  · secrets         complete</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 47s</span></pre>
       </figure>
       <figure id="f-setup-declined">
-        <figcaption><span class="tag fail">neu H5q, abgelehnt</span> alles außer genau <code>yes</code>, auch Enter und Ctrl-D</figcaption>
+        <figcaption><span class="tag fail">neu H5q, abgelehnt</span> alles außer genau <code>yes</code>, auch Enter und Ctrl-D <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="b">  ~</span> commit hook     will change
+<span class="d">  · path            unchanged</span>
 <span class="d">  · timers          unchanged</span>
 <span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
 <span class="d">  · secrets         complete</span>
@@ -502,9 +507,10 @@ Type <span class="w">yes</span> to set up 2 open rows: no
     </div>
     <div class="stack">
       <figure id="f-setup-no-terminal">
-        <figcaption><span class="tag fail">neu H5q, kein Terminal</span> Pipe, Timer, Agent ohne Terminal: der Plan steht, das yes fehlt, nichts läuft</figcaption>
+        <figcaption><span class="tag fail">neu H5q, kein Terminal</span> Pipe, Timer, Agent ohne Terminal: der Plan steht, das yes fehlt, nichts läuft <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span> <span class="d">&lt; /dev/null</span>
 <span class="b">  ~</span> commit hook     will change
+<span class="d">  · path            unchanged</span>
 <span class="d">  · timers          unchanged</span>
 <span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
 <span class="d">  · secrets         complete</span>
@@ -513,13 +519,14 @@ Type <span class="w">yes</span> to set up 2 open rows: no
         <p class="was">Exit 4. Es läuft auch kein Schritt, der kein sudo braucht; ohne offene Zeile gilt das Bild darunter, Exit 0.</p>
       </figure>
       <figure id="f-setup-up-to-date">
-        <figcaption><span class="tag new">neu H5q</span> nichts offen (Konto des Agenten): keine Frage, kein sudo</figcaption>
+        <figcaption><span class="tag new">neu H5q</span> nichts offen (Konto des Agenten): keine Frage, kein sudo <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            skipped        the operator&#x27;s step</span>
 <span class="d">  · timers          skipped        the operator&#x27;s step</span>
 <span class="d">  · system          skipped        the operator&#x27;s step</span>
 <span class="d">  · secrets         skipped        the operator&#x27;s step</span>
-<span class="w">✓ setup up to date</span> <span class="d">· 1 unchanged, 3 skipped · 4s</span></pre>
+<span class="w">✓ setup up to date</span> <span class="d">· 1 unchanged, 4 skipped · 4s</span></pre>
       </figure>
     </div>
   </div>
@@ -530,6 +537,53 @@ Type <span class="w">yes</span> to set up 2 open rows: no
     <li><b>Exit-Codes:</b> 0 fertig oder aktuell, 1 abgelehnt, 3 ein Schritt ist gescheitert (auch eine Prüfung des Plans, ohne Frage), 4 braucht ein Terminal. <code>--apply</code> gibt es nicht mehr: <code>error: unrecognized arguments: --apply</code>, Exit 2.</li>
     <li><b>Der Preis von A:</b> am Terminal des Operators ist <code>system</code> vor dem yes immer <code>! not checked</code>, also offen. Jeder Lauf dort fragt einmal yes und einmal sudo, auch wenn sich nichts ändert; „nichts offen“ ohne Frage gibt es nur für das Konto des Agenten.</li>
     <li><b>Das Urteil nach dem Lauf</b> bleibt das aus „Zeilenform“ unten; ein gescheiterter Schritt endet wie dort in <code>error:</code> und <code>next: hal setup</code>.</li>
+    <li><span class="tag new">neu path</span> <b>Fünf Zeilen statt vier:</b> <code>path</code> steht an zweiter Stelle, vor <code>timers</code>. Ein richtiger Link ist die dunkle Zeile <code>· path  unchanged</code>, zählt nicht als offen und fragt kein yes; das Konto des Agenten überspringt sie wie die anderen Schritte des Operators. Darum zählt jedes Urteil jetzt fünf Zeilen (<code>1 changed, 4 unchanged</code>, <code>1 unchanged, 4 skipped</code>, <code>2 open, 3 unchanged</code>, <code>5 unchanged</code>); die Zahl der offenen Zeilen im yes-Satz bleibt, was sie war.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-path">
+  <div class="head">
+    <h2 id="s-path"><span class="tag new">neu für path</span> <code>hal setup</code>: die Zeile <code>path</code></h2>
+    <p class="sub">Zeilenform, Spaltenbreiten, Farben und Urteil wie oben; neu ist nur die Zeile <code>path</code> (der Link <code>~/.local/bin/hal</code>). Namen und Zeiten sind Beispielwerte.</p>
+  </div>
+  <div class="pair">
+    <div class="stack">
+      <figure id="f-setup-path-open">
+        <figcaption><span class="tag new">neu path</span> der Link fehlt oder zeigt in einen anderen hal-Ordner: Plan, yes, Lauf</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="b">  ~</span> path            will change    <span class="d">~/.local/bin/hal → ~/git/hal/bin/hal</span>
+<span class="d">  · timers          unchanged</span>
+<span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
+<span class="d">  · secrets         complete</span>
+Type <span class="w">yes</span> to set up 2 open rows: yes
+<span class="d">  · commit hook     unchanged</span>
+<span class="g">  ✓</span> path            changed
+<span class="d">  · timers          unchanged</span>
+<span class="c">  ›</span> system          needs sudo     <span class="d">tunnel, polkit, journal, mail, agent account</span>
+<span class="sys">[sudo: authenticate] Passwort:</span>
+<span class="d">  · system          unchanged</span>
+<span class="d">  · secrets         complete</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 47s</span></pre>
+        <p class="was">Zeigt der Link schon richtig, steht dort die dunkle Zeile <code>· path  unchanged</code> (die Bilder oben). Nach dem yes steht <code>changed</code> ohne Fakt.</p>
+      </figure>
+      <figure id="f-setup-path-refused">
+        <figcaption><span class="tag fail">neu path, kaputt</span> ein fremder Eintrag: der Plan scheitert, vor jeder Änderung, ohne Frage</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="r">  ✗</span> path            failed         <span class="d">~/.local/bin/hal is not a hal link · move or delete it, then rerun</span>
+<span class="d">  · timers          not run</span>
+<span class="d">  · system          not run</span>
+<span class="d">  · secrets         not run</span>
+<span class="rw">error:</span> setup stopped at path · nothing changed
+<span class="c">next:</span> hal setup</pre>
+        <p class="was">Exit 3. Derselbe Satz gilt für eine Datei, ein Verzeichnis und einen Link woandershin; welcher Eintrag es ist, zeigt <code>ls -l</code>.</p>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><span class="tag new">neu path</span> <b>Eine Zeile für den Link:</b> <code>~/.local/bin/hal → &lt;checkout&gt;/bin/hal</code>, das Zuhause als <code>~</code>. Der Plan liest nur; angelegt oder umgesetzt wird nach dem yes. Der Ordner ist der, aus dem <code>hal</code> gerade läuft; ein Link in einen anderen hal-Ordner (auch nach einem Umzug) wird nach dem yes umgesetzt, alles andere ist eine Weigerung im Plan.</li>
+    <li><span class="tag new">neu path</span> <b>Die Weigerung</b> nennt den Eintrag und was der Operator tut: <code>move or delete it, then rerun</code>. Spätere Zeilen sind <code>not run</code>, Exit 3, kein yes.</li>
   </ul>
 </section>
 
@@ -593,28 +647,31 @@ Type <span class="w">yes</span> to set up 2 open rows: yes
   <div class="pair">
     <div class="stack">
       <figure>
-        <figcaption><span class="tag new">neu S2a</span> gut, so druckt S2c es, bevor S2d und S2f dazukommen</figcaption>
+        <figcaption><span class="tag new">neu S2a</span> gut, so druckt S2c es, bevor S2d und S2f dazukommen <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="d">  · system          unchanged</span>
 <span class="d">  · secrets         complete</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 47s</span></pre>
       </figure>
       <figure>
-        <figcaption><span class="tag new">neu H5q</span> Agent-Lauf an seinem Terminal: dasselbe yes, die Schritte des Operators bleiben aus, kein sudo</figcaption>
+        <figcaption><span class="tag new">neu H5q</span> Agent-Lauf an seinem Terminal: dasselbe yes, die Schritte des Operators bleiben aus, kein sudo <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="b">  ~</span> commit hook     will change
+<span class="d">  · path            skipped        the operator&#x27;s step</span>
 <span class="d">  · timers          skipped        the operator&#x27;s step</span>
 <span class="d">  · system          skipped        the operator&#x27;s step</span>
 <span class="d">  · secrets         skipped        the operator&#x27;s step</span>
 Type <span class="w">yes</span> to set up 1 open row: yes
 <span class="g">  ✓</span> commit hook     changed
+<span class="d">  · path            skipped        the operator&#x27;s step</span>
 <span class="d">  · timers          skipped        the operator&#x27;s step</span>
 <span class="d">  · system          skipped        the operator&#x27;s step</span>
 <span class="d">  · secrets         skipped        the operator&#x27;s step</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 skipped · 4s</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 skipped · 4s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu S2</span> Geheimnis fehlt, vor dem Assistenten (Namen erfunden)</figcaption>
@@ -627,16 +684,16 @@ Type <span class="w">yes</span> to set up 1 open row: yes
     </div>
     <div class="stack">
       <figure>
-        <figcaption><span class="tag new">neu H5q</span> <code>--dry-run</code>: nur zeigen, nichts ändern, kein yes</figcaption>
+        <figcaption><span class="tag new">neu H5q</span> <code>--dry-run</code>: nur zeigen, nichts ändern, kein yes <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --dry-run</span>
 <span class="b">  ~</span> commit hook     will change
 <span class="y">  !</span> system          not checked    <span class="d">needs sudo at a terminal</span>
-<span class="b">~ setup plan</span> <span class="d">· 2 open, 2 unchanged · 3s · run hal setup</span></pre>
+<span class="b">~ setup plan</span> <span class="d">· 2 open, 3 unchanged · 3s · run hal setup</span></pre>
       </figure>
       <figure>
-        <figcaption><span class="tag new">neu S2, Vorschlag</span> <code>--dry-run</code>, alles aktuell</figcaption>
+        <figcaption><span class="tag new">neu S2, Vorschlag</span> <code>--dry-run</code>, alles aktuell <span class="tag new">neu path</span></figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup --dry-run</span>
-<span class="w">✓ setup up to date</span> <span class="d">· 4 unchanged · 21s</span></pre>
+<span class="w">✓ setup up to date</span> <span class="d">· 5 unchanged · 21s</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu S2, kaputt</span> gescheitert: Ansible lief und brach ab, sein Text steht darüber</figcaption>
@@ -682,7 +739,7 @@ Type <span class="w">yes</span> to set up 1 open row: yes
 <span class="g">  ✓</span> github/fleet-admin  verified   <span class="d">~/.secrets/github/fleet-admin (600)</span>
 <span class="g">  ✓</span> opentofu/passphrase  generated  <span class="d">~/.secrets/opentofu/passphrase (600) · never shown</span>
 <span class="g">  ✓</span> secrets         stored
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 2m14s</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 2m14s</span>
 <span class="c">next:</span> hal apply</pre>
         <p class="was">heute: ein eigenes <code>next:</code> mit dem alten Plan-Befehl im Repository</p>
       </figure>
@@ -1161,7 +1218,7 @@ Type <span class="w">yes</span> to apply 7 changes: yes
         <tr><td><code>[sudo: [sudo via ansible, key=…] password:] Passwort:</code> und der Timeout</td><td>nichts</td><td>kein Prompt-Erkennen, also kein Spezialfall</td></tr>
         <tr><td><code>PLAY […] ***</code>, <code>TASK […] ***</code>, <code>PLAY RECAP ***</code></td><td>eine Live-Zeile, danach das Ergebnis</td><td>Rohtext nur mit <code>-v</code></td></tr>
         <tr><td><code>hal-backup.service: ExecStart=…</code>, <code>Result=success</code></td><td><code>✓ timers  changed  3 timers · systemd reloaded</code></td><td>sechs Zeilen für „hat geklappt“</td></tr>
-        <tr><td><code>Hook-Dateien</code>, <code>Geheimnisse</code>, <code>Schritt „System“ ist fehlgeschlagen</code></td><td><code>commit hook</code>, <code>secrets</code>, <code>error: setup stopped at system</code></td><td>eine Sprache pro Lauf</td></tr>
+        <tr><td><code>Hook-Dateien</code>, <code>Geheimnisse</code>, <code>Schritt „System“ ist fehlgeschlagen</code></td><td><code>commit hook</code>, <code>path</code>, <code>secrets</code>, <code>error: setup stopped at system</code></td><td>eine Sprache pro Lauf</td></tr>
         <tr><td><code>its output above says why</code></td><td>der Grund als Fakt der roten Zeile</td><td>die Info steht da, statt auf Rohtext zu zeigen</td></tr>
         <tr><td><code>edge apply --closed:</code> vor jeder Zeile</td><td>nichts</td><td>du hast <code>hal apply</code> getippt</td></tr>
         <tr><td><code>partial, …; run `edge apply --closed` again</code></td><td><code>✗</code>-Zeile, <code>error:</code>, <code>next: hal apply</code></td><td>Ort, Bedeutung und nächster Schritt getrennt</td></tr>

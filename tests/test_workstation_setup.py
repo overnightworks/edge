@@ -20,34 +20,37 @@ from hal.workstation.secrets_setup import Boundaries, Terminal
 from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
 from hal.workstation.system_step import AGENT_USER, CheckState, SystemStep
 
-COMMIT_HOOK, TIMERS, SYSTEM, SECRETS = "commit hook", "timers", "system", "secrets"
-ROWS = [COMMIT_HOOK, TIMERS, SYSTEM, SECRETS]
+COMMIT_HOOK, PATH, TIMERS, SYSTEM, SECRETS = "commit hook", "path", "timers", "system", "secrets"
+ROWS = [COMMIT_HOOK, PATH, TIMERS, SYSTEM, SECRETS]
 
 
 # The sandbox declares no timer job: the timers have nothing to change, and no secret is open.
 SUDO_ANNOUNCEMENT = "  › system          needs sudo     tunnel, polkit, journal, mail, agent account"
 FRESH_APPLY = [
     "  ✓ commit hook     changed",
+    "  · path            unchanged",
     "  · timers          unchanged",
     SUDO_ANNOUNCEMENT,
     "  ✓ system          changed",
     "  · secrets         complete",
-    "✓ setup done · 2 changed, 2 unchanged · 47s",
+    "✓ setup done · 2 changed, 3 unchanged · 47s",
 ]
 REPEATED_APPLY = [
     "  · commit hook     unchanged",
+    "  · path            unchanged",
     "  · timers          unchanged",
     SUDO_ANNOUNCEMENT,
     "  · system          unchanged",
     "  · secrets         complete",
-    "✓ setup done · 4 unchanged · 47s",
+    "✓ setup done · 5 unchanged · 47s",
 ]
-UP_TO_DATE = [*(line for line in REPEATED_APPLY[:-1] if line != SUDO_ANNOUNCEMENT), "✓ setup up to date · 4 unchanged · 47s"]
+UP_TO_DATE = [*(line for line in REPEATED_APPLY[:-1] if line != SUDO_ANNOUNCEMENT), "✓ setup up to date · 5 unchanged · 47s"]
 NOT_CHECKED = "  ! system          not checked    needs sudo at a terminal"
 NOT_CHECKED_WITHOUT_ANSIBLE = (
     "  ! system          not checked    needs Ansible, which `hal setup` installs first"
 )
 NOT_RUN = {
+    PATH: "  · path            not run",
     TIMERS: "  · timers          not run",
     SYSTEM: "  · system          not run",
     SECRETS: "  · secrets         not run",
@@ -84,7 +87,7 @@ def test_the_verdict_shows_the_time_the_run_took_by_the_clock_the_ports_carry(
 
     assert (code, capsys.readouterr().out.splitlines()[-1]) == (
         0,
-        "~ setup plan · 2 open, 2 unchanged · 1m05s · run hal setup",
+        "~ setup plan · 2 open, 3 unchanged · 1m05s · run hal setup",
     )
 
 
@@ -105,10 +108,11 @@ def test_setup_without_apply_only_reports_and_changes_nothing(sandbox: Sandbox, 
         ExitCode.OK,
         [
             "  ~ commit hook     will change",
+            "  · path            unchanged",
             "  · timers          unchanged",
             NOT_CHECKED_WITHOUT_ANSIBLE,
             "  · secrets         complete",
-            "~ setup plan · 2 open, 2 unchanged · 47s · run hal setup",
+            "~ setup plan · 2 open, 3 unchanged · 47s · run hal setup",
         ],
         "",
     )
@@ -164,7 +168,7 @@ def test_a_walk_that_stored_everything_ends_setup_with_its_verdict_and_next_hal_
 
     assert code == ExitCode.OK
     assert "  ✓ secrets         stored" in lines
-    assert lines[-2:] == ["✓ setup done · 3 changed, 1 unchanged · 47s", "next: hal apply"]
+    assert lines[-2:] == ["✓ setup done · 3 changed, 2 unchanged · 47s", "next: hal apply"]
     assert [line for line in lines if line.startswith("next:") or "offen" in line] == ["next: hal apply"]
 
 
@@ -180,7 +184,7 @@ def test_failing_quality_install_leaves_hooks_path_untouched_and_exits_nonzero(
         ExitCode.FAILURE,
         [
             "  ✗ commit hook     failed         uv could not install quality",
-            NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
+            NOT_RUN[PATH], NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines()[0] == "error: setup stopped at commit hook"
@@ -201,7 +205,7 @@ def test_failing_engines_install_stops_before_hooks_and_activation(
         ExitCode.FAILURE,
         [
             "  ✗ commit hook     failed         the quality engines did not install",
-            NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
+            NOT_RUN[PATH], NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -223,7 +227,7 @@ def test_failing_activation_is_a_failed_last_step(sandbox: Sandbox, capsys: pyte
         ExitCode.FAILURE,
         [
             "  ✗ commit hook     failed         git could not set core.hooksPath",
-            NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
+            NOT_RUN[PATH], NOT_RUN[TIMERS], NOT_RUN[SYSTEM], NOT_RUN[SECRETS],
         ],
     )
     assert error.splitlines() == [
@@ -257,7 +261,7 @@ def test_apply_reinstalls_a_deleted_quality_executable_despite_matching_uv_metad
         [
             "  ✓ commit hook     changed",
             *REPEATED_APPLY[1:-1],
-            "✓ setup done · 1 changed, 3 unchanged · 47s",
+            "✓ setup done · 1 changed, 4 unchanged · 47s",
         ],
     )
     assert len(uv_installs(sandbox)) == 3
@@ -467,14 +471,15 @@ def test_as_the_agent_the_operators_steps_are_skipped_without_sudo_and_the_exit_
 
     hook = "  ~ commit hook     will change" if flags else "  ✓ commit hook     changed"
     closing = (
-        "~ setup plan · 1 open, 3 skipped · 47s · run hal setup"
+        "~ setup plan · 1 open, 4 skipped · 47s · run hal setup"
         if flags
-        else "✓ setup done · 1 changed, 3 skipped · 47s"
+        else "✓ setup done · 1 changed, 4 skipped · 47s"
     )
     assert (code, lines) == (
         0,
         [
             hook,
+            "  · path            skipped        the operator's step",
             "  · timers          skipped        the operator's step",
             "  · system          skipped        the operator's step",
             "  · secrets         skipped        the operator's step",
@@ -529,10 +534,10 @@ def test_the_playbook_ships_inside_the_package() -> None:
         (
             False,
             [
-                *UP_TO_DATE[:2],
+                *UP_TO_DATE[:3],
                 "  ~ system          will change",
-                UP_TO_DATE[3],
-                "~ setup plan · 1 open, 3 unchanged · 47s · run hal setup",
+                UP_TO_DATE[4],
+                "~ setup plan · 1 open, 4 unchanged · 47s · run hal setup",
             ],
         ),
         (True, UP_TO_DATE),
@@ -564,10 +569,10 @@ def test_without_a_terminal_the_dry_run_says_not_checked_and_never_starts_ansibl
     assert (code, lines) == (
         0,
         [
-            *UP_TO_DATE[:2],
+            *UP_TO_DATE[:3],
             NOT_CHECKED,
-            UP_TO_DATE[3],
-            "~ setup plan · 1 open, 3 unchanged · 47s · run hal setup",
+            UP_TO_DATE[4],
+            "~ setup plan · 1 open, 4 unchanged · 47s · run hal setup",
         ],
     )
     assert playbook_runs(sandbox) == ["apply"]
@@ -598,8 +603,7 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
     assert (code, lines) == (
         ExitCode.FAILURE,
         [
-            FRESH_APPLY[0],
-            FRESH_APPLY[1],
+            *FRESH_APPLY[:3],
             SUDO_ANNOUNCEMENT,
             "  ✗ system          failed         Ansible did not finish · its output above says why",
             NOT_RUN[SECRETS],
@@ -619,7 +623,7 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
 
     code, lines, error = run_setup(sandbox, capsys, "--dry-run")
 
-    assert (code, lines[2:]) == (
+    assert (code, lines[3:]) == (
         ExitCode.FAILURE,
         [
             "  ✗ system          failed         Ansible's check did not finish · its output above says why",
