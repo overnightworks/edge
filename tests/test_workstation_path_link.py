@@ -208,10 +208,11 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     assert str(refusal.value) == "~/.local/bin/hal is not a hal link · move or delete it, then rerun"
     with pytest.raises(StepFailed):
         link.apply()
-    assert (
+    after = (
         entry_of(home).is_symlink(),
         os.readlink(entry_of(home)) if entry_of(home).is_symlink() else None,
-    ) == before
+    )
+    assert after == before
 
 
 def test_the_plan_fact_escapes_what_a_terminal_would_act_on_in_the_checkout_path(home: Path) -> None:
