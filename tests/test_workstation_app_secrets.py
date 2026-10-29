@@ -11,7 +11,7 @@ from pathlib import Path, PurePosixPath
 
 import pytest
 from workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
-from workstation_secrets_support import FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
+from workstation_secrets_support import never_run, FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
 from test_workstation_secrets_view import findings_of
 
 from terminal_support import put_stdout_on_a_terminal
@@ -153,7 +153,7 @@ def never_verified(_source: object, _value: str) -> Verdict:
 
 
 def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], terminal: FakeTerminal, disk: FakeSync | None = None) -> tuple[int, str]:
-    boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeSync()).sync)
+    boundaries = Boundaries(terminal.boundary(), never_verified, (disk or FakeSync()).sync, never_run)
     code = run_hal_setup(home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
     captured = capsys.readouterr()
     return code, captured.out + captured.err
@@ -645,7 +645,7 @@ def test_hal_setup_apply_ended_by_ctrl_c_exits_130_and_leaves_no_file(
 
     terminal = secrets_terminal(True)
     code, _, error = hal_secrets(
-        LIVE, boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted)
+        LIVE, boundaries=Boundaries(terminal.terminal, terminal.verify, interrupted, never_run)
     )
 
     assert code == ExitCode.INTERRUPTED
@@ -697,7 +697,7 @@ def walk_on_a_terminal(sandbox: Sandbox, monkeypatch: pytest.MonkeyPatch, *, bro
     """The setup walk of the GitHub token and both TURN values with stdout on a terminal, nothing pasted."""
     (sandbox.home / ".secrets/github/fleet-read").unlink()
     stdout = put_stdout_on_a_terminal(monkeypatch)
-    boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeSync().sync)
+    boundaries = Boundaries(FakeTerminal(browser_opens=browser_opens).boundary(), never_verified, FakeSync().sync, never_run)
 
     run_hal_setup(home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
 

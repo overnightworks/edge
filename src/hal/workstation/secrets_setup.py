@@ -4,7 +4,8 @@ A person stays in the loop on purpose: only someone with more rights than a toke
 for fine-grained tokens, and on Cloudflare the wizard would need an admin key on disk. So the browser login stays the
 operator's. The wizard does everything else: it says what comes and why, opens the provider's page, takes the pasted
 value without echo, has the provider confirm it and only then writes the file, 0600 in a 0700 directory. A service
-password is generated and written unseen. A file already present stays untouched. It runs only at a terminal.
+password is generated and written unseen. A login a CLI makes (`create` in the manifest) is made by that CLI in the entry's own
+folder; the wizard only runs it and checks path and mode. A file already present stays untouched. It runs only at a terminal.
 
 Its read-only view is `secrets_view`.
 
@@ -21,13 +22,14 @@ import os
 import secrets
 import signal
 import stat
+import subprocess
 import sys
 import urllib.error
 import urllib.request
 import uuid
 import warnings
 import webbrowser
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum, StrEnum
@@ -37,6 +39,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from hal.output import DETAIL_INDENT, Glyph, Row, Tone, write_detail, write_error, write_row
 from hal.output.command import Verb, command
 from hal.workstation import secrets_view
+from hal.workstation.secrets_create import CreateCommand
 from hal.workstation.secrets_view import (
     HOME_PREFIX,
     LOOSEST_DIRECTORY_MODE,
@@ -200,6 +203,16 @@ class Terminal:
 
 
 DiskSync = Callable[[int], None]
+# Runs a CLI with the terminal as its own and `variables` added to the environment; its exit code, None when the CLI is not installed.
+LoginRunner = Callable[[Sequence[str], Mapping[str, str]], int | None]
+
+
+def run_command(argv: Sequence[str], variables: Mapping[str, str]) -> int | None:
+    """The CLI keeps the operator's terminal, so its sign-in output and prompts reach the person; hal reads none of it."""
+    try:
+        return subprocess.run(argv, env={**os.environ, **variables}, check=False).returncode
+    except FileNotFoundError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -207,9 +220,12 @@ class Boundaries:
     terminal: Terminal
     verify: TokenVerifier
     sync: DiskSync
+    run_command: LoginRunner
 
 
-TERMINAL_BOUNDARIES = Boundaries(Terminal(_both_ends_are_a_terminal, input, getpass.getpass, webbrowser.open), verify_token, os.fsync)
+TERMINAL_BOUNDARIES = Boundaries(
+    Terminal(_both_ends_are_a_terminal, input, getpass.getpass, webbrowser.open), verify_token, os.fsync, run_command
+)
 
 
 # --- the filesystem boundary ------------------------------------------------
@@ -398,6 +414,9 @@ class WizardEvent(StrEnum):
     NOT_CHECKED = "not checked"
     BY_HAND = "by hand"
     NOT_STORED = "not stored"
+    NEW_LOGIN = "new login"
+    SIGNED_IN = "signed in"
+    NOT_SIGNED_IN = "not signed in"
 
 
 def _write_entry_row(glyph: Glyph, entry_name: str, event: WizardEvent, fact: str) -> None:
@@ -493,13 +512,68 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
     """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
     _announce(entry, f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} cannot check this one")
-    write_detail(f"create: {entry.recreate}")
+    write_detail(f"create: {entry.renewal}")
     _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
         _skipped(entry)
         return False
     _store(entry, layout, boundaries, value)
+    return True
+
+
+def _seal_login(entry: SecretEntry, layout: Layout) -> PurePosixPath | None:
+    """After the CLI exits: the folder 0700 and the declared login file 0600 (the entry's loosest mode), leaving what the CLI put beside it alone; the file made, None when it made none.
+
+    Only `stat` and `chmod`: the content is never opened.
+    """
+    (layout.home / entry.folder).chmod(LOOSEST_DIRECTORY_MODE)
+    made = stat_matches(layout, entry.place) or ()
+    for fact in made:
+        (layout.home / fact.relative).chmod(entry.loosest_mode)
+    return made[0].relative if made else None
+
+
+def _folder_contents(folder: Path) -> frozenset[Path]:
+    """Every path below the entry's folder, by name only."""
+    return frozenset(folder.rglob("*"))
+
+
+def _discard_login(folder: Path, before: frozenset[Path]) -> None:
+    """After a failed CLI: what that run left in the folder goes, deepest first, so that a refused sign-in stores nothing and the next run asks again; what was there before stays."""
+    for left in sorted(_folder_contents(folder) - before, key=lambda path: len(path.parts), reverse=True):
+        if left.is_dir() and not left.is_symlink():
+            left.rmdir()
+        else:
+            left.unlink()
+
+
+def _login_refusal(create: CreateCommand, exit_code: int | None) -> str:
+    cli = create.run[0]
+    if exit_code is None:
+        return f"{cli} is not installed · install it, then rerun"
+    if exit_code:
+        return f"{' '.join(create.run)} ended with exit {exit_code} · nothing stored"
+    return f"{' '.join(create.run)} ended without a login file · nothing stored"
+
+
+def _set_up_tool_login(entry: SecretEntry, create: CreateCommand, layout: Layout, boundaries: Boundaries) -> bool:
+    """The CLI makes the secret itself in the entry's folder; hal checks path and mode only and never reads what the CLI wrote."""
+    subject = entry.name
+    suffix = ", a login of its own" if create.home else ""
+    _write_entry_row(Glyph.ANNOUNCE, subject, WizardEvent.NEW_LOGIN, f"your {create.label} account{suffix}")
+    write_detail(f"why: {entry.purpose}")
+    boundaries.terminal.ask(f"{DETAIL_INDENT}Enter opens the {create.label} sign-in in your browser: ")
+    _private_directories(layout.home, layout.home / entry.folder)
+    folder = layout.home / entry.folder
+    before = _folder_contents(folder)
+    exit_code = boundaries.run_command(create.run, {name: str(folder) for name in create.home})
+    made = _seal_login(entry, layout) if exit_code == 0 else None
+    if made is None:
+        _discard_login(folder, before)
+        _write_entry_row(Glyph.FAILED, subject, WizardEvent.NOT_SIGNED_IN, _login_refusal(create, exit_code))
+        return False
+    write_row(Row(Glyph.DONE, subject, WizardEvent.SIGNED_IN, f"{HOME_PREFIX}{made} ({entry.loosest_mode:o}) · never shown"))
     return True
 
 
@@ -597,12 +671,14 @@ def _set_up_or_fail(entry: SecretEntry, layout: Layout, boundaries: Boundaries, 
 
 def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: datetime) -> Step:
     if not entry.written_by_setup:
-        _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.recreate}")
+        _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.renewal}")
         return Step.BY_HAND
     if refusal := _store_refusal(layout, entry.place):
         raise refusal
     if entry.source:
         stored = _set_up_token(entry, entry.source, layout, boundaries, now)
+    elif entry.create:
+        stored = _set_up_tool_login(entry, entry.create, layout, boundaries)
     elif entry.kind is SecretKind.UNVERIFIED_TOKEN:
         stored = _set_up_unverified_token(entry, layout, boundaries)
     else:
