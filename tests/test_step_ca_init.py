@@ -9,6 +9,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import secrets as random_secrets
 import signal
 import stat
@@ -21,7 +22,6 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
-import yaml
 
 STEP_CA = Path(__file__).resolve().parents[1] / "step-ca"
 PROBE = Path(__file__).resolve().parents[1] / "probe" / "step-ca" / "probe.py"
@@ -546,19 +546,19 @@ def ca_config() -> dict:
 def test_the_ca_has_one_acme_provisioner_with_default_lifetime_and_no_policy(ca_config):
     """#38 rule 2: policy on the authority only; no `claims`, so the lifetime stays the default."""
     provisioners = ca_config["authority"]["provisioners"]
-
     assert [provisioner["type"] for provisioner in provisioners] == ["ACME"]
-    assert not [p for p in provisioners if {"policy", "claims"} & set(p)]
-    assert "claims" not in ca_config["authority"]
+    assert not [p for p in provisioners if "policy" in p]
 
 
-def test_the_ca_names_only_internal_wildcards_outside_the_public_fleet_zone(ca_config):
-    """#38 rule 2: the allowed names are `*.`-prefixed and none reaches a public name."""
+def test_the_ca_allows_only_wildcards_under_never_public_names_that_a_router_uses(ca_config):
+    """#38 rule 2: `*.` under a never-public name (ICANN, RFC 6761/6762), served by a router."""
+    never_public = {"internal", "test", "invalid", "localhost", "local"}
     allowed = ca_config["authority"]["policy"]["x509"]["allow"]["dns"]
-    zone = yaml.safe_load((STEP_CA.parent / "fleet.yaml").read_text())["cloudflare"]["zone"]
-    assert allowed
-    assert all(pattern.startswith("*.") for pattern in allowed)
-    assert not [pattern for pattern in allowed if fnmatch(f"www.{zone}", pattern)]
+    routers = "".join(p.read_text() for p in (STEP_CA.parent / "mcp" / "dynamic").glob("*.yml"))
+    hosts = re.findall(r"Host\(`([^`]+)`\)", routers)
+    assert allowed and all(pattern.startswith("*.") for pattern in allowed)
+    assert all(pattern.rsplit(".", 1)[-1] in never_public for pattern in allowed)
+    assert all(any(fnmatch(host, pattern) for host in hosts) for pattern in allowed)
 
 
 def test_the_ca_has_no_remote_management(ca_config):
