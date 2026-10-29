@@ -57,7 +57,7 @@ Access-URL. Kein Befund zitiert Header, Ziel oder Fehlertext.
 Schreibt die Aenderungen auf die Live-Dienste, mit `~/.secrets/cloudflare/fleet-write` (dieselbe
 Allowlist-Umgebung, dieselbe State-Passphrase).
 
-- **Wo und wie.** Nur aus `~/git/edge` als Haupt-Worktree auf einem sauberen `main` (sonst Exit 2 mit
+- **Wo und wie.** Nur aus `~/srv/hal` als Haupt-Worktree auf einem sauberen `main` (sonst Exit 2 mit
   dem Grund) und nur an einem Terminal (stdin und stdout; sonst Exit 1 vor `tofu`). Es plant in eine
   Datei, zeigt den Plan und wendet genau diese Datei erst nach der Eingabe `yes` an (alles andere:
   Abbruch, Exit 1). Ein Plan ohne Aenderungen endet mit Exit 0 ohne Frage. Das schuetzt gegen
@@ -183,7 +183,7 @@ Katalog steht oder bewusst entfaellt. Erwartet nach dem Anwenden: `https://hallu
 
 Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei einer
 geaenderten Umgebung nie neu; der Betreiber startet es erst, wenn die Regel bei Cloudflare steht
-(`docker compose --profile keycloak up -d --no-deps keycloak` in `~/git/edge`), und nur wenn
+(`docker compose --profile keycloak up -d --no-deps keycloak` in `~/srv/hal`), und nur wenn
 `hal apply` sauber endete **und** ein zweites `hal apply` fuer die Publish-Phase `No changes` meldet
 und nichts fragt. So gibt es kein Fenster: ein
 Keycloak auf `forwarded` ohne Regel davor wuerde ein vom Besucher gesendetes `Forwarded` vertrauen.

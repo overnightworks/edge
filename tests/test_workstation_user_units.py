@@ -180,11 +180,11 @@ EXPECTED_UNIT_TEXTS = {
     "hal-backup.service": """\
 [Unit]
 Description=hal backup: encrypted restic backup of the declared apps
-Documentation=file://%h/git/edge/docs/backup.md
+Documentation=file://%h/srv/hal/docs/backup.md
 
 [Service]
 Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/hal backup
+ExecStart=%h/srv/hal/.venv/bin/hal backup
 TimeoutStartSec=6h
 """,
     "hal-backup.timer": """\
@@ -215,17 +215,17 @@ Description=hal check: reports what is wrong on this machine and in the secrets 
 
 [Service]
 Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/hal check
+ExecStart=%h/srv/hal/.venv/bin/hal check
 SuccessExitStatus=1
 """,
     "hal-backup-restore-test.service": """\
 [Unit]
 Description=hal backup: restore the latest snapshots and prove they are good
-Documentation=file://%h/git/edge/docs/backup.md
+Documentation=file://%h/srv/hal/docs/backup.md
 
 [Service]
 Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/hal restore --test
+ExecStart=%h/srv/hal/.venv/bin/hal restore --test
 TimeoutStartSec=6h
 """,
     "hal-backup-restore-test.timer": """\

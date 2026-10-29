@@ -52,7 +52,7 @@ names the recreate, which ends every run in flight, and the one `yes` covers it.
 `service.toml` alone is not seen by apply yet (the file is bound from the checkout), so it still
 needs the hand recreate
 `docker compose --profile agent-service up -d --force-recreate agent-service`, in the live checkout
-after `git -C ~/git/edge pull --ff-only`.
+after `git -C ~/srv/hal pull --ff-only`.
 
 ## The login
 
@@ -194,7 +194,7 @@ host process can reach it, because the network has no host address and publishes
 Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-runtime upgrade.
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
-built: `cd ~/git/edge && python3 agent-service/live_smoke.py`. It signs you in as yourself (the
+built: `cd ~/srv/hal && python3 agent-service/live_smoke.py`. It signs you in as yourself (the
 `songmaker` client's device grant, edge#184 D6): it prints a link and a code and opens the link
 where a browser is there; you sign in and confirm on any device, and the run goes on by itself,
 nothing is pasted (it waits as long as the code lives). Keycloak starts a
@@ -209,7 +209,7 @@ The realm declares these groups but grants no membership: add yourself once in t
 console on port 8090. The smoke names the possible causes of a refusal for rights. Run it at once, as
 the workload token lives five minutes, and send the head its report.
 
-**The live signer proof** is `cd ~/git/edge && python3 agent-service/live_signer.py`, run by the operator
+**The live signer proof** is `cd ~/srv/hal && python3 agent-service/live_signer.py`, run by the operator
 after a key change or a change of the service's gateway route. It signs you in as the live smoke does,
 recreates the service and judges the recreate (L3): the service's networks are the resolved ones and each is internal and
 isolated, and its two secret mounts come from `private.pem` and `root_ca.crt` under `~/.secrets`, as the compose

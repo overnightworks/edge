@@ -45,6 +45,7 @@ from test_stack_plan_rows import (
     unit_plan,
 )
 
+from hal.stack import checkout
 from hal.stack.external import cli as external_cli
 from hal.stack.legal_step import PageChange
 from hal.stack.plan_rows import changes_in
@@ -223,7 +224,7 @@ def test_a_dirty_tree_is_a_failed_checkout_row_with_its_paths_then_one_error(
     assert detail_lines(out) == ["fleet.yaml", "dynamic/x.yml"]
     assert lines_of(err) == [
         "error: the live checkout has local changes, nothing changed",
-        "next: git -C ~/git/edge status",
+        f"next: git -C {checkout.LIVE_CHECKOUT} status",
     ]
     assert scripted.calls == []
 
