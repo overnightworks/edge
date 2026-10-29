@@ -277,7 +277,7 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
 
 @pytest.fixture
 def executable_staging_grants(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
-    """The bytes of every staged mise when it is made executable: proof that rejected bytes never are."""
+    """The bytes of every staged mise when made executable: proof rejected bytes never are."""
     grants: list[bytes] = []
     real_chmod = Path.chmod
 
