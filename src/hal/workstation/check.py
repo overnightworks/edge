@@ -260,6 +260,10 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "hook-file"): HOOK_BROKEN,
     ("hook", "quality"): HOOK_BROKEN,
     ("hook", "engines"): HOOK_BROKEN,
+    ("hook", "mise"): RuleReport(
+        ACTION, "mise is missing or not the pinned one; the quality gate cannot install its scanners.", SETUP_APPLY,
+        resolved="mise is the pinned one again.", describes_shared_state=True,
+    ),
     ("hook", "hidden-hook"): RuleReport(NOTE, "A repo's own commit step is hidden.", area_note="a repo's own commit step is hidden"),
     ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", SECRETS_VIEW, resolved="A secret is no longer readable by others."),
     ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", SECRETS_VIEW, resolved="A secret no longer sits behind a link."),

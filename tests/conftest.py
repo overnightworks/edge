@@ -19,6 +19,7 @@ from backup_support import (
 from host_support import write_host_shims
 from live_stack import LIVE_STACK_PORTS
 from workstation_support import (
+    FAKE_MISE_SHA256,
     HOME_README,
     RECORDED_RECEIPT_GIT,
     STUB_QUALITY,
@@ -35,6 +36,7 @@ from workstation_support import (
     Sandbox,
     plant_secrets,
     run_hal_setup,
+    serve_fake_mise,
     set_up_mail,
     write_backup_status,
     write_executable,
@@ -44,7 +46,7 @@ from hal import cli
 from hal.backup import host
 from hal.grammar import ExitCode
 from hal.stack import appkit_step
-from hal.workstation import check, jobs, secrets_view, system_step, tunnel_config
+from hal.workstation import check, jobs, secrets_view, setup, system_step, tunnel_config
 from hal.workstation import ports as home_ports
 
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
@@ -267,7 +269,25 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
     monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
+    # No test downloads: the pinned mise is a stub, and its pin is the stub's hash.
+    monkeypatch.setattr(home_ports, "DOWNLOAD", serve_fake_mise)
+    monkeypatch.setattr(setup, "MISE_SHA256", FAKE_MISE_SHA256)
     return Sandbox(home, global_git_config, uv_calls, system)
+
+
+@pytest.fixture
+def executable_staging_grants(monkeypatch: pytest.MonkeyPatch) -> list[bytes]:
+    """The bytes of every staged mise when made executable: proof rejected bytes never are."""
+    grants: list[bytes] = []
+    real_chmod = Path.chmod
+
+    def record_grant(path: Path, mode: int, **options: bool) -> None:
+        if mode & 0o111 and path.name.startswith(".mise-"):
+            grants.append(path.read_bytes())
+        real_chmod(path, mode, **options)
+
+    monkeypatch.setattr(Path, "chmod", record_grant)
+    return grants
 
 
 @pytest.fixture

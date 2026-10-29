@@ -5,20 +5,24 @@ from __future__ import annotations
 import json
 import os
 import pwd
+import socket
 import subprocess
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 from workstation_secrets_support import never_run
-from workstation_support import FakeClock, Sandbox, run_captured_hal_setup, run_hal_setup
+from workstation_support import FAKE_MISE, STALE_MISE, FakeClock, RecordingDownload, Sandbox, bin_entries, cut_off_mid_transfer, fail_to_write, plant_mise
+from workstation_support import run_captured_hal_setup, run_hal_setup, serve_half, serve_wrong_bytes, time_out
 
 import hal.workstation
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
-from hal.workstation import system_step
+from hal.workstation import ports, system_step
 from hal.workstation.secrets_setup import Boundaries, Terminal
-from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, QUALITY_SOURCE, RERUN, ExecutionRole
+from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, MISE_URL, QUALITY_SOURCE, RERUN, ExecutionRole
 from hal.workstation.system_step import AGENT_USER, CheckState, SystemStep
 
 COMMIT_HOOK, PATH, TIMERS, SYSTEM, SECRETS = "commit hook", "path", "timers", "system", "secrets"
@@ -635,6 +639,146 @@ def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.Captu
         "error: setup stopped at system · /etc unchanged",
         f"next: {RERUN}",
     ]
+
+
+def run_setup_with(sandbox: Sandbox, *flags: str, **port_overrides) -> int:
+    return run_hal_setup(*flags, home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, **port_overrides)
+
+
+def test_apply_installs_the_pinned_mise_from_its_release_url_through_a_private_staging_file(sandbox: Sandbox, executable_staging_grants: list[bytes]) -> None:
+    """#679: the pinned release binary is downloaded into a file only its owner can touch, made executable once its bytes are complete, then published."""
+    download = RecordingDownload()
+
+    code = run_setup_with(sandbox, download=download)
+
+    mise = sandbox.layout.mise_executable
+    assert code == ExitCode.OK
+    assert download.urls == [MISE_URL]
+    assert download.staging_modes == [0o600]
+    assert executable_staging_grants == [FAKE_MISE]
+    assert (mise.read_bytes(), oct(mise.stat().st_mode & 0o777)) == (FAKE_MISE, "0o755")
+    assert bin_entries(sandbox.home) == {"mise", "quality", "ansible-playbook"}
+
+
+def test_a_dry_run_downloads_nothing_and_a_second_apply_leaves_a_current_mise_alone(sandbox: Sandbox) -> None:
+    """#679: the plan before the yes neither downloads nor installs, and a current mise is not fetched again."""
+    download = RecordingDownload()
+    run_setup_with(sandbox, "--dry-run", download=download)
+    assert not sandbox.layout.mise_executable.exists()
+
+    run_setup_with(sandbox, download=download)
+    run_setup_with(sandbox, download=download)
+
+    assert len(download.urls) == 1
+
+
+@pytest.mark.parametrize("answer", ["no", None], ids=repr)
+def test_a_refused_yes_installs_no_mise(sandbox: Sandbox, answer: str | None) -> None:
+    """#679: not yes and EOF end the run before any step, so no download happens."""
+    download = RecordingDownload()
+
+    run_setup_with(sandbox, answer=answer, download=download)
+
+    assert (download.urls, sandbox.layout.mise_executable.exists()) == ([], False)
+
+
+@pytest.mark.parametrize("damage", [lambda mise: mise.write_bytes(STALE_MISE), lambda mise: mise.chmod(0o644)], ids=["hash drifted", "not executable"])
+def test_a_drifted_or_non_executable_mise_is_replaced_by_the_pinned_one(sandbox: Sandbox, damage: Callable[[Path], object]) -> None:
+    """#679: the pin is exact, so an unlike file or one that cannot run is put back."""
+    mise = plant_mise(sandbox.home, FAKE_MISE)
+    damage(mise)
+
+    code = run_setup_with(sandbox)
+
+    assert (code, mise.read_bytes(), oct(mise.stat().st_mode & 0o777)) == (ExitCode.OK, FAKE_MISE, "0o755")
+
+
+def test_the_agents_account_installs_mise_like_quality(sandbox: Sandbox) -> None:
+    """#679: the agents' own run needs the pinned hygiene, so it installs mise in its own home."""
+    sandbox.system.user = AGENT_USER
+
+    code = run_setup_with(sandbox)
+
+    assert (code, sandbox.layout.mise_executable.read_bytes()) == (ExitCode.OK, FAKE_MISE)
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["fresh", "existing binary"])
+@pytest.mark.parametrize(
+    ("download", "sentence"),
+    [
+        (serve_wrong_bytes, "the download of mise does not match its pinned sha256"),
+        (serve_half, "the download of mise does not match its pinned sha256"),
+        (time_out, "mise could not be downloaded: timed out"),
+        (fail_to_write, "mise could not be downloaded: No space left on device"),
+        (cut_off_mid_transfer, "mise could not be downloaded: IncompleteRead(10 bytes read, 100 more expected)"),
+    ],
+    ids=["mismatch", "truncated", "timeout", "write error", "response cut off"],
+)
+def test_a_failed_download_publishes_nothing_keeps_an_existing_mise_and_leaves_no_staging_file(
+    sandbox: Sandbox,
+    capsys: pytest.CaptureFixture[str],
+    executable_staging_grants: list[bytes],
+    download: Callable[[str, BinaryIO], None],
+    sentence: str,
+    existing: bool,
+) -> None:
+    """#679: a download that fails or does not hash to the pin fails the commit hook row with its own sentence and never makes its bytes executable."""
+    if existing:
+        plant_mise(sandbox.home)
+
+    code, lines, _ = run_captured_hal_setup(capsys, home=sandbox.home, secrets_setup_boundaries=sandbox.secrets_boundaries, download=download)
+
+    mise = sandbox.layout.mise_executable
+    assert (code, lines[0]) == (ExitCode.FAILURE, f"  ✗ commit hook     failed         {sentence}")
+    assert (mise.read_bytes() if mise.exists() else None) == (STALE_MISE if existing else None)
+    assert bin_entries(sandbox.home) == ({"mise"} if existing else set())
+    assert executable_staging_grants == []
+
+
+@pytest.mark.parametrize("existing", [False, True], ids=["fresh", "existing binary"])
+def test_a_failing_rename_keeps_an_existing_mise_and_leaves_no_staging_file(
+    sandbox: Sandbox, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, existing: bool
+) -> None:
+    """#679: when the verified file cannot be moved into place, the failure is named and the directory is as it was."""
+    if existing:
+        plant_mise(sandbox.home)
+    real_replace = os.replace
+
+    def refuse_mise(source: Path, destination: Path) -> None:
+        if Path(destination) == sandbox.layout.mise_executable:
+            raise OSError(1, "Operation not permitted")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", refuse_mise)
+
+    code, lines, _ = run_setup(sandbox, capsys)
+
+    mise = sandbox.layout.mise_executable
+    assert (code, lines[0]) == (ExitCode.FAILURE, "  ✗ commit hook     failed         mise could not be installed: Operation not permitted")
+    assert (mise.read_bytes() if mise.exists() else None) == (STALE_MISE if existing else None)
+    assert bin_entries(sandbox.home) == ({"mise"} if existing else set())
+
+
+def test_a_release_download_writes_what_the_url_serves(tmp_path: Path) -> None:
+    served = tmp_path / "served"
+    served.write_bytes(b"release bytes")
+
+    with (tmp_path / "written").open("wb") as writer:
+        ports.download_release(served.as_uri(), writer)
+
+    assert (tmp_path / "written").read_bytes() == b"release bytes"
+
+
+def test_a_download_whose_server_stays_silent_ends_in_an_os_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The download has its own timeout, so a stalled connection fails the step instead of hanging setup."""
+    monkeypatch.setattr(ports, "DOWNLOAD_TIMEOUT_SECONDS", 0.2)
+    with socket.socket() as silent_server, (tmp_path / "written").open("wb") as writer:
+        silent_server.bind(("127.0.0.1", 0))
+        silent_server.listen()
+        url = f"http://127.0.0.1:{silent_server.getsockname()[1]}/mise"
+
+        with pytest.raises(OSError):
+            ports.download_release(url, writer)
 
 
 def test_setup_help_warns_that_the_system_step_restarts_docker(capsys: pytest.CaptureFixture[str]) -> None:

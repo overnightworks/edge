@@ -180,6 +180,18 @@ def make_quality_unpinned(machine: Machine) -> None:
     receipt.write_text(receipt.read_text().replace("?rev=", "?rev=0"))
 
 
+def delete_mise(machine: Machine) -> None:
+    machine.layout.mise_executable.unlink()
+
+
+def make_mise_not_executable(machine: Machine) -> None:
+    machine.layout.mise_executable.chmod(0o644)
+
+
+def drift_mise(machine: Machine) -> None:
+    machine.layout.mise_executable.write_bytes(b"#!/bin/sh\necho another mise\n")
+
+
 def break_engines(machine: Machine) -> None:
     shutil.rmtree(machine.layout.quality_engines_dir)
 
@@ -193,6 +205,9 @@ def break_engines(machine: Machine) -> None:
         (edit_hook_by_hand, "hook-file", HOOK_NAMES[1]),
         (delete_quality, "quality", "quality"),
         (make_quality_unpinned, "quality", "quality"),
+        (delete_mise, "mise", "mise"),
+        (make_mise_not_executable, "mise", "mise"),
+        (drift_mise, "mise", "mise"),
         (break_engines, "engines", "engines"),
     ],
     ids=[
@@ -202,19 +217,22 @@ def break_engines(machine: Machine) -> None:
         "hook edited",
         "quality missing",
         "quality at another source",
+        "mise missing",
+        "mise not executable",
+        "mise at another hash",
         "engines fail",
     ],
 )
 def test_a_damaged_installation_is_found_with_the_setup_command_and_clean_after_it(
     machine: Machine, damage: Callable[[Machine], None], rule: str, subject: str
 ) -> None:
-    """#23 rule 2.2, 2.3, 2.4: a damaged hook file, quality or engines gets the setup command and is clean after it."""
+    """#23 rule 2.2, 2.3, 2.4 and #679: a damaged hook file, quality, mise or engines gets the setup command and is clean after it."""
     damage(machine)
 
     findings = machine.findings()
 
     layout = machine.layout
-    owners = {"hook-file": layout.git_hooks_dir, "quality": layout.quality_executable, "engines": layout.quality_engines_dir}
+    owners = {"hook-file": layout.git_hooks_dir, "quality": layout.quality_executable, "mise": layout.mise_executable, "engines": layout.quality_engines_dir}
     expected_subject = owners[rule] / subject if rule == "hook-file" else owners[rule]
     assert findings[(rule, str(expected_subject))] == "`hal setup`"
     machine.apply_setup()
@@ -289,9 +307,21 @@ def test_git_that_cannot_be_run_makes_the_check_fail_instead_of_clean(machine: M
         hook_check.collect_findings(machine.layout, run)
 
 
-def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_check_as_failed(machine: Machine, capsys) -> None:
-    """`hal check` joins a hook finding into its one report and shows a broken hook check as failed."""
-    delete_quality(machine)
+@pytest.mark.parametrize(
+    ("damage", "rule", "executable"),
+    [
+        (delete_quality, "quality", lambda layout: layout.quality_executable),
+        (delete_mise, "mise", lambda layout: layout.mise_executable),
+        (make_mise_not_executable, "mise", lambda layout: layout.mise_executable),
+        (drift_mise, "mise", lambda layout: layout.mise_executable),
+    ],
+    ids=["quality missing", "mise missing", "mise not executable", "mise at another hash"],
+)
+def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_check_as_failed(
+    machine: Machine, damage: Callable[[Machine], None], rule: str, executable: Callable[[Layout], Path]
+) -> None:
+    """`hal check` joins a hook finding, mise's included, into its one report with `hal setup` as the fix and shows a broken hook check as failed."""
+    damage(machine)
     layout = machine.layout
 
     code = home_check(machine.sandbox.home, delegating_to_git_only())
@@ -299,7 +329,9 @@ def test_home_check_reports_a_hook_finding_in_its_one_report_and_a_broken_hook_c
     assert code == 1
     assert "# hook " in report
     assert "| Rule | Subject | Finding | Fix |" in report.splitlines()
-    assert f"| quality | {layout.quality_executable} |" in report
+    (row,) = [line for line in report.splitlines() if line.startswith(f"| {rule} |")]
+    assert str(executable(layout)) in row
+    assert row.endswith("| `hal setup` |")
 
     code = home_check(machine.sandbox.home, delegating_to_git_only(broken=["worktree"]))
     assert code == 3
