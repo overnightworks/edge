@@ -159,14 +159,16 @@ def test_a_character_reference_is_refused_with_the_remedy_and_without_the_text(
 
 
 def test_an_id_owned_by_another_block_is_refused_naming_both(checkout, app, capsys):
-    """Acceptance 9: the `anmeldung` anchor is keycloak's block, and both owners are named."""
-    put(app, PRIVACY, '<h2 id="anmeldung">A</h2>\n<p>a</p>\n')
+    """Acceptance 9: an anchor another block owns is refused, and both owners are named."""
+    owner = "legal/sections/allgemein/datenschutz.html"
+    (checkout / owner).write_text('<h2 id="hopin">Shared</h2>\n<p>a</p>\n')
+    put(app, PRIVACY)
 
-    code, _, err = run(capsys, checkout, "anmeldung", app)
+    code, _, err = run(capsys, checkout, KEY, app)
 
     assert code == 1
     assert PRIVACY in err
-    assert "legal/sections/keycloak/datenschutz.html" in err
+    assert owner in err
 
 
 def test_a_link_to_a_block_that_does_not_exist_is_refused(checkout, app, capsys):

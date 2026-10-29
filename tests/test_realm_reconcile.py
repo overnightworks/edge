@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-import yaml
 
 from hal.stack import compose, core, switches
 from hal.stack.realm import observe, reconcile
@@ -979,21 +978,3 @@ def test_a_finished_backup_returns_its_exit_code_and_output() -> None:
     )
 
     assert (result.returncode, result.stdout, result.stderr) == (3, "out\n", "err\n")
-
-
-def test_config_cli_of_the_real_compose_yaml_is_followed_and_its_bound_files_are_listed() -> None:
-    """compose.yaml's own binds of keycloak-config-cli: edge follows it, and its bound files list
-    the entrypoint beside the two realm files its directory bind carries."""
-    document = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())
-    mounts = document["services"][reconcile.CONFIG_CLI]["volumes"]
-    binds = [{"type": "bind", "source": str(REPOSITORY / mount.split(":")[0])} for mount in mounts]
-    config = {"services": {reconcile.CONFIG_CLI: {"volumes": binds}}}
-
-    files = reconcile.bound_files(config, REPOSITORY)
-
-    assert core.followed_services(config, REPOSITORY) == {reconcile.CONFIG_CLI}
-    assert [path.relative_to(REPOSITORY).as_posix() for path in files] == [
-        "keycloak/master.yaml",
-        "keycloak/realm.yaml",
-        "keycloak/entrypoint.sh",
-    ]

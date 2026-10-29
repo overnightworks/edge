@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import secrets
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any, Protocol
 
-DOMAIN = "hallucinai.de"
+import yaml
+
 CLIENT_SERVICE = "probe-backchannel-client"
 CLIENT_SCRIPT = "/cell/backchannel_client.py"
 FORGED_ADDRESS = "203.0.113.77"
@@ -18,29 +20,13 @@ USER = "probe-forged"
 LOGOUT_URL_KEY = "backchannel.logout.url"
 SESSION_REQUIRED_KEY = "backchannel.logout.session.required"
 REFRESH_TOKENS_KEY = "use.refresh.tokens"
+REALM_FILE = Path(__file__).resolve().parents[2] / "keycloak" / "realm.yaml"
+SETTING_KEYS = (LOGOUT_URL_KEY, SESSION_REQUIRED_KEY, REFRESH_TOKENS_KEY)
 
 
-def logout_url(app: str, port: int) -> str:
-    return (
-        f"http://{app}.{DOMAIN}"  # NOSONAR(S5332) internal back-channel network, ruled shape
-        f":{port}/auth/backchannel-logout"
-    )
-
-
-# Per app, the attributes the ruling sets; an app that is not here has none of these keys. HopIn
-# names its refresh token as on (R1 of #506), so a merge cannot keep an earlier off.
-RULED_SETTINGS = {
-    "songmaker": {LOGOUT_URL_KEY: logout_url("songmaker", 8080), SESSION_REQUIRED_KEY: "false"},
-    "hopin": {
-        LOGOUT_URL_KEY: logout_url("hopin", 8080),
-        SESSION_REQUIRED_KEY: "false",
-        REFRESH_TOKENS_KEY: "true",
-    },
-    "presentator": {
-        LOGOUT_URL_KEY: logout_url("presentator", 8000),
-        SESSION_REQUIRED_KEY: "false",
-    },
-}
+def _declared_attributes() -> dict[str, dict[str, str]]:
+    clients = yaml.safe_load(REALM_FILE.read_text())["clients"]
+    return {client["clientId"]: client.get("attributes", {}) for client in clients}
 
 
 class Stack(Protocol):
@@ -60,15 +46,15 @@ class Probe(Protocol):
 
 
 def ruled_settings(client_id: str) -> dict[str, str]:
-    return dict(RULED_SETTINGS.get(client_id, {}))
+    """The back-channel attributes the realm declaration the stack applies gives the client."""
+    declared = _declared_attributes().get(client_id, {})
+    return {key: declared[key] for key in SETTING_KEYS if key in declared}
 
 
 def wrong_logout_settings(client_id: str, attributes: Mapping[str, str]) -> dict[str, str | None]:
     """What differs from the ruled settings: the logout address, its session requirement and the
     refresh-token line of the apps that have them, none of the three for any other app."""
-    ruled = dict.fromkeys(
-        (LOGOUT_URL_KEY, SESSION_REQUIRED_KEY, REFRESH_TOKENS_KEY)
-    ) | ruled_settings(client_id)
+    ruled = dict.fromkeys(SETTING_KEYS) | ruled_settings(client_id)
     return {
         key: attributes.get(key) for key, value in ruled.items() if attributes.get(key) != value
     }

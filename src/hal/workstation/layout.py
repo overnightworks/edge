@@ -55,6 +55,10 @@ class Layout:
         return self.local_dir / "bin" / "quality"
 
     @property
+    def mise_executable(self) -> Path:
+        return self.local_dir / "bin" / "mise"
+
+    @property
     def quality_engines_dir(self) -> Path:
         return self.data_dir / "quality" / "engines"
 

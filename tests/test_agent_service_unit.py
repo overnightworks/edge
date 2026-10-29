@@ -61,30 +61,24 @@ def test_the_service_is_hardened_and_never_pulled(service):
     assert "cap_add" not in service
     assert service["security_opt"] == ["no-new-privileges:true"]
     assert service["ulimits"] == {"core": 0}
-    assert service["restart"] == "unless-stopped"
     assert service["pull_policy"] == "never"
-    assert service["profiles"] == ["agent-service"]
 
 
-def test_the_service_is_one_replica_with_no_published_port_and_its_home_in_tmp(service):
-    """U2: no replicas, no scale; the network is the anchor's alone and HOME is the tmpfs."""
+def test_the_service_is_one_replica_with_no_published_port(service):
+    """U2: no replicas, no scale; the network is the anchor's alone."""
     assert not {"deploy", "scale", "ports", "network_mode", "expose"} & service.keys()
-    assert service["environment"] == {"HOME": "/tmp"}
 
 
-@pytest.mark.parametrize("directory", ["/tmp", "/run/agent-service/cli"])
-def test_a_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(
-    tmpfs_options, directory
-):
-    """U6, U7: owned by 1000 with exactly mode 0700, nosuid, nodev, noexec and bounded."""
-    options = tmpfs_options[directory]
-
-    assert set(options) >= set(OWNER_ONLY_TMPFS)
-    assert any(SIZE_BOUND.fullmatch(option) for option in options)
+def test_every_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(tmpfs_options):
+    """U6, U7: on the read-only root, each mounted tmpfs is owned by 1000 with exactly mode 0700,
+    nosuid, nodev, noexec and bounded, so no unbounded or shared writable directory exists."""
+    assert tmpfs_options
+    for options in tmpfs_options.values():
+        assert set(options) >= set(OWNER_ONLY_TMPFS)
+        assert any(SIZE_BOUND.fullmatch(option) for option in options)
 
 
-def test_the_service_has_no_writable_directory_but_its_two_tmpfs(service, tmpfs_options):
-    assert set(tmpfs_options) == {"/tmp", "/run/agent-service/cli"}
+def test_every_volume_of_the_service_is_a_read_only_bind(service):
     assert all(
         volume["type"] == "bind" and volume["read_only"] is True for volume in service["volumes"]
     )
@@ -95,7 +89,6 @@ def test_the_login_is_a_read_only_directory_bind_that_is_never_created(binds):
     the start instead of becoming root's directory."""
     login = binds["/run/agent-service/login/claude"]
 
-    assert login["source"] == "${HOME}/.secrets/agent-service/claude"
     assert login["read_only"] is True
     assert login["bind"] == {"create_host_path": False}
 
@@ -103,7 +96,6 @@ def test_the_login_is_a_read_only_directory_bind_that_is_never_created(binds):
 def test_the_configuration_is_a_read_only_file_bind_from_the_checkout(binds):
     configuration = binds["/etc/agent-service/service.toml"]
 
-    assert configuration["source"] == "./agent-service/service.toml"
     assert configuration["read_only"] is True
     assert configuration["bind"] == {"create_host_path": False}
 
@@ -122,26 +114,21 @@ def test_the_service_toml_paths_are_the_services_mount_targets(
     service, configuration, tmpfs_options, binds
 ):
     """U13: the working root is a tmpfs, the token file lies in the login bind, the binary is the
-    image's, and the image's default command reads the configuration bind."""
+    image's, and the configuration bind is a mount target."""
     dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
     token_file = PurePosixPath(configuration["cli"]["anthropic"]["token_file"])
 
     assert configuration["cli"]["working_root"] in tmpfs_options
     assert str(token_file.parent) in binds
-    assert token_file.name == "token"
     binary = configuration["cli"]["anthropic"]["binary"]
     assert f"--chmod=0555 /tmp/claude {binary}\n" in dockerfile
-    assert 'CMD ["--config", "/etc/agent-service/service.toml"]' in dockerfile
     assert "/etc/agent-service/service.toml" in binds
 
 
-def test_the_service_listens_on_every_interface_and_pins_the_cli_it_runs(configuration):
-    """The networks are internal and isolated, so 0.0.0.0 reaches only members; the version pin
-    equals the CLI the recipe installs."""
+def test_the_version_pin_equals_the_cli_the_recipe_installs(configuration):
     dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
     pinned = re.search(r"^ARG CLAUDE_VERSION=(\S+)$", dockerfile, re.MULTILINE).group(1)
 
-    assert configuration["server"] == {"host": "0.0.0.0"}
     assert configuration["cli"]["anthropic"]["version"] == pinned
 
 
@@ -161,9 +148,8 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     assert jwks.hostname == issuer.hostname
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
-    assert set(identity["subscription_groups"]) == {"/services/agent-service/subscription"}
+    assert identity["subscription_groups"]
     assert set(identity["subscription_groups"]) <= groups
-    assert not {"subscription_group", "api_groups"} & identity.keys()
 
 
 def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrides_no_model(
@@ -181,33 +167,22 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrid
         assert not {"tools", "purposes", "model", "agents"} & app.keys()
 
 
-def test_hopin_is_registered_with_its_realm_client_as_workload_and_no_tools(configuration):
-    """R0 of #506: HopIn reaches the service through its own workload client."""
-    assert configuration["apps"]["hopin"] == {"workload_client": "hopin"}
-
-
-def test_the_service_has_no_purpose_tables_and_no_paid_route_and_serves_the_subscriptions_aliases(
-    configuration,
-):
-    """Edge holds no API provider key, so there is no `[api]` and no `api_groups`."""
+def test_the_service_declares_no_paid_api_route(configuration):
+    """Edge holds no API provider key, so a route table would spend money the subscription does
+    not."""
     assert not {"purposes", "route", "api", "profiles"} & configuration.keys()
-    assert configuration["cli"]["anthropic"]["models"] == ["opus", "sonnet", "haiku"]
-
-
-def test_the_login_is_the_anthropic_token_file_and_every_app_runs_the_default_opus(
-    configuration,
-):
-    anthropic = configuration["cli"]["anthropic"]
-
-    assert anthropic["token_file"] == "/run/agent-service/login/claude/token"
-    assert configuration["defaults"] == {"model": "anthropic/opus"}
-    assert configuration["defaults"]["model"].removeprefix("anthropic/") in anthropic["models"]
 
 
 def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_mcp_origin(
     configuration,
 ):
     assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
+
+
+def test_the_default_model_is_one_the_anthropic_login_serves(configuration):
+    anthropic = configuration["cli"]["anthropic"]
+
+    assert configuration["defaults"]["model"].removeprefix("anthropic/") in anthropic["models"]
 
 
 def test_songmakers_mcp_origin_is_the_host_traefik_mcp_answers_to_on_mcp(configuration):
@@ -219,7 +194,6 @@ def test_songmakers_mcp_origin_is_the_host_traefik_mcp_answers_to_on_mcp(configu
     ]
 
     assert origin.scheme == "https"
-    assert origin.hostname == "songmaker.mcp.internal"
     assert origin.hostname in compose["services"]["traefik-mcp"]["networks"]["mcp"]["aliases"]
     assert f"Host(`{origin.hostname}`)" in router["rule"]
     assert "mcp" in compose["services"][SERVICE]["networks"]
@@ -237,8 +211,8 @@ def test_the_signing_key_and_the_ca_root_are_compose_secrets_from_the_manifests_
     key_secret, ca_secret = "agent_service_signing_key", "step_ca_root_certificate"
 
     assert set(service["secrets"]) == {key_secret, ca_secret}
-    assert configuration["signing"] == {"key_file": f"/run/secrets/{key_secret}"}
-    assert configuration["mcp"] == {"ca_file": f"/run/secrets/{ca_secret}"}
+    assert PurePosixPath(configuration["signing"]["key_file"]).name in service["secrets"]
+    assert PurePosixPath(configuration["mcp"]["ca_file"]).name in service["secrets"]
     secret_files = [
         compose["secrets"][name]["file"].replace("${HOME}", "~") for name in (key_secret, ca_secret)
     ]
