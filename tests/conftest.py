@@ -268,6 +268,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
     system = FakeSystem(FakePlaybook())
     monkeypatch.setattr(system_step, "TERMINAL_BOUNDARIES", system.boundaries)
     monkeypatch.setattr(home_ports, "MONOTONIC_CLOCK", FakeClock())
+    # A wheel has no checkout, so the path row stays unchanged; a test hands one in.
+    monkeypatch.setattr(home_ports, "RUNNING_CHECKOUT", lambda: None)
     return Sandbox(home, global_git_config, uv_calls, system)
 
 
