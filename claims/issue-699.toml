@@ -1,0 +1,8 @@
+claim_id = "3ff3a217861f4416995e15cc6adc02fa"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "90c952879424bd2ad2b3dba0e0e7b211e284cbdf"
+branch = "claude/issue-699-s3-b1-the-live-checkout-becomes-the-depl"
+scope = ["agent-service/live_signer.py", "agent-service/live_smoke.py", "docs/agent-service.md", "docs/backup.md", "docs/design/hal-output.html", "docs/external.md", "docs/home.md", "docs/internal-ca.md", "docs/naming.md", "docs/stack.md", "probe/edge_copy.py", "quality/baseline.toml", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "src/hal/stack/apply.py", "src/hal/stack/checkout.py", "src/hal/workstation/jobs.py", "src/hal/workstation/layout.py", "tests/old_names_baseline.toml", "tests/test_old_names.py", "tests/test_stack_apply.py", "tests/test_stack_apply_checkout.py", "tests/test_stack_apply_publish.py", "tests/test_stack_apply_yes.py", "tests/test_stack_checkout.py", "tests/test_stack_external.py", "tests/test_stack_plan_rows.py", "tests/test_workstation_path_link.py", "tests/test_workstation_setup.py", "tests/test_workstation_setup_yes.py", "tests/test_workstation_user_units.py"]
+opened_commit = "dc47b0d1a4d5a7e9653e5ea780ae15d0e62e5839"
+whole_reason = "One fact, the live checkout path, is pinned in six production files, the harness, the docs and the tests that model it; any split lands a tree whose owners, comments or ratchet section disagree."
