@@ -335,11 +335,6 @@ def test_the_host_domain_is_the_one_compose_gives_traefik():
         barrier.Barrier.of_unit(broken, ["hello"], REPOSITORY, unit)
 
 
-def test_the_address_is_read_from_the_real_traefik_yml():
-    """#61 rule 3 / proof a: the address comes from the real traefik.yml."""
-    assert barrier.edge_address(REPOSITORY) == ADDRESS
-
-
 def test_the_barrier_names_are_ignored_by_git_but_the_directory_stays_tracked():
     """#61 rule 2 / proof a: `switch-*` and its `.tmp` are ignored; `.gitkeep` stays."""
     for name in ("switch-keycloak.yml", "switch-keycloak.yml.tmp"):

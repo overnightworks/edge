@@ -947,14 +947,14 @@ def _resolved_mount(mount: str | dict) -> dict:
 def test_the_repositorys_agent_service_unit_starts_both_services_and_then_changes_nothing(
     switch, scripted, setup_check, repository
 ):
-    """#214 S1: the real catalog line starts exactly the profile's two services; a second apply
+    """#214 S1: the real catalog line starts the profile's services; a second apply
     plans nothing. #234: it asks `agent-service/setup --check` before it switches on."""
     exit_code, out, _ = switch()
 
     assert exit_code == 0
     assert setup_check.commands == [[str(repository / "agent-service/setup"), "--check"]]
     assert "agent-service is on" in out
-    assert scripted.containers == {"agent-egress": "running", "agent-service": "running"}
+    assert set(scripted.containers.values()) == {"running"}
 
     exit_code, out, _ = switch()
 

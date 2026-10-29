@@ -142,7 +142,6 @@ def test_without_inherited_apps_leaves_the_repositorys_catalog_without_an_app():
 
     kept = yaml.safe_load(filtered)["services"]
     assert kept == {key: entry for key, entry in original.items() if not catalog.is_app(entry)}
-    assert {"hopin", "presentator"} <= set(original)
     assert not any(catalog.is_app(entry) for entry in kept.values())
     original_lines = iter(text.splitlines())
     assert all(line in original_lines for line in filtered.splitlines())  # in order

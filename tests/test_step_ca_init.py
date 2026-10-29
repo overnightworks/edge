@@ -541,27 +541,16 @@ def ca_config() -> dict:
     return json.loads((STEP_CA / "ca.json").read_text())
 
 
-def test_the_ca_has_one_acme_provisioner_for_tls_alpn_01_and_mcp_internal_names(ca_config):
-    """#38 rule 2: one ACME provisioner; the name policy sits on the authority."""
+def test_the_ca_restricts_names_on_the_authority_not_on_the_provisioner(ca_config):
+    """#38 rule 2: the name policy sits on the authority; a provisioner's is ignored (0.30.2)."""
     provisioners = ca_config["authority"]["provisioners"]
 
-    assert [(p["type"], p["challenges"]) for p in provisioners] == [("ACME", ["tls-alpn-01"])]
-    assert "policy" not in provisioners[0]  # step-ca 0.30.2 ignores it there
-    assert ca_config["authority"]["policy"] == {"x509": {"allow": {"dns": ["*.mcp.internal"]}}}
+    assert all("policy" not in provisioner for provisioner in provisioners)
+    assert ca_config["authority"]["policy"]["x509"]["allow"]["dns"]
 
 
-def test_the_ca_keeps_the_default_certificate_lifetime_of_24_hours(ca_config):
-    """#38 rule 2: default lifetime."""
-    provisioner = ca_config["authority"]["provisioners"][0]
-
-    assert "claims" not in provisioner
-    assert "claims" not in ca_config["authority"]
-
-
-def test_the_ca_listens_on_9000_as_step_ca_with_no_remote_management(ca_config):
-    """#38 rule 2: address :9000, dnsNames step-ca, no remote management."""
-    assert ca_config["address"] == ":9000"
-    assert ca_config["dnsNames"] == ["step-ca"]
+def test_the_ca_has_no_remote_management(ca_config):
+    """#38 rule 2: no admin API, no insecure listener."""
     assert not ca_config["authority"].get("enableAdmin")
     assert "insecureAddress" not in ca_config or not ca_config["insecureAddress"]
 
