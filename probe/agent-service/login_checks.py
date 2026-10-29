@@ -206,9 +206,8 @@ def guarded(stage: str, step: Callable[[], object], failed: list[str]) -> bool:
     """Runs `step`; a failure is printed as `describe` says and recorded in `failed`."""
     try:
         step()
-    except (
-        Exception
-    ) as problem:  # an exception's text may carry a secret, so only `describe` speaks of it
+    # an exception's text may carry a secret, so only `describe` speaks of it
+    except Exception as problem:
         print(describe(stage, problem), flush=True)
         failed.append(stage)
         return False
