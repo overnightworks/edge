@@ -1,0 +1,8 @@
+claim_id = "8ffe792a10af42e797e1a62e792723cb"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "20b1fd646e790b10ebdb43888e6478b92ce89d82"
+branch = "claude/issue-670-s2-hal-setup-links-local-bin-hal-to-the"
+scope = ["docs/design/hal-output.html", "docs/home.md", "src/hal/workstation/path_link.py", "src/hal/workstation/ports.py", "src/hal/workstation/setup.py", "tests/conftest.py", "tests/test_hal_launcher.py", "tests/test_workstation_path_link.py", "tests/test_workstation_setup_yes.py", "tests/workstation_support.py"]
+opened_commit = "4931a831780b1ba53a046685e9e9cf08a6c1cff4"
+whole_reason = "One seam goes: the running-checkout port is removed from ports, its single reader PathLink and setup, and every test helper that passes it, with the docs that name the target."
