@@ -5,8 +5,8 @@ Jeder Befehl erklärt sich mit `hal <command> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
 Alle Befehle teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
-es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
-`SuccessExitStatus=1` dafür), `2` wenn das
+es einen Fund gibt (das ist kein Fehler — `hal-check.service` (von `hal setup`
+geschrieben) trägt `SuccessExitStatus=1` dafür), `2` wenn das
 Geheimnis-Manifest ungültig ist (`hal check` kennt zusätzlich die Konfigurationsdatei, siehe „Konfiguration“), `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine `error:`-Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
@@ -416,7 +416,7 @@ mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
 Then it links `~/.local/bin/hal` to the `bin/hal` of the checkout `hal` runs from (the `path` row: it creates a missing link,
 re-points a link into another hal checkout, such as a clone that has moved, and refuses to replace a file, a directory or a link into anything else).
-Then it links the checkout's user units and runs the system step.
+Then it writes hal's user units and runs the system step.
 `hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal.output.confirmed`: nur genau `yes`,
 Ende der Eingabe heißt nein, Strg-C wird nicht gefangen) und führt es erst danach der Reihe nach aus; es hält beim ersten Fehler an.
 `hal setup --dry-run` zeigt nur, überspringt das yes und ändert nichts (an einem Terminal fragt sudo trotzdem, um `system` zu prüfen). Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
@@ -442,22 +442,29 @@ come before the system step, which is the one that asks for sudo:
 4. **Aktivierung.** `git config --global core.hooksPath` auf dieses
    Verzeichnis. It comes after the three steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
-5. **User units.** Every unit file in `~/git/edge/systemd/` is linked into
-   `~/.config/systemd/user/`, systemd reloads once after a change (also when only a
-   unit file changed after a pull), and each timer is enabled and started. A link
-   into `systemd/` whose file is gone (a renamed or removed unit) is stopped while
-   systemd still has it loaded and unlinked, at the top level and in the
-   `*.wants/` and `*.requires/` directories; timers stop before services. A same-name
-   entry that is not this checkout's link (a link elsewhere, a mask to `/dev/null`, a
-   file) is never replaced, and a retired link whose name the top level now gives to
-   such an entry is never stopped: the step fails before it changes anything, names
-   the file and leaves the decision to you. A timer that is not active after
-   enabling fails the step too. A
-   missing `systemd/` directory fails the step as well. A changed `timers` row says
-   `N timers` (every timer of the checkout's `systemd/`) and ` · systemd reloaded` when a
-   reload ran; an unchanged row stays bare. The step is
-   verified when every unit is linked, nothing needs a reload, every timer is
-   enabled and active, and no link dangles.
+5. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
+   restore test and `hal check`) are written as a `.service` and a `.timer` file each into
+   `~/.config/systemd/user/`, led by a marker line that says `hal setup` rewrites the file
+   and that changes belong in a drop-in (`<unit>.d/*.conf`, which `hal setup` never
+   touches). The `ExecStart` runs `.venv/bin/hal` of the live checkout, `~/git/edge`
+   (`Layout.live_checkout`), whichever checkout runs `hal setup`. systemd reloads once
+   after a change (also when only a unit file changed), and each timer is enabled and
+   started. A file is replaced by rename, so a unit name never lacks a unit and a loaded
+   timer stays active. The step replaces only a regular file whose first line is the
+   marker and the nine links an earlier `hal setup` wrote (six units linked into
+   `~/git/edge/systemd/` and the three `timers.target.wants/` links of the timers, which
+   it repoints at the written files whatever the timers' state). Every other entry of a
+   unit's name (a file without the marker, a link elsewhere, a mask to `/dev/null`, a
+   dependency link in a `*.wants/` or `*.requires/` directory) is refused before
+   anything changes: `<entry> was not written by hal · move or delete it, then rerun`,
+   and the row ends `nothing changed`. A failure after that check (a write, a rename, a
+   `systemctl` call, a timer that is not active after enabling) ends `units may be
+   partial`; a rerun classifies what is there and finishes. A changed `timers` row says
+   `N timers` (every declared timer) and ` · systemd reloaded` when a reload ran; an
+   unchanged row stays bare, and the plan of the first run after the move says
+   `replaces 6 links with 3 timers`. The step is verified when every unit is written
+   as declared, nothing needs a reload, every timer is enabled and active, and no
+   link into `systemd/` is left.
 6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
    `src/hal/workstation/setup.py`, a pinned `ansible-core`; like quality, it runs
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
@@ -709,14 +716,14 @@ uv sync --locked
 bin/hal setup
 ```
 
-Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
-`systemd/` und startet die Timer, darunter `hal-check.timer`.
+Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) schreibt die Units aus
+der Job-Liste `src/hal/workstation/jobs.py` und startet die Timer, darunter `hal-check.timer`.
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist der Starter,
 der `.venv/bin/hal` des Checkouts ausführt; der Link
 unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet; den Link legt der Schritt `path` von `hal setup` an
-und zieht ihn nach, wenn der Checkout umzieht. Die systemd-Unit ruft
-`~/git/edge/.venv/bin/hal` direkt auf und hängt so an keinem Link. `hal`
+und zieht ihn nach, wenn der Checkout umzieht. Die erzeugten systemd-Units rufen
+`~/git/edge/.venv/bin/hal` direkt auf und hängen so an keinem Link. `hal`
 läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`

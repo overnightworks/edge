@@ -84,7 +84,6 @@ database_file = "presentator.sqlite3"
 count_table = "users"
 """
 SQLITE_COPY = b"SQLite rows=7"
-SYSTEMD = Path(__file__).resolve().parents[1] / "systemd"
 # The real boundary, kept before the `machine` fixture swaps it: exits and files go through it.
 REAL_HOST_RUN = host.run
 

@@ -24,7 +24,7 @@ COMMIT_HOOK, PATH, TIMERS, SYSTEM, SECRETS = "commit hook", "path", "timers", "s
 ROWS = [COMMIT_HOOK, PATH, TIMERS, SYSTEM, SECRETS]
 
 
-# The sandbox's unit directory is empty: the timers have nothing to change, and no secret is open.
+# The sandbox declares no timer job: the timers have nothing to change, and no secret is open.
 SUDO_ANNOUNCEMENT = "  › system          needs sudo     tunnel, polkit, journal, mail, agent account"
 FRESH_APPLY = [
     "  ✓ commit hook     changed",

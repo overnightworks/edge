@@ -23,7 +23,7 @@ SETUP_DESCRIPTION = (
     " After the yes it sets up quality, the engines and the hook,"
     " then links ~/.local/bin/hal to the checkout hal runs from"
     " and re-points it after the checkout moved."
-    " It links, reloads and enables the checkout's user units"
+    " Then it writes, reloads and enables hal's user units"
     " (the backup and hal-check timers), installs Ansible and runs the system step,"
     " edge's cloudflared files and the stop-only polkit rule,"
     " which asks once for sudo after the yes; the activation comes before the system step."

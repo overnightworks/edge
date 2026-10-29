@@ -55,9 +55,5 @@ entry = "step-ca/"
 reason = "the step-ca configuration, bind-mounted by compose.yaml"
 
 [[root.allow]]
-entry = "systemd/"
-reason = "the systemd units that hal apply installs"
-
-[[root.allow]]
 entry = "tunnel/"
 reason = "the cloudflared units and drop-ins that hal apply installs"

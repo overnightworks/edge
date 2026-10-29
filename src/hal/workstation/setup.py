@@ -34,7 +34,7 @@ from hal.workstation.system_step import (
 )
 from hal.workstation.layout import CommandRunner, Layout
 from hal.workstation.path_link import PathLink
-from hal.workstation.user_units import UnitsApplied, UserUnits
+from hal.workstation.user_units import UnitsApplied, UnitsPartial, UserUnits
 
 if TYPE_CHECKING:
     from hal.workstation.ports import Ports
@@ -48,7 +48,7 @@ HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
 HOOK_WHY = "without the hook no commit is checked for secrets"
 PATH_WHY = "without the link your terminal finds no hal, or the one of a checkout that has moved"
-UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
+UNITS_WHY = "without the units and the reload the timers run no hal job, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
 SYSTEM_WHY = (
     "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
@@ -485,7 +485,7 @@ def _path_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     run = ports.run
     system = SystemStep(layout, ports.system)
-    units = UserUnits(layout, ports.unit_directory, run)
+    units = UserUnits(layout, ports.timer_jobs, run)
     system_row = SetupRow.SYSTEM
 
     def ansible_current() -> bool:
@@ -502,6 +502,7 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             units.apply,
             UNITS_WHY,
             "the user units did not come up",
+            open_fact=units.open_fact,
             operators_only=True,
         ),
         _local_step(
@@ -573,6 +574,19 @@ def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, mode: 
     return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity)
 
 
+def _failure_detail(row: SetupRow, error: OSError | StepFailed, step: Step, mode: Pass) -> str:
+    """What the failed row left behind, for the rows that say: no mutation is tracked, so `may` is true whether or not anything changed."""
+    match row:
+        case SetupRow.SYSTEM:
+            leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
+            return f" · {leaves}"
+        case SetupRow.PATH:
+            return " · nothing changed" if mode is not Pass.RUN else ""
+        case SetupRow.TIMERS:
+            return " · units may be partial" if isinstance(error, UnitsPartial) else " · nothing changed"
+    return ""
+
+
 def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, mode: Pass) -> None:
     step = stopped.step
     match stopped.error:
@@ -583,8 +597,7 @@ def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStoppe
             detail = f" · {counted(len(names), StillOpenSecret.SECRET)}"
         case error:
             outcome = Outcome(SetupEvent.FAILED, _failure_sentence(step, error))
-            leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
-            detail = {SetupRow.SYSTEM: f" · {leaves}", SetupRow.PATH: " · nothing changed" if mode is not Pass.RUN else ""}.get(rows[position], "")
+            detail = _failure_detail(rows[position], error, step, mode)
     write_row(outcome.row(rows[position]))
     for later in rows[position + 1 :]:
         write_row(Outcome(SetupEvent.NOT_RUN).row(later))
