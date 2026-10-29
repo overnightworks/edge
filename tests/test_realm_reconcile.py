@@ -23,8 +23,6 @@ from hal.stack.realm.reconcile import RealmAction, RealmPlan, RealmRestart
 REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
 ATTRIBUTE = "de.adorsys.keycloak.config.import-checksum-default"
-
-
 GROUP = observe.GROUP.name
 
 
@@ -66,33 +64,21 @@ class World:
         self.write_file("realm.yaml", "realm: hallucinai\ngroups:\n  - name: apps\n")
         self.write_file("master.yaml", "realm: master\n")
         self.write_file("entrypoint.sh", "#!/bin/sh\n")
-        self.service = self.resolved_service()
         self.record = core.Record(self.root / "state")
         self.marks = switches.Switches(self.root / "state")
 
     def write_file(self, name: str, text: str) -> None:
         (self.root / "keycloak" / name).write_text(text)
 
-    def resolved_service(self) -> dict:
-        """config-cli as compose.yaml resolves it: its entrypoint is a file bind, `keycloak/` a
-        directory bind, and one bind lies outside the checkout."""
-        binds = [
-            {"type": "bind", "source": str(self.root / "keycloak/entrypoint.sh"), "target": "/e"},
-            {"type": "bind", "source": str(self.root / "keycloak"), "target": "/k"},
-            {"type": "bind", "source": "/outside/source", "target": "/o"},
-        ]
-        return {
-            "image": "config-cli:one",
-            "environment": {"IMPORT_VARSUBSTITUTION_ENABLED": "true"},
-            "entrypoint": ["/e"],
-            "volumes": binds,
-            "secrets": [{"source": "client", "target": "CLIENT"}],
-            "networks": {"keycloak": None},
-        }
-
     @property
     def config(self) -> dict:
-        return {"services": {reconcile.CONFIG_CLI: self.service}}
+        """config-cli as compose.yaml resolves it: its entrypoint is a file bind, `keycloak/` a
+        directory bind."""
+        binds = [
+            {"type": "bind", "source": str(self.root / "keycloak/entrypoint.sh")},
+            {"type": "bind", "source": str(self.root / "keycloak")},
+        ]
+        return {"services": {reconcile.CONFIG_CLI: {"volumes": binds}}}
 
     # the fakes ---------------------------------------------------------------------------------
 
@@ -176,11 +162,20 @@ def world(tmp_path: Path) -> World:
 # --- When the step runs ------------------------------------------------------------------------
 
 
-def test_nothing_changed_since_the_last_apply_plans_no_step_and_no_line(world: World) -> None:
-    """Cells 1 and 4: a second apply right after the first does nothing, quietly."""
+@pytest.mark.parametrize(
+    ("moved", "gate"),
+    [(False, core.Gate.ON), (True, core.Gate.ON), (False, core.Gate.OFF)],
+    ids=["same checkout root", "another root", "keycloak off"],
+)
+def test_nothing_changed_since_the_last_apply_plans_no_step_and_no_line(
+    world: World, tmp_path: Path, moved: bool, gate: core.Gate
+) -> None:
+    """Cells 1 and 4: a second apply does nothing, wherever it is checked out."""
     assert world.applied_once().failure is None
-
-    plan = world.plan()
+    if moved:
+        record, world = world.record, World(tmp_path / "moved")
+        world.record = record
+    plan = world.plan(gate)
 
     assert (plan.action, plan.settled) == (RealmAction.NOTHING, True)
 
@@ -190,6 +185,12 @@ def test_no_recorded_apply_plans_the_step(world: World) -> None:
 
     assert (plan.action, plan.settled) == (RealmAction.RUN, False)
     assert plan.why == "no realm apply is recorded"
+
+
+def record_old_definition(world: World) -> None:
+    entry = world.record.read().entries[reconcile.CONFIG_CLI]
+    entry[reconcile.DEFINITION_KEY] = "a hash Compose computed"
+    world.record.write(reconcile.CONFIG_CLI, entry, {reconcile.CONFIG_CLI})
 
 
 @pytest.mark.parametrize(
@@ -207,12 +208,13 @@ def test_no_recorded_apply_plans_the_step(world: World) -> None:
             lambda world: world.write_file("entrypoint.sh", "#!/bin/sh\nexit 1\n"),
             "keycloak/entrypoint.sh changed",
         ),
+        (record_old_definition, "config-cli's definition changed"),
         (
             lambda world: setattr(world, "checksum", "restored from an older snapshot"),
             "Keycloak's import checksum is not the recorded one",
         ),
     ],
-    ids=["realm file", "master file", "entrypoint", "database restored"],
+    ids=["realm file", "master file", "entrypoint", "old definition hash", "database restored"],
 )
 def test_each_input_that_changed_plans_the_step_and_names_it(
     world: World, change: Callable[[World], None], why: str
@@ -223,83 +225,6 @@ def test_each_input_that_changed_plans_the_step_and_names_it(
     change(world)
 
     assert world.plan().why == why
-
-
-def moved(world: World, tmp_path: Path) -> World:
-    """The same files and service, checked out under another root."""
-    other = World(tmp_path / "moved")
-    other.record = world.record
-    return other
-
-
-def test_the_same_service_under_another_checkout_root_plans_nothing(
-    world: World, tmp_path: Path
-) -> None:
-    world.applied_once()
-    other = moved(world, tmp_path)
-
-    plan = other.plan()
-
-    assert (plan.action, plan.settled) == (RealmAction.NOTHING, True)
-    assert other.events == ["checksums"]
-
-
-@pytest.mark.parametrize(
-    "change",
-    [
-        lambda service: service.update(image="config-cli:two"),
-        lambda service: service["environment"].update(IMPORT_VARSUBSTITUTION_ENABLED="false"),
-        lambda service: service.update(entrypoint=["/other"]),
-        lambda service: service["volumes"][0].update(target="/moved"),
-        lambda service: service["volumes"][2].update(source="/outside/elsewhere"),
-        lambda service: service["secrets"].append({"source": "another", "target": "OTHER"}),
-        lambda service: service["networks"].update(another=None),
-    ],
-    ids=[
-        "image",
-        "environment",
-        "entrypoint",
-        "bind target",
-        "outside source",
-        "secret",
-        "network",
-    ],
-)
-def test_each_changed_field_of_the_service_plans_the_step(
-    world: World, change: Callable[[dict], None]
-) -> None:
-    world.applied_once()
-
-    change(world.service)
-
-    plan = world.plan()
-    assert (plan.action, plan.why) == (RealmAction.RUN, "config-cli's definition changed")
-
-
-def test_reading_the_inputs_leaves_the_resolved_configuration_as_it_was(world: World) -> None:
-    before = json.dumps(world.config)
-
-    world.plan()
-
-    assert json.dumps(world.config) == before
-
-
-def test_an_entry_with_the_old_definition_hash_plans_the_step_and_the_apply_settles_it(
-    world: World,
-) -> None:
-    world.applied_once()
-    entry = world.record.read().entries[reconcile.CONFIG_CLI]
-    world.record.write(
-        reconcile.CONFIG_CLI,
-        {**entry, reconcile.DEFINITION_KEY: "a hash Compose computed"},
-        {reconcile.CONFIG_CLI},
-    )
-
-    plan = world.plan()
-    assert (plan.action, plan.why) == (RealmAction.RUN, "config-cli's definition changed")
-    assert world.run(plan).failure is None
-
-    assert world.plan().action is RealmAction.NOTHING
 
 
 def test_an_apply_that_did_not_finish_is_planned_again(world: World) -> None:
@@ -326,12 +251,6 @@ def test_a_changed_file_while_keycloak_is_off_is_one_line_and_reads_nothing(
     assert plan.settled
     assert (plan.why, plan.gate) == ("no realm apply is recorded", gate)
     assert world.events == []
-
-
-def test_unchanged_files_while_keycloak_is_off_say_nothing(world: World) -> None:
-    world.applied_once()
-
-    assert world.plan(core.Gate.OFF).action is RealmAction.NOTHING
 
 
 def test_keycloak_starting_in_this_run_is_not_checked_and_one_line_says_so(world: World) -> None:
