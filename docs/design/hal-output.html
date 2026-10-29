@@ -582,7 +582,7 @@ Type <span class="w">yes</span> to set up 2 open rows: yes
     </div>
   </div>
   <ul class="why">
-    <li><span class="tag new">neu path</span> <b>Eine Zeile für den Link:</b> <code>~/.local/bin/hal → &lt;checkout&gt;/bin/hal</code>, das Zuhause als <code>~</code>. Der Plan liest nur; angelegt oder umgesetzt wird nach dem yes. Der Ordner ist der, aus dem <code>hal</code> gerade läuft; ein Link in einen anderen hal-Ordner (auch nach einem Umzug) wird nach dem yes umgesetzt, alles andere ist eine Weigerung im Plan.</li>
+    <li><span class="tag new">neu path</span> <b>Eine Zeile für den Link:</b> <code>~/.local/bin/hal → &lt;live-checkout&gt;/bin/hal</code>, das Zuhause als <code>~</code>. Der Plan liest nur; angelegt oder umgesetzt wird nach dem yes. Der Ordner ist der Live-Checkout, egal aus welchem Baum <code>hal setup</code> läuft; fehlt dessen <code>bin/hal</code>, bleibt der Link unberührt; ein Link in einen anderen hal-Ordner (auch nach einem Umzug) wird nach dem yes umgesetzt, alles andere ist eine Weigerung im Plan.</li>
     <li><span class="tag new">neu path</span> <b>Die Weigerung</b> nennt den Eintrag und was der Operator tut: <code>move or delete it, then rerun</code>. Spätere Zeilen sind <code>not run</code>, Exit 3, kein yes.</li>
   </ul>
 </section>

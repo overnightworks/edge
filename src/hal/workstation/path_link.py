@@ -1,8 +1,8 @@
-"""The path step of `hal setup`: `~/.local/bin/hal` links to the `bin/hal` of the checkout hal runs from.
+"""The path step of `hal setup`: `~/.local/bin/hal` links to the `bin/hal` of the live checkout, whichever tree runs `hal setup`.
 
 A missing link is created, a link into another hal checkout is re-pointed atomically, and anything else
 at that name (a file, a directory, a link elsewhere) is the person's: the step fails and names it.
-A hal that runs from an installed wheel has no checkout and leaves the entry alone.
+While that launcher is missing (an installed wheel, a machine without the live checkout) the entry is left alone.
 """
 
 from __future__ import annotations
@@ -21,27 +21,24 @@ LAUNCHER = Path("bin") / "hal"
 
 
 class PathLink:
-    def __init__(self, layout: Layout, checkout: Path | None) -> None:
+    def __init__(self, layout: Layout) -> None:
         self.home = layout.home
         self.clones_directory = layout.git
         self.entry = layout.local_dir / "bin" / "hal"
-        self.target = None if checkout is None else checkout / LAUNCHER
+        self.target = layout.live_checkout / LAUNCHER
 
     def check(self) -> CheckState:
         return CheckState.WOULD_CHANGE if self.is_open() else CheckState.UNCHANGED
 
     def fact(self) -> str:
-        return (
-            "" if self.target is None else f"{self.shown(self.entry)} → {self.shown(self.target)}"
-        )
+        return f"{self.shown(self.entry)} → {self.shown(self.target)}" if self.target.is_file() else ""
 
     def apply(self) -> Applied:
-        target = self.target
-        if target is None or not self.is_open():
+        if not self.is_open():
             return Applied.UNCHANGED
         self.entry.parent.mkdir(parents=True, exist_ok=True)
         beside = self.entry.with_name(f".{self.entry.name}.{secrets.token_hex(4)}.new")
-        beside.symlink_to(target)
+        beside.symlink_to(self.target)
         try:
             beside.replace(self.entry)
         except OSError:
@@ -51,7 +48,7 @@ class PathLink:
 
     def is_open(self) -> bool:
         """Whether the link must be created or re-pointed; raises when the entry is not the person's to replace by this step."""
-        if self.target is None:
+        if not self.target.is_file():
             return False
         if not self.entry.is_symlink():
             if self.entry.exists():
