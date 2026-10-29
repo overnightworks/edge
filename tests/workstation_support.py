@@ -3,6 +3,7 @@ from __future__ import annotations
 import email.message
 import email.policy
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -12,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import BinaryIO, NoReturn
 
 import pytest
 
@@ -301,6 +302,58 @@ ansible-core==*)
     ;;
 esac
 """
+
+
+# The bytes the sandbox's download serves as the pinned mise; the sandbox pins their hash.
+FAKE_MISE = b"#!/bin/sh\necho mise\n"
+FAKE_MISE_SHA256 = hashlib.sha256(FAKE_MISE).hexdigest()
+STALE_MISE = b"#!/bin/sh\necho stale\n"
+
+
+def serve_fake_mise(_url: str, writer: BinaryIO) -> None:
+    writer.write(FAKE_MISE)
+
+
+class RecordingDownload:
+    """A download that serves the pinned stub and remembers what it was asked for and how the file it writes into was staged."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+        self.staging_modes: list[int] = []
+
+    def __call__(self, url: str, writer: BinaryIO) -> None:
+        self.urls.append(url)
+        self.staging_modes.append(os.fstat(writer.fileno()).st_mode & 0o777)
+        serve_fake_mise(url, writer)
+
+
+def serve_wrong_bytes(_url: str, writer: BinaryIO) -> None:
+    writer.write(b"not the pinned release")
+
+
+def serve_half(_url: str, writer: BinaryIO) -> None:
+    writer.write(FAKE_MISE[: len(FAKE_MISE) // 2])
+
+
+def time_out(_url: str, writer: BinaryIO) -> None:
+    writer.write(FAKE_MISE[:4])
+    raise TimeoutError("timed out")
+
+
+def fail_to_write(_url: str, _writer: BinaryIO) -> None:
+    raise OSError(28, "No space left on device")
+
+
+def plant_mise(home: Path, content: bytes = STALE_MISE, mode: int = 0o755) -> Path:
+    mise = Layout(home).mise_executable
+    mise.parent.mkdir(parents=True, exist_ok=True)
+    mise.write_bytes(content)
+    mise.chmod(mode)
+    return mise
+
+
+def bin_entries(home: Path) -> set[str]:
+    return {entry.name for entry in Layout(home).mise_executable.parent.iterdir()}
 
 
 def write_executable(path: Path, text: str) -> None:

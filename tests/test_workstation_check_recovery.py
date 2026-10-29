@@ -79,3 +79,11 @@ def test_an_action_that_turns_into_a_note_is_mailed_as_done_in_words_the_note_do
     )
 
     assert "Done\n\n- The check of a login reports no error any more." in body
+
+
+def test_a_missing_or_drifted_mise_is_mailed_as_its_own_action_with_setup_as_the_step() -> None:
+    """#679: the final report names mise, not a broken commit hook, and says `hal setup`."""
+    body = check.mail_body(frozenset({"hook\tmise\t/x/mise"}), frozenset(), REPORT_DISPLAY, datetime(2026, 10, 26, 14, 54), check.MailFacts())
+
+    assert "mise is missing or not the pinned one; the quality gate cannot install its scanners. (new)\n   Next step: Run `hal setup`." in body
+    assert "protection that checks every commit" not in body

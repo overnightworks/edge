@@ -38,7 +38,7 @@ Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Re
 |---|---|---|
 | `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `job-failed`, `systemd-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
-| `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
+| `hook` | `hooks-path`, `hook-file`, `quality`, `mise`, `engines` | `hidden-hook` |
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
 | `exposure` | `reachable-beyond-loopback` (Veröffentlichung oder Listener jenseits von Loopback, ein Fund je Prozess oder Container), `routing-name-unusable` (`routed-without-edge-name`, `invalid-edge-name`, `duplicate-edge-name`) | – |
@@ -127,6 +127,8 @@ Korrektur:
   oder weicht vom gerenderten Text ab (`hal setup`).
 - **quality nicht wie festgelegt.** `~/.local/bin/quality` fehlt, ist nicht ausführbar oder uv hat
   nicht `QUALITY_SOURCE` aufgezeichnet (`hal setup`).
+- **mise nicht wie festgelegt.** `~/.local/bin/mise` fehlt, ist nicht ausführbar oder sein sha256 weicht
+  von `MISE_SHA256` ab (`hal setup`); der Bericht nennt es als eigene Aufgabe, nicht als kaputten Commit-Schutz.
 - **Engines.** `quality engines verify` scheitert (`hal setup`).
 - **Verdeckter Repository-Hook.** `.git/hooks` enthält eine Datei außer
   `*.sample`, `pre-commit` und `pre-merge-commit`; der globale Pfad verdeckt sie.
@@ -435,21 +437,28 @@ The activation comes before the user units and the system step, so a wrong
 sudo password never keeps the commit hook from being active; the user units
 come before the system step, which is the one that asks for sudo:
 
-1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
+1. **mise.** Die Release-Binärdatei `mise-v<MISE_VERSION>-linux-x64` von GitHub, mit `MISE_VERSION` und
+   `MISE_SHA256` aus `src/hal/workstation/setup.py` (ein Bump sind zwei Zeilen). Sie wird in eine
+   private Staging-Datei (Modus 600) neben dem Ziel geladen; erst wenn deren sha256 dem Pin gleicht,
+   wird sie 755 und per `os.replace` nach `~/.local/bin/mise` gelegt. Jeder Fehler (Timeout,
+   abgeschnittener Download, falscher Hash, Schreib- oder Umbenennfehler) entfernt die Staging-Datei
+   und lässt ein vorhandenes `mise` unberührt. Der Schritt läuft auch, wenn die Datei fehlt, nicht
+   ausführbar ist oder einen anderen sha256 hat; ohne mise läuft `quality hygiene` nicht.
+2. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
    `src/hal/workstation/setup.py`, dem Commit-SHA eines Tags von overnightworks/quality
    (eine neue Version ist eine Zeile). Der Schritt
    läuft auch, wenn `~/.local/bin/quality` fehlt oder nicht ausführbar ist.
-2. **Engines.** `quality engines install` nach
+3. **Engines.** `quality engines install` nach
    `~/.local/share/quality/engines`, wenn `quality engines verify` es verlangt;
    danach gilt der Schritt erst, wenn `verify` besteht.
-3. **Hook-Dateien.** `pre-commit` und `pre-merge-commit` in
+4. **Hook-Dateien.** `pre-commit` und `pre-merge-commit` in
    `~/.local/share/home/git-hooks/`, atomar geschrieben, Modus 755. Ein
    Inhalt, der abweicht, ein verlorenes Ausführungsrecht oder ein anderer Modus als 755 wird
    repariert.
-4. **Aktivierung.** `git config --global core.hooksPath` auf dieses
+5. **Aktivierung.** `git config --global core.hooksPath` auf dieses
    Verzeichnis. It comes after the three steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
-5. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
+6. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
    restore test and `hal check`) are written as a `.service` and a `.timer` file each into
    `~/.config/systemd/user/`, led by a marker line that says `hal setup` rewrites the file
    and that changes belong in a drop-in (`<unit>.d/*.conf`, which `hal setup` never
@@ -472,11 +481,11 @@ come before the system step, which is the one that asks for sudo:
    `replaces 6 links with 3 timers`. The step is verified when every unit is written
    as declared, nothing needs a reload, every timer is enabled and active, and no
    link into `systemd/` is left.
-6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
+7. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
    `src/hal/workstation/setup.py`, a pinned `ansible-core`; like quality, it runs
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
-7. **System.** The playbook `src/hal/workstation/system/playbook.yml` installs
+8. **System.** The playbook `src/hal/workstation/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
    It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
@@ -489,13 +498,13 @@ come before the system step, which is the one that asks for sudo:
    `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup` as themselves, never `sudo hal`.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
-(`AGENT_USER` in `src/hal/workstation/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
+(`AGENT_USER` in `src/hal/workstation/system_step.py`) is the agent role: mise, quality, Engines, Hook-Dateien and
 Aktivierung run, and PATH link, User units, Ansible, System and Geheimnisse are skipped (`path  skipped  the operator's step`, likewise `timers`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 3.
 If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 3 with a line saying so.
 
-**The rows.** The nine steps print as five rows, in the form of
-[docs/design/hal-output.html](design/hal-output.html): `commit hook` (quality, Engines,
+**The rows.** The ten steps print as five rows, in the form of
+[docs/design/hal-output.html](design/hal-output.html): `commit hook` (mise, quality, Engines,
 Hook-Dateien, Aktivierung), `path` (der Link `~/.local/bin/hal`; `unchanged`, solange das `bin/hal` des Live-Checkouts fehlt), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
 event is its worst step's: failed or not started, then needs you, then changed, then unchanged,
 then skipped. After the yes a row says `changed` or `unchanged` (`stored` or `complete` for the
