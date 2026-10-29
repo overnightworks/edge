@@ -1,0 +1,8 @@
+claim_id = "2cd665ffa37f485cae27426fa8d80ec2"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "3e7c6b2b12ca409c3ab5b4cfc654a8b1670dd17e"
+branch = "claude/issue-684-stack-tests-no-copies"
+scope = ["tests/test_backup_runner.py", "tests/test_compose_one_offs.py", "tests/test_exposure_check.py", "tests/test_probe_isolation.py", "tests/test_stack_apply.py", "tests/test_stack_barrier.py", "tests/test_stack_catalog_hosts.py", "tests/test_stack_tunnel_files.py", "tests/test_step_ca_init.py", "tests/test_traefik_mcp.py"]
+opened_commit = "494310f14ce5b35f17dc026410f40416d1d67315"
+whole_reason = "Ten small stack test modules with one to nine copies each; bundled by the shared stack configuration so each copy is judged once and the lane stays one review"
