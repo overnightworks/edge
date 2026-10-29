@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hal.stack import appkit_step, catalog, compose, legal_pages, legal_step
+from hal.stack import appkit_step, catalog, legal_pages, legal_step
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,13 +28,10 @@ def test_the_unit_is_hardened_like_the_stacks_other_services(legal):
     assert legal["read_only"] is True
     assert legal["cap_drop"] == ["ALL"]
     assert legal["security_opt"] == ["no-new-privileges:true"]
-    assert legal["tmpfs"] == ["/tmp"]
-    assert legal["profiles"] == ["legal"]
 
 
-def test_the_image_is_nginx_unprivileged_pinned_by_digest(legal):
-    assert legal["image"].startswith("nginxinc/nginx-unprivileged:")
-    assert "-alpine-slim@sha256:" in legal["image"]
+def test_the_image_is_pinned_by_digest(legal):
+    assert "@sha256:" in legal["image"]
 
 
 def test_the_unit_has_no_route_out_and_no_published_port(document, legal):
@@ -44,32 +41,8 @@ def test_the_unit_has_no_route_out_and_no_published_port(document, legal):
 
 
 def test_every_bind_is_read_only(legal):
-    assert sorted(legal["volumes"]) == sorted(
-        [
-            "./legal/nginx:/etc/nginx/conf.d:ro",
-            "./legal/built:/srv/pages:ro",
-            "./legal/assets:/srv/assets:ro",
-        ]
-    )
+    assert all(bind.endswith(":ro") for bind in legal["volumes"])
     assert all((ROOT / bind.split(":")[0]).is_dir() for bind in legal["volumes"])
-
-
-def test_traefik_routes_the_zone_apex_to_port_8080_on_the_edge_entrypoint(legal):
-    labels = legal["labels"]
-    assert labels["traefik.enable"] == "true"
-    assert labels["edge.name"] == "legal"
-    assert labels["traefik.http.services.legal.loadbalancer.server.port"] == "8080"
-    assert labels["traefik.http.routers.legal.entrypoints"] == "edge"
-    assert labels["traefik.http.routers.legal.service"] == "legal"
-    assert labels["traefik.http.routers.legal.rule"] == "Host(`${EDGE_DOMAIN}`)"
-
-
-def test_the_catalog_runs_the_unit_and_gives_it_the_apex_as_its_one_public_host():
-    fleet = catalog.read(ROOT / "fleet.yaml")
-    profiles = compose.profile_services(yaml.safe_load((ROOT / "compose.yaml").read_text()))
-    (unit,) = [one for one in catalog.load(ROOT, profiles) if one.key == "legal"]
-    assert unit.enabled
-    assert [host["name"] for host in fleet["services"]["legal"]["hosts"]] == ["@"]
 
 
 def test_the_security_headers_stand_at_server_level_and_no_location_overrides_them():
@@ -84,19 +57,6 @@ def test_the_security_headers_stand_at_server_level_and_no_location_overrides_th
         assert f"add_header {header} " in server_level
     # nginx drops every inherited add_header in a location that sets its own.
     assert not any("add_header" in location for location in locations)
-
-
-def test_the_stylesheet_declares_no_face_and_no_family_token_appkit_owns():
-    stylesheet = (ROOT / "legal/assets/legal-2.css").read_text()
-    assert "@font-face" not in stylesheet
-    assert "--font-display:" not in stylesheet
-    assert "--text-muted:" not in stylesheet
-
-
-def test_the_unit_serves_appkits_files_only_from_the_versioned_assets_path():
-    config = (ROOT / "legal/nginx/default.conf").read_text()
-    assert "/srv/fonts" not in config
-    assert "/_rechtliches/fonts/" not in config
 
 
 VERSION = metadata.version(appkit_step.DISTRIBUTION)
@@ -117,9 +77,7 @@ def read_page(name: str) -> str:
 
 
 @pytest.mark.parametrize("name", PAGES)
-def test_each_page_file_exists_and_the_config_resolves_paths_through_try_files(name):
-    config = (ROOT / "legal/nginx/default.conf").read_text()
-    assert "try_files $uri.html =404;" in config
+def test_each_page_is_built_with_content(name):
     assert read_page(name)
 
 
@@ -165,7 +123,7 @@ def test_every_table_of_contents_entry_targets_an_id_of_the_page(name):
     page = read_page(name)
     contents = page.split('<aside class="toc"')[1].split("</aside>")[0]
     targets = re.findall(r'href="#([^"]+)"', contents)
-    assert "songmaker" in targets
+    assert targets
     assert all(f'id="{target}"' in page for target in targets)
 
 

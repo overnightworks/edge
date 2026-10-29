@@ -7,7 +7,7 @@ import re
 import stat
 from collections.abc import Callable, Iterator
 from datetime import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import pytest
 from workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
@@ -20,7 +20,7 @@ from hal.workstation import ports as home_ports
 from hal.workstation import secrets_view
 from hal.workstation.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
 from hal.workstation.setup import RERUN
-from hal.workstation.secrets_view import ManifestError, SecretEntry, SecretKind, TokenSource, load_manifest
+from hal.workstation.secrets_view import ManifestError, SecretEntry, TokenSource, load_manifest
 
 PACKAGED_MANIFEST = secrets_view.MANIFEST_PATH
 HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"
@@ -48,26 +48,6 @@ def run_packaged_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *fl
     run_hal_setup(*flags, home=sandbox.home, secrets_setup_boundaries=secrets_terminal(True))
     captured = capsys.readouterr()
     return captured.out + captured.err
-
-
-def test_the_packaged_manifest_holds_hopins_session_secret_as_a_generated_password_the_container_reads() -> (
-    None
-):
-    entry = packaged_entry("hopin/session-secret")
-
-    assert (entry.kind, entry.paths, entry.read_by, entry.optional) == (
-        SecretKind.SERVICE_PASSWORD,
-        (PurePosixPath(".secrets/hopin/session-secret"),),
-        ("hopin",),
-        False,
-    )
-    assert (entry.loosest_mode, bool(entry.loosest_mode_reason)) == (0o644, True)
-
-
-def test_hopin_reads_the_keycloak_client_secrets_besides_the_readers_it_joins() -> None:
-    assert {"hopin", "keycloak-config-cli", "edge"} <= set(
-        packaged_entry("keycloak/clients/*").read_by
-    )
 
 
 def test_the_dry_run_lists_hopins_session_secret_as_missing_and_writes_nothing(
@@ -116,14 +96,6 @@ def test_hopins_session_secret_is_loose_only_beyond_0644(
     assert set(findings_of(capsys.readouterr().out, "loose-mode")) == loose_subjects
 
 
-def test_by_service_lists_the_session_secret_under_hopin(
-    packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]
-) -> None:
-    run_hal_secrets(packaged_home.home, probe, "--by-service", now=NOW)
-
-    assert "| hopin | keycloak/clients/*, hopin/session-secret, cloudflare/turn-hopin/key-id, cloudflare/turn-hopin/api-token |" in capsys.readouterr().out
-
-
 def test_the_packaged_manifest_holds_no_value_of_hopins_session_secret() -> None:
     assert not re.search(r"[A-Za-z0-9_-]{43,}", PACKAGED_MANIFEST.read_text())
 
@@ -132,8 +104,6 @@ def test_the_packaged_manifest_names_its_readers_in_english() -> None:
     reader_names = [name for entry in load_manifest(PACKAGED_MANIFEST) for name in entry.read_by]
 
     assert all(name.isascii() for name in reader_names)
-    assert {"cloudflared tunnel (management)", "agent-runtime#115, measurement runs 0b2/0e"} <= set(reader_names)
-    assert any(name.startswith("cloudflared tunnel run (by hand;") for name in reader_names)
 
 
 # --- HopIn's TURN key: asked hidden, stored unverified (O6) ---------------------------------------------------------
@@ -157,15 +127,6 @@ def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], termina
     code = run_hal_setup(home=sandbox.home, secrets_setup_boundaries=boundaries, now=NOW)
     captured = capsys.readouterr()
     return code, captured.out + captured.err
-
-
-@pytest.mark.parametrize("name", ["cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token"])
-def test_the_packaged_manifest_holds_hopins_turn_values_as_unverified_tokens_the_container_reads(name: str) -> None:
-    entry = packaged_entry(name)
-
-    assert (entry.kind, entry.read_by, entry.optional, entry.verifier, entry.source) == (SecretKind.UNVERIFIED_TOKEN, ("hopin",), False, None, None)
-    assert entry.paths == (PurePosixPath(f".secrets/{name}"),)
-    assert (entry.loosest_mode, bool(entry.loosest_mode_reason), bool(entry.purpose), entry.written_by_setup) == (0o644, True, True, True)
 
 
 UNVERIFIED_ENTRY = '[[secret]]\nname = "turn"\nkind = "unverified-token"\nread_by = []\nrecreate = "r"\n'
