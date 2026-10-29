@@ -18,7 +18,7 @@ crash.log
 
 # What `hal apply` last wrote there, beside the pages nginx serves
 
-# What the apply's appkit step writes: the installed appkit's files, served beside legal.css and
+# What the apply's appkit step writes: the installed appkit's files, served beside legal-2.css and
 # from each Keycloak theme's resources
 /legal/assets/appkit-*/
 /keycloak/themes/hallucinai/login/resources/appkit-*/

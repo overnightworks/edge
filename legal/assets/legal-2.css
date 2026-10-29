@@ -1,16 +1,18 @@
 /* The look of hallucinai.de's legal pages: songmaker's shapes and app colour on appkit's family
    tokens and fonts, which appkit.css brings in first. */
 
-:root{color-scheme:dark;--primary:#ff3220;--accent:#a020f0}
+:root{--primary:#c8180a;--accent:#7a18c0;--on-accent:#fff;--grid-line:rgba(212,26,10,.04)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--grid-line:rgba(255,50,32,.04)}}
+:root[data-theme="dark"]{--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--grid-line:rgba(255,50,32,.04)}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:16px}
 body{margin:0;min-height:100vh;background:var(--bg-deep);color:var(--text);font:400 16px/1.65 var(--font-body);position:relative;overflow-x:hidden}
 body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
-background-image:linear-gradient(var(--glow-primary) 1px,transparent 1px),linear-gradient(90deg,var(--glow-primary) 1px,transparent 1px);background-size:40px 40px}
+background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);background-size:40px 40px}
 body::after{content:"";position:fixed;z-index:-1;pointer-events:none;width:400px;height:400px;top:-100px;right:-100px;border-radius:50%;background:var(--primary);filter:blur(80px);opacity:.15}
 .glow2{position:fixed;z-index:-1;pointer-events:none;width:300px;height:300px;bottom:-50px;left:-50px;border-radius:50%;background:var(--accent);filter:blur(80px);opacity:.15}
 a{color:var(--text);text-decoration-color:var(--accent);text-underline-offset:3px}
-a:hover{color:#fff}
+a:hover{color:var(--text)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .wrap{max-width:980px;margin:0 auto;padding:28px 16px 32px}
 .mark{font:400 34px/1.1 var(--font-display);text-transform:uppercase;letter-spacing:.15em;text-align:center;margin:0 0 20px;
@@ -43,7 +45,7 @@ ul{padding-left:20px}li{margin-bottom:8px}
 code{font-size:.9em;background:var(--surface);padding:1px 5px;border-radius:3px}
 section.app{margin:36px 0 0;padding:4px 0 0 14px;border-left:3px solid transparent;border-image:linear-gradient(to bottom,var(--primary),var(--accent)) 1}
 section.app>h2{margin-top:6px}
-.badge{display:inline-block;font:400 11px var(--font-display);letter-spacing:1px;text-transform:uppercase;color:#fff;
+.badge{display:inline-block;font:400 11px var(--font-display);letter-spacing:1px;text-transform:uppercase;color:var(--on-accent);
 background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:4px;padding:2px 8px;vertical-align:middle;margin-left:8px}
 .stand{margin-top:26px;color:var(--text-muted);font-size:14px}
 footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:6px 20px;justify-content:center;font:400 12px var(--font-display);text-transform:uppercase;letter-spacing:.5px}

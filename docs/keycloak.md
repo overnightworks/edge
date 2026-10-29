@@ -118,29 +118,28 @@ read-only into the `keycloak` service, so a change of look changes theme files
 only, never the realm. The email and admin themes, the master realm and the
 admin console stay Keycloak's own.
 
-The themes give both pages the look of hallucinai.de, always dark, with the
-violet main button of songmaker's vocabulary (`docs/design/keycloak-theme.html`
-is the picture): the wordmark, hallucinai's colours and shapes over
-Keycloak's PatternFly, the favicon, and Impressum and Datenschutz in the sign-in
-card. The tokens and the fonts (Oswald and Open Sans, with their licences, so no
-page asks a third party) come from the installed appkit: the appkit step of
-`hal apply` writes `appkit-<version>/` (git-ignored) into each theme's
-`resources/`, and `styles=` lists its `appkit.css` first, then the theme's own
-`css/edge.css` with the app colour and the shapes. The theme files reach Keycloak on
-`git merge --ff-only` in the live checkout, the appkit directory on `hal apply`,
-so a restart between the two serves pages without tokens. They are CSS, `footer.ftl`
-and message texts on top of `keycloak.v2` and `keycloak.v3`, never a copy of
-Keycloak's `template.ftl`. A Keycloak update re-checks `content.json` (a copy
-of keycloak.v3's navigation list) and the PatternFly selectors at both
-widths. The
-account console hides its "Gruppen" page (its own `content.json`) and the
-sentences under titles and sign-in methods; its "Anwendungen" lists only apps
-a person has used, because the app clients carry `alwaysDisplayInConsole:
-false` in `realm.yaml`. What Keycloak does not let a theme change stays
-Keycloak's: the fields and paths the realm offers (no registration, no
-"Passwort vergessen?", no mail: the operator resets passwords in the admin
-console), the account console's layout and its pages, the browser's passkey
-window and the code page's content.
+The themes give both pages the look of hallucinai.de, light and dark by the
+device, with the violet main button of songmaker's vocabulary
+(`docs/design/keycloak-theme.html` is the picture): the wordmark, hallucinai's
+colours and shapes over Keycloak's PatternFly, the favicon, and Impressum and
+Datenschutz in the sign-in card. The tokens and the fonts (Oswald and Open Sans,
+with their licences, so no page asks a third party) come from the installed
+appkit: the appkit step of `hal apply` writes `appkit-<version>/` (git-ignored)
+into each theme's `resources/`, and `styles=` lists its `appkit.css` first, then
+the theme's own `css/edge-2.css` with the app colour and the shapes. The theme
+files reach Keycloak on `git merge --ff-only` in the live checkout, the appkit
+directory on `hal apply`, so a restart between the two serves pages without
+tokens. They are CSS, `footer.ftl` and message texts on top of `keycloak.v2` and
+`keycloak.v3`, never a copy of Keycloak's `template.ftl`. A Keycloak update
+re-checks `content.json` (a copy of keycloak.v3's navigation list) and the
+PatternFly selectors at both widths. The account console hides its "Gruppen"
+page (its own `content.json`) and the sentences under titles and sign-in
+methods; its "Anwendungen" lists only apps a person has used, because the app
+clients carry `alwaysDisplayInConsole: false` in `realm.yaml`. What Keycloak
+does not let a theme change stays Keycloak's: the fields and paths the realm
+offers (no registration, no "Passwort vergessen?", no mail: the operator resets
+passwords in the admin console), the account console's layout and its pages, the
+browser's passkey window and the code page's content.
 
 The pages appear in German and English: the browser's language decides,
 English applies when neither is asked for, and the pages carry a language
@@ -159,8 +158,8 @@ restart keeps the same URL. Cloudflare caches css, js, svg, ico and woff2 for 30
 days under that URL as well, and a browser keeps them as long. A file changed in
 place therefore keeps coming from those caches; a look change names a new file
 (for a stylesheet, `styles=` in `theme.properties`; appkit's path changes with each
-release, and a restyled `css/edge.css` takes a new name). A purge at Cloudflare clears
-only Cloudflare's copy; a browser that already holds the old file keeps it.
+release, and a restyled `css/edge-2.css` takes a new name). A purge at Cloudflare
+clears only Cloudflare's copy; a browser that already holds the old file keeps it.
 
 
 > **The apply adds and changes, and deletes no undeclared top-level object and no person.**
