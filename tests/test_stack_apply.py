@@ -4355,6 +4355,29 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
 
 
 @pytest.mark.usefixtures("realm_unit")
+def test_a_record_holding_composes_old_definition_hash_is_applied_once_then_quiet(
+    switch, state, scripted, realm_backup
+):
+    """The entry an earlier hal wrote plans one realm apply, whose record the next apply keeps."""
+    switch()
+    record = json.loads((state / "applied.json").read_text())
+    record["keycloak-config-cli"]["definition"] = "a hash Compose computed"
+    (state / "applied.json").write_text(json.dumps(record))
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert REALM_APPLIED in out
+    assert scripted.realm_applies == 2
+
+    exit_code, out, _ = switch()
+
+    assert exit_code == 0
+    assert "nothing to change" in out
+    assert scripted.realm_applies == 2
+
+
+@pytest.mark.usefixtures("realm_unit")
 def test_the_waiting_line_of_a_stopped_hal_is_told_as_the_step_runs(
     switch, repository, monkeypatch
 ):
