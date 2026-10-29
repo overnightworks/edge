@@ -3,5 +3,5 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "a5d7e717e07846bbc0faa2d8d7c80d2d7873035a"
 branch = "claude/issue-673-hopin-s-catalog-branch-becomes-main"
-scope = ["docs/architecture.md", "fleet.yaml"]
+scope = ["docs/architecture.md", "fleet.yaml", "tests/test_stack_catalog_hosts.py"]
 opened_commit = "a23a4e05cf98674e218accc6a49d076bded3cc5c"
