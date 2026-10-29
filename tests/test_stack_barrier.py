@@ -678,6 +678,16 @@ class TickingClock:
         return self.now
 
 
+def barely_buffered(address: tuple[str, int], seconds: float) -> socket.socket:
+    """Connect with the smallest receive buffer, so a read never returns more than a few KB and
+    the deadline, not the parser's line limit, ends the read."""
+    opened = socket.socket()
+    opened.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1)
+    opened.settimeout(seconds)
+    opened.connect(address)
+    return opened
+
+
 def flood(head: bytes) -> Script:
     """Send `head`, then bytes for as long as the client takes them; the send blocks while the
     client does not read and fails once the client has closed."""
@@ -700,7 +710,7 @@ def test_headers_that_keep_coming_are_cut_off_at_the_time_allowed(serve):
 
     clock = TickingClock()
     with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, TIME_ALLOWED, clock)
+        barrier.http_fetch(address, HOST, TIME_ALLOWED, clock, barely_buffered)
 
 
 def test_a_body_that_stalls_is_cut_off_at_the_time_allowed(serve):
@@ -726,7 +736,7 @@ def test_chunk_framing_that_keeps_coming_is_cut_off_at_the_time_allowed(serve):
 
     clock = TickingClock()
     with pytest.raises(OSError):
-        barrier.http_fetch(address, HOST, TIME_ALLOWED, clock)
+        barrier.http_fetch(address, HOST, TIME_ALLOWED, clock, barely_buffered)
 
 
 def test_a_time_allowed_used_up_by_connecting_sends_no_request(serve):
