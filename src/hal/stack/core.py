@@ -23,7 +23,8 @@ recreate that took it in is empty; socket-proxy keeps none, so traefik's, emptie
 for it (#87 rule 4). An entry for a service that binds no file from the checkout is ignored and
 dropped at the next write (#87 rule 6). The realm step (`hal.stack.realm.reconcile`) keeps its own
 keys in the entry of `keycloak-config-cli`, beside the digests of its file binds: `definition`,
-config-cli's `compose config --hash`, and one `<realm> <attribute>` key per import checksum
+hal's digest of config-cli's resolved service with the binds inside the checkout relative (so
+moving the checkout changes none of it), and one `<realm> <attribute>` key per import checksum
 Keycloak showed after the last apply (#242).
 
 A follower is a profile service that binds a file at Traefik's static-config path (#89). It is

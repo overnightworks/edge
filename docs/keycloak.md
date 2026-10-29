@@ -219,11 +219,14 @@ live checkout, run `hal apply`.
 
 `hal apply` runs the realm step after the unit switches, when Keycloak is on, set up and running
 and an input changed: `keycloak/realm.yaml`, `keycloak/master.yaml`, `keycloak/entrypoint.sh` or
-config-cli's resolved definition (the image pin and the `IMPORT_*` switches) differ from what `applied.json` recorded
-after the last step, or Keycloak's own import-checksum attributes differ from the recorded ones (a
-restored database, a go-live import). Unchanged inputs mean the step does nothing: no backup and
-no run. A rotated client secret alone does not trigger it, because Compose's definition hash
-ignores the content of a secret file; change a realm file or wait for the next realm change.
+config-cli's resolved definition (its whole service: the image pin, the `IMPORT_*` switches, its
+binds and attachments) differ from what `applied.json` recorded after the last step, or Keycloak's
+own import-checksum attributes differ from the recorded ones (a restored database, a go-live
+import). Unchanged inputs mean the step does nothing: no backup and no run. The definition is
+hal's digest of the resolved service with every bind inside the checkout relative to it, so moving
+the checkout is no realm change. A rotated client secret alone does not trigger it, because the
+definition covers a secret's attachment, not the content of its file; change a realm file or wait
+for the next realm change.
 
 The plan names the step in one line. After your yes it takes a Keycloak-only backup tagged
 `pre-apply` (the last ten are kept) and restore-tests that snapshot, observes both realms, runs

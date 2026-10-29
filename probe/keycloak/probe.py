@@ -1043,7 +1043,6 @@ class RealmStepStand:
     def plan(self) -> reconcile.RealmPlan:
         record = core.Record(self.root / "state")
         return reconcile.plan_realm(
-            self.engine,
             reconcile.Observer(self.engine),
             record,
             self.configuration,
