@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "3e7c6b2b12ca409c3ab5b4cfc654a8b1670dd17e"
 branch = "claude/issue-685-legal-workstation-tests-no-copies"
-scope = ["external/tests/live.tftest.hcl", "tests/test_hal_legal.py", "tests/test_legal_unit.py", "tests/test_workstation_app_secrets.py", "tests/test_workstation_mail.py", "tests/test_workstation_secrets_login.py", "tests/test_workstation_secrets_view.py"]
+scope = ["external/tests/live.tftest.hcl", "quality/baseline.toml", "tests/test_hal_legal.py", "tests/test_legal_unit.py", "tests/test_workstation_app_secrets.py", "tests/test_workstation_mail.py", "tests/test_workstation_secrets_login.py", "tests/test_workstation_secrets_view.py"]
 opened_commit = "6fb9cb33e21432c7cd4a7eda3e6e940d9265008f"
 whole_reason = "Seven test modules over legal pages, the secrets manifest and the live tofu run, each with one to nine copies; one builder and one review for the remaining files"
