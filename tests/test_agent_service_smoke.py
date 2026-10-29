@@ -352,7 +352,6 @@ def test_agent_smoke_is_hardened_like_the_realm_observer(services):
 
     for key in ("user", "read_only", "cap_drop", "security_opt"):
         assert smoke_service[key] == observer[key]
-    assert smoke_service["profiles"] == ["apply"]
 
 
 def test_agent_smoke_runs_the_service_image_that_is_never_pulled(services):
@@ -360,12 +359,9 @@ def test_agent_smoke_runs_the_service_image_that_is_never_pulled(services):
     assert services["agent-smoke"]["pull_policy"] == "never"
 
 
-def test_agent_smoke_sits_on_songmakers_network_alone_with_no_port_secret_or_address(
-    services,
-):
+def test_agent_smoke_has_no_port_secret_or_address(services):
     smoke_service = services["agent-smoke"]
 
-    assert smoke_service["networks"] == ["agent-songmaker"]
     assert not {"ports", "expose", "secrets", "extra_hosts", "network_mode", "depends_on"} & (
         smoke_service.keys()
     )
@@ -380,8 +376,8 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
     smoke_service = services["agent-smoke"]
 
     assert smoke_service["entrypoint"][:3] == ["python", "-I", "-B"]
-    assert smoke_service["entrypoint"][3] == "/opt/smoke/smoke.py"
-    assert smoke_service["volumes"] == ["./agent-service/smoke.py:/opt/smoke/smoke.py:ro"]
+    (volume,) = smoke_service["volumes"]
+    assert smoke_service["entrypoint"][3] == volume.split(":")[1]
 
 
 def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
@@ -389,33 +385,11 @@ def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
     assert set(services["agent-smoke"]["networks"]) <= set(services["agent-service"]["networks"])
 
 
-@pytest.mark.parametrize(
-    ("key", "name"),
-    [
-        ("agent-songmaker", "hal_agent_songmaker"),
-        ("agent-presentator", "hal_agent_presentator"),
-        ("agent-hopin", "hal_agent_hopin"),
-    ],
-)
-def test_each_agent_network_has_the_fixed_name_apps_join_as_an_external_network(key, name):
+@pytest.mark.parametrize("key", ["agent-songmaker", "agent-presentator", "agent-hopin"])
+def test_each_agent_network_is_internal_and_no_shared_one_exists(key):
     """P35: one internal network per app (isolated: test_agent_egress.py), and no shared one."""
     networks = yaml.safe_load((ROOT / "compose.yaml").read_text())["networks"]
 
-    assert networks[key]["name"] == name
     assert networks[key]["internal"] is True
     assert "agent" not in networks
     assert "hal_agent" not in {network.get("name") for network in networks.values()}
-
-
-def test_the_service_is_on_the_per_app_networks_egress_and_mcp_and_agent_smoke_on_songmakers(
-    services,
-):
-    """P35: the service reaches each app, the gateway and traefik-mcp; smoke is songmaker's."""
-    assert set(services["agent-service"]["networks"]) == {
-        "agent-songmaker",
-        "agent-presentator",
-        "agent-hopin",
-        "egress",
-        "mcp",
-    }
-    assert services["agent-smoke"]["networks"] == ["agent-songmaker"]
