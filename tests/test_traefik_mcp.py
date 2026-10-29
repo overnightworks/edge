@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NETWORKS = {"mcp-ca", "mcp", "mcp-backends"}
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 ROUTER_HOST = re.compile(r"^Host\(`([^`]+)`\)")
+ROUTER_RULE = re.compile(r"^Host\(`[^`]+`\)( && Path\(`/[^`]*`\))?$")
 CA_DEFAULT_LIFETIME_HOURS = 24  # step-ca's default; ca.json sets no claims
 
 
@@ -43,6 +44,11 @@ def merged_dynamic(kind: str) -> dict:
     for file in sorted((ROOT / "mcp" / "dynamic").glob("*.yml")):
         merged.update(yaml.safe_load(file.read_text())["http"][kind])
     return merged
+
+
+@pytest.fixture(scope="module")
+def services() -> dict:
+    return merged_dynamic("services")
 
 
 @pytest.fixture(scope="module")
@@ -124,6 +130,17 @@ def test_every_alias_is_a_router_host_inside_the_names_the_ca_allows(traefik_mcp
     assert router_hosts == aliases
 
 
+def test_every_router_matches_one_host_and_at_most_one_exact_path_and_keeps_the_host_header(
+    routers, services
+):
+    """E4: no router takes a path prefix, and no service rewrites the Host header."""
+    assert all(ROUTER_RULE.match(router["rule"]) for router in routers.values())
+    assert not [router for router in routers.values() if "PathPrefix" in router["rule"]]
+    assert not [
+        service for service in services.values() if "passHostHeader" in service["loadBalancer"]
+    ]
+
+
 def test_every_router_asks_the_internal_resolver_on_the_mcp_entrypoint(routers, static_config):
     """#48 rule 5: each router takes its certificate from the internal resolver."""
 
@@ -164,7 +181,9 @@ def test_traefik_mcp_adds_no_capability(traefik_mcp):
 def test_the_static_configuration_has_one_entrypoint_and_no_management_api(static_config):
     """#48 rule 3: one entrypoint, no api, ping or metrics."""
 
-    assert len(static_config["entryPoints"]) == 1
+    (entrypoint,) = static_config["entryPoints"].values()
+
+    assert "tls" in entrypoint["http"]
     assert not {"api", "ping", "metrics"} & set(static_config)
 
 
@@ -185,7 +204,7 @@ def provisioned_challenges(acme: dict) -> set[str]:
 
 
 def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(
-    static_config, traefik_mcp
+    compose, static_config, traefik_mcp
 ):
     """#48 rule 4: the resolver trusts the CA root alone, over TLS-ALPN-01."""
 
@@ -195,8 +214,10 @@ def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(
     assert ca_server_host == f"step-ca:{load('step-ca/ca.json')['address'].lstrip(':')}"
     assert acme["caSystemCertPool"] is False
     (root_certificate,) = acme["caCertificates"]
-    assert Path(root_certificate).name in traefik_mcp["secrets"]
-    assert provisioned_challenges(acme) <= {
+    root_secret = Path(root_certificate).name
+    assert root_secret in traefik_mcp["secrets"]
+    assert "file" in compose["secrets"][root_secret]
+    assert provisioned_challenges(acme) == {
         challenge
         for provisioner in load("step-ca/ca.json")["authority"]["provisioners"]
         for challenge in provisioner["challenges"]

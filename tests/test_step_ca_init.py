@@ -16,10 +16,12 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+import yaml
 
 STEP_CA = Path(__file__).resolve().parents[1] / "step-ca"
 PROBE = Path(__file__).resolve().parents[1] / "probe" / "step-ca" / "probe.py"
@@ -541,12 +543,22 @@ def ca_config() -> dict:
     return json.loads((STEP_CA / "ca.json").read_text())
 
 
-def test_the_ca_restricts_names_on_the_authority_not_on_the_provisioner(ca_config):
-    """#38 rule 2: the name policy sits on the authority; a provisioner's is ignored (0.30.2)."""
+def test_the_ca_has_one_acme_provisioner_with_default_lifetime_and_no_policy(ca_config):
+    """#38 rule 2: policy on the authority only; no `claims`, so the lifetime stays the default."""
     provisioners = ca_config["authority"]["provisioners"]
 
-    assert all("policy" not in provisioner for provisioner in provisioners)
-    assert ca_config["authority"]["policy"]["x509"]["allow"]["dns"]
+    assert [provisioner["type"] for provisioner in provisioners] == ["ACME"]
+    assert not [p for p in provisioners if {"policy", "claims"} & set(p)]
+    assert "claims" not in ca_config["authority"]
+
+
+def test_the_ca_names_only_internal_wildcards_outside_the_public_fleet_zone(ca_config):
+    """#38 rule 2: the allowed names are `*.`-prefixed and none reaches a public name."""
+    allowed = ca_config["authority"]["policy"]["x509"]["allow"]["dns"]
+    zone = yaml.safe_load((STEP_CA.parent / "fleet.yaml").read_text())["cloudflare"]["zone"]
+    assert allowed
+    assert all(pattern.startswith("*.") for pattern in allowed)
+    assert not [pattern for pattern in allowed if fnmatch(f"www.{zone}", pattern)]
 
 
 def test_the_ca_has_no_remote_management(ca_config):
