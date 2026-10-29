@@ -414,7 +414,7 @@ mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 ## hal setup
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
-Then it links `~/.local/bin/hal` to the `bin/hal` of the checkout `hal` runs from (the `path` row: it creates a missing link,
+Then it links `~/.local/bin/hal` to the `bin/hal` of the live checkout, whichever tree runs `hal setup` (the `path` row: it creates a missing link,
 re-points a link into another hal checkout, such as a clone that has moved, and refuses to replace a file, a directory or a link into anything else).
 Then it writes hal's user units and runs the system step.
 `hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal.output.confirmed`: nur genau `yes`,
@@ -489,7 +489,7 @@ If the running uid has more than one passwd name and one of them is `agent`, `ha
 
 **The rows.** The nine steps print as five rows, in the form of
 [docs/design/hal-output.html](design/hal-output.html): `commit hook` (quality, Engines,
-Hook-Dateien, Aktivierung), `path` (der Link `~/.local/bin/hal`; `unchanged` ohne Checkout, etwa aus einem Wheel), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
+Hook-Dateien, Aktivierung), `path` (der Link `~/.local/bin/hal`; `unchanged`, solange das `bin/hal` des Live-Checkouts fehlt), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
 event is its worst step's: failed or not started, then needs you, then changed, then unchanged,
 then skipped. After the yes a row says `changed` or `unchanged` (`stored` or `complete` for the
 secrets), `skipped` for the agent role; a dry run says `will change`, `unchanged`, `not checked`
