@@ -533,6 +533,57 @@ Type <span class="w">yes</span> to set up 2 open rows: no
   </ul>
 </section>
 
+<section aria-labelledby="s-timers">
+  <div class="head">
+    <h2 id="s-timers"><span class="tag new">neu für H5o1-3a</span> <code>hal setup</code>: die Zeile <code>timers</code> schreibt die Units</h2>
+    <p class="sub">Gesegnet. Zeilenform, Spaltenbreiten, Farben und Urteil wie oben; neu ist nur, was <code>timers</code> beim ersten Lauf nach dem Umbau tut und wann es scheitert. Namen und Zeiten sind Beispielwerte.</p>
+  </div>
+  <div class="pair">
+    <div class="stack">
+      <figure id="f-setup-timers-migrate">
+        <figcaption><span class="tag new">neu H5o1-3a</span> erster Lauf nach dem Umbau: <code>timers</code> schreibt die Units und löst die alten sechs Links ab</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="b">  ~</span> timers          will change    <span class="d">replaces 6 links with 3 timers</span>
+<span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
+<span class="d">  · secrets         complete</span>
+Type <span class="w">yes</span> to set up 2 open rows: yes
+<span class="d">  · commit hook     unchanged</span>
+<span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
+<span class="d">…</span>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+        <p class="was">Der Fakt <code>replaces 6 links with 3 timers</code> steht nur im Plan des einen Laufs, solange noch ein Link in <code>git/edge/systemd</code> liegt; die Zeile nach dem Lauf ist wie bisher. Fehlt nur eine Datei, hat der Plan keinen Fakt. Danach <code>unchanged</code>.</p>
+      </figure>
+      <figure id="f-setup-timers-refused">
+        <figcaption><span class="tag fail">neu H5o1-3a, kaputt</span> eine Unit, die hal nicht geschrieben hat</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="r">  ✗</span> timers          failed         <span class="d">hal-check.timer was not written by hal · move or delete it, then rerun</span>
+<span class="d">  · system          not run</span>
+<span class="d">  · secrets         not run</span>
+<span class="rw">error:</span> setup stopped at timers · nothing changed
+<span class="c">next:</span> hal setup</pre>
+        <p class="was">Derselbe Satz gilt für eine Datei und einen fremden Link. Die Prüfung läuft vor jeder Änderung; auch einer der drei Timer mit fremdem Inhalt hält alle sechs Dateien an.</p>
+      </figure>
+      <figure id="f-setup-timers-partial">
+        <figcaption><span class="tag fail">neu H5o1-3a, kaputt</span> gescheitert nach der ersten Änderung: systemd lädt nicht neu</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
+<span class="n">… Plan, dann das yes</span>
+<span class="d">  · commit hook     unchanged</span>
+<span class="r">  ✗</span> timers          failed         <span class="d">systemctl daemon-reload failed</span>
+<span class="d">  · system          not run</span>
+<span class="d">  · secrets         not run</span>
+<span class="rw">error:</span> setup stopped at timers · units may be partial
+<span class="c">next:</span> hal setup</pre>
+        <p class="was">Wie bei <code>system</code> (<code>/etc may be partial</code>): Dateien sind schon geschrieben, daher nicht <code>nothing changed</code>. Ein neuer Lauf erkennt den Mischzustand aus Dateien und alten Links und macht fertig; kein Timer geht dabei verloren.</p>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><span class="tag new">neu H5o1-3a</span> <b><code>timers</code> schreibt jetzt die Units</b> (sechs Dateien, erzeugt aus der Job-Liste) statt Links in <code>systemd/</code> zu setzen. Die Zeilenform bleibt (<code>N timers · systemd reloaded</code>). Einmalig löst der erste Lauf die sechs alten Links und ihre drei Wants-Links ab, mit demselben yes; die Timer behalten Namen, Zeitplan und Stempel. Die Texte (X5): Grund <code>without the units and the reload the timers run no hal job, or an older one</code>, <code>--help</code> sagt <code>Then it writes, reloads and enables hal's user units</code>; die Weigerung ist der kurze Satz oben statt des langen aus X5.</li>
+  </ul>
+</section>
+
 <section aria-labelledby="s-s2">
   <div class="head">
     <h2 id="s-s2"><span class="tag new">neu für S2</span> <code>hal setup</code>: Zeilenform, Probelauf, Agent, Fehler</h2>

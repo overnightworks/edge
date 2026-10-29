@@ -1,7 +1,7 @@
 # hal check, hal backup and hal restore
 
 Reference for the operator. It says what the commands guarantee and what they do not; `hal check
---help`, `hal backup --help`, `hal restore --help`, `backup/apps.toml`, `src/hal/exposure/`, `src/hal/backup/` and `systemd/`
+--help`, `hal backup --help`, `hal restore --help`, `backup/apps.toml`, `src/hal/exposure/`, `src/hal/backup/` and `src/hal/workstation/jobs.py`
 hold the mechanics. The data layer and the re-setup path they serve: [architecture.md](architecture.md)
 (L5, section 6).
 
@@ -93,9 +93,9 @@ password file is mounted read-only at `/run/secrets/restic-password` and handed 
 The one-time setup is: `uv sync` (builds the `.venv` the units run); a restic password in
 `~/.secrets/restic/password` (random, mode 0600, directory 0700); `hal backup --init` (creates
 `~/backups/restic` once, mode 700); `loginctl enable-linger "$USER"` so the user timers run without a
-login session; and `~/git/edge/bin/hal setup`, which (after its `yes`) links the units in `systemd/`
-(`hal-backup{,-restore-test}.{service,timer}`) into `~/.config/systemd/user/`, reloads systemd and
-enables the user timers. The units expect the checkout at `~/git/edge`.
+login session; and `~/git/edge/bin/hal setup`, which (after its `yes`) writes the units
+(`hal-backup{,-restore-test}.{service,timer}`, declared in `src/hal/workstation/jobs.py`) into
+`~/.config/systemd/user/`, reloads systemd and enables the user timers. The units expect the checkout at `~/git/edge`.
 
 Keep a copy of the password in the password manager or on paper. **Without it the repository cannot be
 read by anyone, ever:** losing the key loses every backup, and restic has no recovery.

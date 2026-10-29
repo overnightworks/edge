@@ -1071,7 +1071,7 @@ cell_a1_7() {
     loginctl enable-linger bystander
     timeout 60 bash -c 'until systemctl is-active --quiet "user@$(id -u bystander).service"; do sleep 1; done'
     install -d -o bystander -g bystander /home/bystander/git/edge
-    cp -r /proof/systemd /proof/tunnel /home/bystander/git/edge/
+    cp -r /proof/tunnel /home/bystander/git/edge/
     chown -R bystander:bystander /home/bystander/git
     install_wheel_for bystander
     run_as bystander a1-7-dry /home/bystander/.local/bin/hal setup --dry-run
