@@ -91,7 +91,8 @@ Rulings of overnightworks/edge#24 recorded in the table:
 ### P1: repository rename
 
 1. Before: `aco status` in that repo shows no claim and no live lane.
-2. The operator approves; an agent runs `gh repo rename`.
+2. The operator approves; an agent runs `gh repo rename` (for a repository with
+   `sonar-project.properties`, after P2 steps 1-2).
 3. The operator runs `hal rename OLD NEW` in their own terminal: it shows the moves, asks
    `Type yes`, then moves (`--dry-run` only shows; an agent without a terminal can only
    `--dry-run`).
@@ -127,8 +128,9 @@ workflows in a renamed repo: move those callers first.
 Repos with `sonar-project.properties` (and a bootstrap workflow, where one
 exists):
 
-1. The docs PR lands first, under the old name; the key commit stays local, and
-   other merges are held.
+1. The agent opens the PR that carries the rename's other changes, green under the
+   old name; the key commit stays local (pushed under the old name it fails the
+   gate's preflight), and other merges are held.
 2. An agent disables the repository's CI workflow (`ci` here) and drains it: it
    lists every unfinished run (any status but completed) over all pages and
    waits until each is completed or cancelled, listing again until none is
@@ -137,8 +139,8 @@ exists):
    agree. Going back, SonarCloud's key changes back before the GitHub name.
 3. The operator runs Administration, Update Key, once the project's Background
    Tasks show nothing pending or in progress.
-4. An agent enables the workflow and pushes the key commit; once the verdict
-   is green, merge the PR.
+4. An agent enables the workflow and pushes the key commit onto that PR; once the
+   verdict is green, it merges the PR.
 5. The operator re-saves the binding.
 
 Automatic-analysis repos: Update Key and binding on the server only.
