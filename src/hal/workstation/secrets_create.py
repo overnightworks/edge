@@ -5,6 +5,7 @@ The entry derives its renewal text from it instead of declaring `recreate`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +26,15 @@ class CreateCommand:
         """The command that makes the login again, as the operator types it, its variables pointing at `folder`."""
         variables = (f"{name}={folder}" for name in self.home)
         return " ".join((*variables, *self.run))
+
+
+def parse_create(path: Path, where: str, raw: Mapping[str, object], *, is_tool_login: bool) -> CreateCommand | None:
+    """The `create` table of an entry, None when it has none; only a tool-login with a purpose and without `recreate` may carry one."""
+    if "create" not in raw:
+        return None
+    if not is_tool_login or "recreate" in raw or "purpose" not in raw:
+        raise fail(path, where, "create belongs to a tool-login entry with a purpose and without recreate")
+    return parse_create_table(path, where, raw["create"])
 
 
 def parse_create_table(path: Path, where: str, table: object) -> CreateCommand:

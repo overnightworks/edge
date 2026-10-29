@@ -658,7 +658,7 @@ CODEX_LOGIN_MANIFEST = f"""\
 [[secret]]
 name = "agent-service-codex"
 kind = "tool-login"
-paths = ["~/.secrets/agent-service/codex/auth.json*"]
+paths = ["~/.secrets/agent-service/codex/auth.json"]
 read_by = ["agent-service"]
 {CODEX_CREATE_LINE}
 purpose = "the agent service runs Codex for the apps"
@@ -685,15 +685,15 @@ def test_a_missing_login_is_made_by_its_cli_in_the_entrys_own_folder_with_the_ru
     assert stat.S_IMODE((login_home / CODEX_FOLDER).stat().st_mode) == 0o700
     assert stat.S_IMODE((login_home / CODEX_FILE).stat().st_mode) == 0o600
     assert squeezed(captured.out) == [
-        "› agent-service-codex new login your Codex account, a login of its own",
+        "› agent-service/codex new login your Codex account, a login of its own",
         "why: the agent service runs Codex for the apps",
-        "✓ agent-service-codex signed in ~/.secrets/agent-service/codex/auth.json (600) · never shown",
+        "✓ agent-service/codex signed in ~/.secrets/agent-service/codex/auth.json (600) · never shown",
     ]
     assert cli.content not in captured.out + captured.err
 
 
 def test_the_walk_offers_the_sign_in_before_it_runs_the_cli(
-    login_home: Path, boundaries: Boundaries, terminal: FakeTerminal
+    login_home: Path, boundaries: Boundaries, terminal: FakeTerminal, cli: FakeCli
 ) -> None:
     """#666 rows: Enter opens the Codex sign-in; nothing runs before the operator pressed it."""
     terminal.enter = KeyboardInterrupt
@@ -704,9 +704,8 @@ def test_the_walk_offers_the_sign_in_before_it_runs_the_cli(
     assert terminal.prompts == [
         f"{secrets_setup.DETAIL_INDENT}Enter opens the Codex sign-in in your browser: "
     ]
-    assert not (login_home / CODEX_FOLDER).exists() or not any(
-        (login_home / CODEX_FOLDER).iterdir()
-    )
+    assert cli.calls == []
+    assert not list((login_home / CODEX_FOLDER).glob("*"))
 
 
 def test_a_login_already_present_is_left_untouched_and_the_cli_does_not_run(
@@ -736,8 +735,12 @@ def test_a_login_already_present_is_left_untouched_and_the_cli_does_not_run(
             FakeCli(exit_code=0, leaves=""),
             "codex login ended without a login file · nothing stored",
         ),
+        (
+            FakeCli(exit_code=0, leaves="auth.json.tmp"),
+            "codex login ended without a login file · nothing stored",
+        ),
     ],
-    ids=["not installed", "exit 1", "no file left"],
+    ids=["not installed", "exit 1", "no file left", "only a sibling left"],
 )
 def test_a_login_that_fails_is_refused_with_a_row_and_leaves_the_walk_open(
     login_home: Path,
@@ -748,18 +751,19 @@ def test_a_login_that_fails_is_refused_with_a_row_and_leaves_the_walk_open(
     cli_answer: FakeCli,
     refusal: str,
 ) -> None:
-    """#666 refusals: a missing CLI, a failing CLI and a CLI that left nothing each name themselves in one row."""
+    """#666 D2, E1: a refused sign-in names itself in one row and stores no auth.json, even when the CLI wrote one or left only a sibling."""
     end = run_wizard(login_home, Boundaries(terminal.boundary(), verifier, disk.sync, cli_answer))
 
     assert end is WalkEnd.STILL_OPEN
-    assert f"✗ agent-service-codex not signed in {refusal}" in squeezed(capsys.readouterr().out)
+    assert f"✗ agent-service/codex not signed in {refusal}" in squeezed(capsys.readouterr().out)
+    assert not (login_home / CODEX_FILE).exists()
 
 
 def test_the_renewal_command_is_derived_from_the_create_key(login_home: Path) -> None:
     """#666 D4: the command `hal secrets` shows is derived, so the entry carries no hand-written recreate."""
     (entry,) = load_manifest(secrets_view.MANIFEST_PATH)
 
-    assert entry.recreate == "CODEX_HOME=~/.secrets/agent-service/codex codex login"
+    assert entry.renewal == "CODEX_HOME=~/.secrets/agent-service/codex codex login"
 
 
 @pytest.mark.parametrize(
@@ -791,3 +795,4 @@ def test_the_packaged_manifest_lists_the_codex_login_as_a_required_tool_login() 
         ("codex", "login"),
         ("CODEX_HOME",),
     )
+

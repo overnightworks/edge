@@ -770,16 +770,16 @@ Type <span class="w">yes</span> to set up 1 open row: yes
       </figure>
       <figure>
         <figcaption><span class="tag new">neu #666</span> ein Login, den eine CLI selbst anlegt (die Anmeldezeilen druckt die CLI)</figcaption>
-<pre class="term"><span class="c">  ›</span> agent-service-codex  new login  <span class="d">your Codex account, a login of its own</span>
+<pre class="term"><span class="c">  ›</span> agent-service/codex  new login  <span class="d">your Codex account, a login of its own</span>
     why: the agent service runs Codex for the apps
     Enter opens the Codex sign-in in your browser:
 <span class="d">    opened auth.openai.com/...</span>
-<span class="g">  ✓</span> agent-service-codex  signed in  <span class="d">~/.secrets/agent-service/codex/auth.json (600) · never shown</span></pre>
+<span class="g">  ✓</span> agent-service/codex  signed in  <span class="d">~/.secrets/agent-service/codex/auth.json (600) · never shown</span></pre>
       </figure>
       <figure>
         <figcaption><span class="tag fail">neu #666, kaputt</span> die CLI fehlt, oder die Anmeldung endet mit einem Fehler</figcaption>
-<pre class="term"><span class="r">  ✗</span> agent-service-codex  not signed in  <span class="d">codex is not installed · install it, then rerun</span>
-<span class="r">  ✗</span> agent-service-codex  not signed in  <span class="d">codex login ended with exit 1 · nothing stored</span></pre>
+<pre class="term"><span class="r">  ✗</span> agent-service/codex  not signed in  <span class="d">codex is not installed · install it, then rerun</span>
+<span class="r">  ✗</span> agent-service/codex  not signed in  <span class="d">codex login ended with exit 1 · nothing stored</span></pre>
       </figure>
     </div>
     <div class="stack">

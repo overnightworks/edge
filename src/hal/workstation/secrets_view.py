@@ -35,7 +35,7 @@ from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
 from hal.workstation.manifest_fields import ManifestError, fail, string, strings
 from hal.workstation.report import findings_count, markdown_table, write_state_file
-from hal.workstation.secrets_create import CreateCommand, parse_create_table
+from hal.workstation.secrets_create import CreateCommand, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
@@ -176,6 +176,11 @@ class SecretEntry:
         """The folder the CLI of `create` writes into; the manifest guarantees one place for it."""
         return self.place.parent
 
+    @property
+    def renewal(self) -> str:
+        """How the entry is made again: derived from `create` and the entry's own folder, else the `recreate` text."""
+        return self.create.renewal(f"{HOME_PREFIX}{self.folder}") if self.create else self.recreate
+
 
 # --- manifest --------------------------------------------------------------
 
@@ -286,16 +291,8 @@ def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: Secre
     return TokenSource(provider, string(path, where, raw, "resource"), scope, days)
 
 
-def _create_command(path: Path, where: str, raw: Mapping[str, object], kind: SecretKind) -> CreateCommand | None:
-    if "create" not in raw:
-        return None
-    if kind is not SecretKind.TOOL_LOGIN or "recreate" in raw or "purpose" not in raw:
-        raise fail(path, where, "create belongs to a tool-login entry with a purpose and without recreate")
-    return parse_create_table(path, where, raw["create"])
-
-
-def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...], *, wildcard_allowed: bool) -> None:
-    if len(patterns) != 1 or (_has_wildcard(patterns[0].name) and not wildcard_allowed):
+def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...]) -> None:
+    if len(patterns) != 1 or _has_wildcard(patterns[0].name):
         raise fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
 
 
@@ -316,14 +313,14 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
-    create = _create_command(path, where, raw, kind)
+    create = parse_create(path, where, raw, is_tool_login=kind is SecretKind.TOOL_LOGIN)
     patterns = _patterns(path, where, raw)
     entry = SecretEntry(
         name=string(path, where, raw, "name"),
         kind=kind,
         paths=patterns,
         read_by=strings(path, where, raw, "read_by"),
-        recreate=create.renewal(f"{HOME_PREFIX}{patterns[0].parent}") if create else string(path, where, raw, "recreate"),
+        recreate="" if create else string(path, where, raw, "recreate"),
         verifier=_enum_value(path, where, raw, "verify", Verifier) if "verify" in raw else None,
         retired_on=retirement.retired_on,
         revoke_url=retirement.revoke_url,
@@ -338,7 +335,7 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         create=create,
     )
     if entry.written_by_setup:
-        _require_one_plain_place(path, where, entry.paths, wildcard_allowed=create is not None)
+        _require_one_plain_place(path, where, entry.paths)
     return entry
 
 
@@ -779,7 +776,7 @@ def _status_row(status: SecretStatus) -> list[str]:
         revocation = REVOCATION_CONFIRMED.format(date=entry.revocation_confirmed) if entry.revocation_confirmed else REVOCATION_UNCONFIRMED
         return [entry.name, entry.kind.label, RETIRED, revocation, EXPIRY_UNKNOWN, places(entry), f"revoke: {entry.revoke_url}"]
     presence = OPTIONAL.format(presence=status.presence.value) if entry.optional else status.presence.value
-    return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.recreate]
+    return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.renewal]
 
 
 def render_view(view: SecretsView, now: datetime) -> str:
