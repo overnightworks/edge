@@ -168,6 +168,15 @@ def link_to_a_pyproject_that_is_not_utf8(home: Path) -> None:
     entry_of(home).symlink_to(foreign / "bin" / "hal")
 
 
+def link_through_a_symlinked_directory_and_dot_dot_to_a_foreign_tree(home: Path) -> None:
+    child = home / "srv" / "tree" / "child"
+    child.mkdir(parents=True)
+    make_checkout(home / "srv" / "tree" / "foreign", project="other")
+    (home / "git").mkdir(exist_ok=True)
+    (home / "git" / "alias").symlink_to(child)
+    entry_of(home).symlink_to(home / "git" / "alias" / ".." / "foreign" / "bin" / "hal")
+
+
 def link_to_a_missing_tree_outside_git(home: Path) -> None:
     entry_of(home).symlink_to(home / "elsewhere" / "gone" / "bin" / "hal")
 
@@ -195,6 +204,7 @@ def link_to_a_hal_file_outside_a_bin_directory(home: Path) -> None:
         link_to_a_pyproject_whose_project_is_no_table,
         link_to_a_tree_with_an_unreadable_pyproject,
         link_to_a_pyproject_that_is_not_utf8,
+        link_through_a_symlinked_directory_and_dot_dot_to_a_foreign_tree,
         link_to_a_missing_tree_outside_git,
         link_to_a_missing_tree_deeper_in_git,
         link_to_a_missing_file_not_named_hal,

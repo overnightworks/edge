@@ -7,7 +7,6 @@ A hal that runs from an installed wheel has no checkout and leaves the entry alo
 
 from __future__ import annotations
 
-import os
 import secrets
 import tomllib
 from pathlib import Path
@@ -65,7 +64,7 @@ class PathLink:
         return True
 
     def current_target(self) -> Path:
-        return Path(os.path.normpath(self.entry.parent / self.entry.readlink()))
+        return self.entry.parent / self.entry.readlink()
 
     def is_hal_checkout_launcher(self, launcher: Path) -> bool:
         """A `<root>/bin/hal` whose root names this project, or is gone and sits directly under `~/git`, where clones move within."""
