@@ -12,7 +12,15 @@ from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 from workstation_support import FAKE_SECRET_VALUE, symlinked_folder_fix
-from workstation_secrets_support import FakeSync, FakeTerminal, guided_boundaries, run_wizard
+from workstation_secrets_support import (
+    FakeCli,
+    FakeSync,
+    FakeTerminal,
+    guided_boundaries,
+    private_directory,
+    run_wizard,
+    squeezed,
+)
 
 from hal.workstation import secrets_setup
 from hal.workstation.secrets_setup import (
@@ -146,23 +154,16 @@ def terminal() -> FakeTerminal:
 
 
 @pytest.fixture
-def boundaries(terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeSync) -> Boundaries:
-    """The operator at the keyboard; the walk sees only these fakes, never a browser, a prompt or a provider."""
-    return Boundaries(terminal.boundary(), verifier, disk.sync)
+def cli() -> FakeCli:
+    return FakeCli()
 
 
-def squeezed(output: str) -> list[str]:
-    """The output's lines with each run of spaces squeezed to one, so a row reads as its columns in order."""
-    return [" ".join(line.split()) for line in output.splitlines()]
-
-
-def private_directory(home: Path, relative: str) -> Path:
-    """A directory below ~/.secrets the way a tidy one is kept: every level 0700."""
-    path = home
-    for part in Path(relative).parts:
-        path /= part
-        path.mkdir(mode=0o700, exist_ok=True)
-    return path
+@pytest.fixture
+def boundaries(
+    terminal: FakeTerminal, verifier: FakeVerifier, disk: FakeSync, cli: FakeCli
+) -> Boundaries:
+    """The operator at the keyboard; the walk sees only these fakes, never a browser, a prompt, a provider or a CLI."""
+    return Boundaries(terminal.boundary(), verifier, disk.sync, cli)
 
 
 def files_under(home: Path) -> set[str]:

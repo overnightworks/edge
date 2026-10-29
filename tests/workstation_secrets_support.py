@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import signal
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -63,6 +63,49 @@ class FakeSync:
         os.fsync(descriptor)
 
 
+@dataclass
+class FakeCli:
+    """The CLI of a `create` command: answers with `exit_code` (None: not installed) and leaves `leaves` and every path of `siblings` (as its logs and temporary folders) in the folder its home variable names."""
+
+    exit_code: int | None = 0
+    leaves: str = "auth.json"
+    mode: int = 0o644
+    content: str = "FAKE-LOGIN-CONTENT-0000"
+    siblings: tuple[str, ...] = ()
+    calls: list[tuple[tuple[str, ...], dict[str, str]]] = field(default_factory=list)
+
+    def __call__(self, argv: Sequence[str], variables: Mapping[str, str]) -> int | None:
+        self.calls.append((tuple(argv), dict(variables)))
+        if self.exit_code is None or not self.leaves:
+            return self.exit_code
+        folder = Path(next(iter(variables.values())))
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / self.leaves).write_text(self.content)
+        (folder / self.leaves).chmod(self.mode)
+        for sibling in self.siblings:
+            (folder / sibling).parent.mkdir(parents=True, exist_ok=True)
+            (folder / sibling).write_text(self.content)
+        return self.exit_code
+
+
+def squeezed(output: str) -> list[str]:
+    """The output's lines with each run of spaces squeezed to one, so a row reads as its columns in order."""
+    return [" ".join(line.split()) for line in output.splitlines()]
+
+
+def private_directory(home: Path, relative: str) -> Path:
+    """A directory below ~/.secrets the way a tidy one is kept: every level 0700."""
+    path = home
+    for part in Path(relative).parts:
+        path /= part
+        path.mkdir(mode=0o700, exist_ok=True)
+    return path
+
+
+def never_run(argv: Sequence[str], _variables: Mapping[str, str]) -> int | None:
+    pytest.fail(f"the wizard ran {argv[0]} where no login is made")
+
+
 def secrets_terminal(at_a_terminal: bool) -> Boundaries:
     """A terminal that must never be asked for a value: the manifest holds only generated passwords."""
 
@@ -74,12 +117,13 @@ def secrets_terminal(at_a_terminal: bool) -> Boundaries:
         terminal,
         lambda _source, _value: pytest.fail("a generated password is never verified"),
         lambda _descriptor: None,
+        never_run,
     )
 
 
 def guided_boundaries(ask_hidden: Callable[[str], str], verify: TokenVerifier) -> Boundaries:
     terminal = Terminal(lambda: True, lambda _prompt: "", ask_hidden, lambda _page: True)
-    return Boundaries(terminal, verify, lambda _descriptor: None)
+    return Boundaries(terminal, verify, lambda _descriptor: None, never_run)
 
 
 def run_wizard(home: Path, boundaries: Boundaries = TERMINAL_BOUNDARIES, now: datetime = WIZARD_NOW) -> WalkEnd:

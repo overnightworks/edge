@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from workstation_secrets_support import FakeTerminal, run_wizard
+from workstation_secrets_support import FakeTerminal, never_run, run_wizard
 from test_workstation_secrets_setup import (  # noqa: F401 the fixtures, requested by name
     PASSPHRASE_FILE,
     PASTED_VALUE,
@@ -220,7 +220,7 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
 ) -> None:
     """#36 rule 3 / #10 line 2: a paste no token can be is refused with a fixed line; it is never sent, shown or written."""
     canary = canary_with(character)
-    real_check = Boundaries(terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/ok")), os.fsync)
+    real_check = Boundaries(terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/ok")), os.fsync, never_run)
     terminal.pastes = [canary, "", canary, ""]
 
     end = run_wizard(home, real_check)
@@ -241,7 +241,7 @@ def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
     """#54 rule 1 / #10 line 22: a rejected value is refused with one line naming the start date and is never written."""
     now = datetime(2026, 10, 19, tzinfo=UTC)
     real_check = Boundaries(
-        terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/not-yet-valid"), lambda: now), os.fsync
+        terminal.boundary(), lambda source, value: verify_token(source, value, local_server.fetch("/not-yet-valid"), lambda: now), os.fsync, never_run
     )
     terminal.pastes = [PASTED_VALUE, "", ""]
 

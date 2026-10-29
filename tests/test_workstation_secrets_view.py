@@ -12,7 +12,7 @@ from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from workstation_secrets_support import run_wizard
+from workstation_secrets_support import never_run, run_wizard
 from workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
 
 from hal.workstation import secrets_view
@@ -62,7 +62,7 @@ INVENTORY = {
     "keycloak/config-cli-secret",
     "keycloak/bootstrap-admin-password",
     "keycloak/clients/*",
-    "agent-service-claude", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token", "smtp/password", "smtp/account.toml",
+    "agent-service-claude", "agent-service/codex", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token", "smtp/password", "smtp/account.toml",
 }
 DECLARED_MODE_ENTRY = (
     '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'
@@ -784,7 +784,7 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
     plant_secrets(home)
     password = home / ".secrets" / "restic" / "password"
     password.unlink()
-    operator_absent = Boundaries(Terminal(lambda: True, never_asked, never_asked, never_asked), never_asked, os.fsync)
+    operator_absent = Boundaries(Terminal(lambda: True, never_asked, never_asked, never_asked), never_asked, os.fsync, never_run)
 
     view_code = run_hal_secrets(home, probe, now=NOW)
     view = capsys.readouterr().out
