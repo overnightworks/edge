@@ -69,15 +69,13 @@ def test_the_service_is_one_replica_with_no_published_port(service):
     assert not {"deploy", "scale", "ports", "network_mode", "expose"} & service.keys()
 
 
-@pytest.mark.parametrize("directory", ["/tmp", "/run/agent-service/cli"])
-def test_a_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(
-    tmpfs_options, directory
-):
-    """U6, U7: owned by 1000 with exactly mode 0700, nosuid, nodev, noexec and bounded."""
-    options = tmpfs_options[directory]
-
-    assert set(options) >= set(OWNER_ONLY_TMPFS)
-    assert any(SIZE_BOUND.fullmatch(option) for option in options)
+def test_every_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(tmpfs_options):
+    """U6, U7: on the read-only root, each mounted tmpfs is owned by 1000 with exactly mode 0700,
+    nosuid, nodev, noexec and bounded, so no unbounded or shared writable directory exists."""
+    assert tmpfs_options
+    for options in tmpfs_options.values():
+        assert set(options) >= set(OWNER_ONLY_TMPFS)
+        assert any(SIZE_BOUND.fullmatch(option) for option in options)
 
 
 def test_every_volume_of_the_service_is_a_read_only_bind(service):
@@ -150,6 +148,7 @@ def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(
     assert jwks.hostname == issuer.hostname
     assert jwks.path.startswith(issuer.path + "/")
     assert identity["audience"] in clients
+    assert identity["subscription_groups"]
     assert set(identity["subscription_groups"]) <= groups
 
 
@@ -166,6 +165,18 @@ def test_every_app_is_a_realm_workload_client_with_a_service_account_and_overrid
     for app in configuration["apps"].values():
         assert app["workload_client"] in service_accounts
         assert not {"tools", "purposes", "model", "agents"} & app.keys()
+
+
+def test_the_service_declares_no_paid_api_route(configuration):
+    """Edge holds no API provider key, so a route table would spend money the subscription does
+    not."""
+    assert not {"purposes", "route", "api", "profiles"} & configuration.keys()
+
+
+def test_the_copresenter_sees_only_the_talk_so_presentator_has_no_tools_and_no_mcp_origin(
+    configuration,
+):
+    assert not {"tools", "mcp_origin"} & configuration["apps"]["presentator"].keys()
 
 
 def test_the_default_model_is_one_the_anthropic_login_serves(configuration):
@@ -200,6 +211,8 @@ def test_the_signing_key_and_the_ca_root_are_compose_secrets_from_the_manifests_
     key_secret, ca_secret = "agent_service_signing_key", "step_ca_root_certificate"
 
     assert set(service["secrets"]) == {key_secret, ca_secret}
+    assert PurePosixPath(configuration["signing"]["key_file"]).name in service["secrets"]
+    assert PurePosixPath(configuration["mcp"]["ca_file"]).name in service["secrets"]
     secret_files = [
         compose["secrets"][name]["file"].replace("${HOME}", "~") for name in (key_secret, ca_secret)
     ]

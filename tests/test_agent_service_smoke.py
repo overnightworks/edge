@@ -383,6 +383,7 @@ def test_agent_smoke_starts_the_mounted_script_in_isolated_mode(services):
 def test_agent_smoke_reaches_the_service_by_the_name_it_connects_to(services):
     assert smoke.SERVICE_HOST in services
     assert set(services["agent-smoke"]["networks"]) <= set(services["agent-service"]["networks"])
+    assert len(services["agent-smoke"]["networks"]) == 1
 
 
 @pytest.mark.parametrize("key", ["agent-songmaker", "agent-presentator", "agent-hopin"])

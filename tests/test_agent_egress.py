@@ -198,6 +198,7 @@ def test_a_capture_service_runs_the_observers_pin_with_net_raw_alone(compose, ov
     assert capture["cap_add"] == ["NET_RAW"]
     assert capture["read_only"] is True
     assert "ports" not in capture
+    assert all(volume.endswith(":ro") for volume in capture["volumes"])
 
 
 # --- the packet windows' pure logic, on synthetic frames --------------------------------------
