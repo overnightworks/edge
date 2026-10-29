@@ -109,11 +109,11 @@ Rulings of overnightworks/edge#24 recorded in the table:
    exists, a symbolic link lies in any path it reads or acts on (the home directory
    included: a clone, a worktree inside or outside `~/git` as git lists it, a `.venv`
    or a target path), or a link in `~` or `~/srv` points to a checkout of this
-   repository, or GitHub does not know the new name. `hal rename NEW OLD` undoes it and asks its own yes.
+   repository outside the moved clones, or GitHub does not know the new name. `hal rename NEW OLD` undoes it and asks its own yes.
    A step that fails stops it, names the step and what is done; run the same
    command again once the cause is fixed and it finishes the half-moved clones.
-4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that
-   point into a moved clone; the repository's own head fixes those (a rerun of
+4. It reports, exit 1, the user units, links in `~/.local/bin`, `~` and `~/srv`
+   and uv tools that point into a moved clone; the repository's own head fixes those (a rerun of
    `hal setup` from the moved clone re-points its `~/.local/bin/hal`; reinstall
    uv tools from the new path).
 5. Update the repo description and the callers' URLs (git URLs redirect in the
@@ -127,16 +127,18 @@ workflows in a renamed repo: move those callers first.
 Repos with `sonar-project.properties` (and a bootstrap workflow, where one
 exists):
 
-1. The agent opens the key PR and holds other merges.
-2. An agent disables the workflow `ci` and drains it: it lists every unfinished
-   run (any status but completed) over all pages and waits until each is
-   completed or cancelled, listing again until none is left. This happens
-   before the first identity change in either direction; `ci` is enabled again
-   only once the GitHub name and the Sonar key agree. Going back, SonarCloud's
-   key changes back before the GitHub name.
+1. The docs PR lands first, under the old name; the key commit stays local, and
+   other merges are held.
+2. An agent disables the repository's CI workflow (`ci` here) and drains it: it
+   lists every unfinished run (any status but completed) over all pages and
+   waits until each is completed or cancelled, listing again until none is
+   left. This happens before the first identity change in either direction;
+   the workflow is enabled again only once the GitHub name and the Sonar key
+   agree. Going back, SonarCloud's key changes back before the GitHub name.
 3. The operator runs Administration, Update Key, once the project's Background
    Tasks show nothing pending or in progress.
-4. Merge the PR at once.
+4. An agent enables the workflow and pushes the key commit; once the verdict
+   is green, merge the PR.
 5. The operator re-saves the binding.
 
 Automatic-analysis repos: Update Key and binding on the server only.
