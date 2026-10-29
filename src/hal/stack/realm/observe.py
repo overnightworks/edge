@@ -302,7 +302,7 @@ SETTINGS = Read("realm settings (the realm shape's allow-list, other keys as dig
 # Every top-level key of keycloak/master.yaml and keycloak/realm.yaml, and every
 # keycloak-config-cli 6.5.1 import type, mapped to a read or a named gap, plus each named gap
 # inside a read type as its dotted field path (`clients.secret`). The realm settings
-# the realm shape lists are covered as they stand; tests/test_realm_observe.py fails when a
+# the realm shape lists are covered as they stand; tests/test_stack_realm_observe.py fails when a
 # YAML gains a key neither names.
 COVERAGE: dict[str, Coverage] = {
     **dict.fromkeys(REALM.listed, SETTINGS),
