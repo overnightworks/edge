@@ -50,7 +50,7 @@ def test_a_missing_link_is_created_and_the_plan_shows_it_with_the_home_as_a_tild
     link: PathLink, home: Path, live: Path
 ) -> None:
     assert link.check() is CheckState.WOULD_CHANGE
-    assert link.fact() == "~/.local/bin/hal → ~/srv/hal/bin/hal"
+    assert link.fact() == f"~/.local/bin/hal → ~/{live.relative_to(home)}/bin/hal"
     assert not entry_of(home).is_symlink()
 
     assert link.apply() is Applied.CHANGED

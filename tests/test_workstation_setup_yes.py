@@ -57,8 +57,9 @@ def test_the_path_row_plans_the_link_changes_nothing_before_the_yes_and_creates_
     plan, run = split_at_the_prompt(out)
 
     assert (code, err) == (ExitCode.OK, "")
-    assert "  ~ path            will change    ~/.local/bin/hal → ~/srv/hal/bin/hal" in planned_only[1].splitlines()
-    assert "  ~ path            will change    ~/.local/bin/hal → ~/srv/hal/bin/hal" in plan
+    row = f"  ~ path            will change    ~/.local/bin/hal → ~/{checkout.relative_to(sandbox.home)}/bin/hal"
+    assert row in planned_only[1].splitlines()
+    assert row in plan
     assert "  ✓ path            changed" in run
     assert entry.readlink() == checkout / "bin" / "hal"
 
