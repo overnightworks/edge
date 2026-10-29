@@ -499,6 +499,26 @@ def test_an_entry_of_the_person_at_the_temporary_name_survives_a_failed_apply(
     assert temporary.read_text() == "mine\n"
 
 
+def test_a_write_that_fails_after_the_temporary_exists_leaves_none_and_a_fresh_apply_completes(
+    machine: Machine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_chmod = Path.chmod
+    failures = [OSError(28, "No space left on device")]
+
+    def chmod_failing_once(path: Path, mode: int) -> None:
+        if failures:
+            raise failures.pop()
+        real_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", chmod_failing_once)
+    with pytest.raises(UnitsPartial, match="No space left on device"):
+        machine.step.apply()
+
+    assert not list(machine.user_units.glob(".*.tmp"))
+    machine.step.apply()
+    machine.assert_complete()
+
+
 @pytest.mark.parametrize("verb", ["daemon-reload", "enable", "show"])
 def test_a_failing_systemctl_fails_the_step_as_partial_and_a_fresh_apply_recovers(
     machine: Machine, verb: str

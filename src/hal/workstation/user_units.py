@@ -244,9 +244,16 @@ class UserUnits:
 
     def replace_through_temporary(self, destination: Path, create: Callable[[Path], None]) -> None:
         """Rename a fresh temporary entry over `destination`, so no moment lacks the entry. Creation
-        is exclusive: an entry already at the temporary name is the person's and is never removed."""
+        is exclusive: an entry already at the temporary name is the person's and is never removed,
+        while a temporary this call created is removed on any later failure."""
         temporary = destination.with_name(f".{destination.name}.tmp")
-        create(temporary)
+        try:
+            create(temporary)
+        except FileExistsError:
+            raise
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
         try:
             self.replace(temporary, destination)
         except OSError:
