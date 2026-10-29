@@ -7,7 +7,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from test_keycloak_probe import (
+from support.keycloak_probe import (
     DockerHost,
     docker_host,  # noqa: F401 the fixture, requested by name below
     probe,  # noqa: F401 the fixture, requested by name below

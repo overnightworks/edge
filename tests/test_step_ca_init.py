@@ -5,8 +5,6 @@ the history for secrets).
 """
 
 import hashlib
-import importlib.machinery
-import importlib.util
 import json
 import os
 import secrets as random_secrets
@@ -20,6 +18,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from support.script_module import loaded_script
 
 STEP_CA = Path(__file__).resolve().parents[1] / "step-ca"
 PROBE = Path(__file__).resolve().parents[1] / "probe" / "step-ca" / "probe.py"
@@ -34,14 +33,7 @@ INTERMEDIATE_FILES = {"certs/intermediate_ca.crt", "secrets/intermediate_ca_key"
 
 @pytest.fixture(scope="module")
 def init_module() -> Iterator[ModuleType]:
-    loader = importlib.machinery.SourceFileLoader("step_ca_init", str(STEP_CA / "init"))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
-    loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+    yield from loaded_script("step_ca_init", STEP_CA / "init")
 
 
 @dataclass
@@ -565,14 +557,7 @@ def test_the_ca_has_no_remote_management(ca_config):
 
 @pytest.fixture(scope="module")
 def probe() -> Iterator[ModuleType]:
-    spec = importlib.util.spec_from_file_location("step_ca_probe", PROBE)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+    yield from loaded_script("step_ca_probe", PROBE)
 
 
 @pytest.mark.parametrize("stop_signal", ["TERM", "INT"])
