@@ -44,7 +44,7 @@ from hal import cli
 from hal.backup import host
 from hal.grammar import ExitCode
 from hal.stack import appkit_step
-from hal.workstation import check, secrets_view, system_step, tunnel_config
+from hal.workstation import check, jobs, secrets_view, system_step, tunnel_config
 from hal.workstation import ports as home_ports
 
 LOOPBACK_ADDRESSES = {"127.0.0.1", "::1"}
@@ -243,8 +243,6 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
         "[user]\n\tname = Test\n\temail = test@example.invalid\n[init]\n\tdefaultBranch = main\n"
     )
     uv_calls = tmp_path / "uv-calls"
-    unit_directory = tmp_path / "checkout-units"
-    unit_directory.mkdir()
     for name, value in {
         "HOME": str(home),
         "XDG_CONFIG_HOME": str(home / ".config"),
@@ -258,8 +256,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sandbox:
         monkeypatch.setenv(name, value)
     for name in ("STUB_UV_FAIL", "STUB_ENGINES_FAIL", "STUB_SCAN_EXIT", "HOME_GIT_HOOK_CHAINED"):
         monkeypatch.delenv(name, raising=False)
-    # A real ~/git/edge in the sandbox home would be a repository the hook check reports on.
-    monkeypatch.setattr(home_ports, "edge_units_directory", lambda _layout: unit_directory)
+    # No timer job and a failing `systemctl`: no `hal setup` test reaches a user manager.
+    monkeypatch.setattr(jobs, "TIMER_JOBS", ())
+    write_executable(stub_bin / "systemctl", "#!/bin/sh\nexit 1\n")
     # The packaged manifest names secrets this sandbox home lacks; the secrets step of `hal setup`
     # looks at none unless a test names some.
     empty_manifest = tmp_path / "empty-secrets-manifest.toml"

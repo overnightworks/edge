@@ -8,16 +8,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from hal.workstation import system_step
+from hal.workstation import jobs, system_step
+from hal.workstation.jobs import TimerJob
 from hal.workstation.platform_check import DiskSpaceReader, read_disk_space
 from hal.workstation.secrets_setup import TERMINAL_BOUNDARIES, Boundaries
 from hal.workstation.secrets_view import ExitCodeProbe, probe_exit_code
 from hal.workstation.layout import CommandRunner, Layout, run_command
-
-
-def edge_units_directory(layout: Layout) -> Path:
-    """The user units sit beside `tunnel/` in the edge checkout, whose location Layout owns."""
-    return layout.edge_tunnel_dir.parent / "systemd"
 
 
 @dataclass(frozen=True)
@@ -30,7 +26,7 @@ class Ports:
     now: datetime
     clock: Callable[[], float]
     system: system_step.Boundaries
-    unit_directory: Path
+    timer_jobs: tuple[TimerJob, ...]
     disk_space: DiskSpaceReader
 
 
@@ -49,7 +45,7 @@ def build_layout_and_ports(
     clock: Callable[[], float] | None = None,
 ) -> tuple[Layout, Ports]:
     """The one owner of the real layout and boundaries; every `hal` verb over `hal.workstation` builds its own here."""
-    # The system boundaries are looked up per call, so the test sandbox can keep every test away from sudo and Ansible.
+    # The system boundaries and the timer jobs are looked up per call, so the test sandbox can keep every test away from sudo, Ansible and systemctl.
     system = system_boundaries or system_step.TERMINAL_BOUNDARIES
     layout = Layout(home or Path.home())
     return layout, Ports(
@@ -59,6 +55,6 @@ def build_layout_and_ports(
         now or datetime.now(),
         clock or MONOTONIC_CLOCK,
         system,
-        edge_units_directory(layout),
+        jobs.TIMER_JOBS,
         disk_space or read_disk_space,
     )

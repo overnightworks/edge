@@ -71,9 +71,14 @@ class Layout:
         return self.data_dir / "uv" / "tools" / "ansible-core" / "uv-receipt.toml"
 
     @property
+    def live_checkout(self) -> Path:
+        """The checkout the timers' units run hal from, wherever `hal setup` itself runs."""
+        return self.git / "edge"
+
+    @property
     def edge_tunnel_dir(self) -> Path:
         """edge's cloudflared unit, its drop-ins and the polkit rule, which the system step installs."""
-        return self.git / "edge" / "tunnel"
+        return self.live_checkout / "tunnel"
 
     @property
     def secrets_report_file(self) -> Path:

@@ -1,8 +1,0 @@
-[Unit]
-Description=hal backup: restore the latest snapshots and prove they are good
-Documentation=file://%h/git/edge/docs/backup.md
-
-[Service]
-Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/hal restore --test
-TimeoutStartSec=6h
