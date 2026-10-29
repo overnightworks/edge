@@ -381,6 +381,14 @@ def dependency_link_of_another_target(machine: Machine, unit: Path) -> str:
     return "custom.target.requires/hal-backup.service"
 
 
+def symlinked_dependency_directory(machine: Machine, unit: Path) -> str:
+    elsewhere = machine.user_units.parent / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "hal-backup.service").symlink_to("/tmp/foreign.service")
+    (machine.user_units / "custom.target.requires").symlink_to(elsewhere)
+    return "custom.target.requires/hal-backup.service"
+
+
 def directory_named_like_a_unit(machine: Machine, unit: Path) -> str:
     unit.mkdir()
     return unit.name
@@ -401,6 +409,7 @@ def file_inside_a_wants_directory(machine: Machine, unit: Path) -> str:
         symlink_to_a_marker_file,
         directory_named_like_a_unit,
         dependency_link_of_another_target,
+        symlinked_dependency_directory,
         file_inside_a_wants_directory,
     ],
 )

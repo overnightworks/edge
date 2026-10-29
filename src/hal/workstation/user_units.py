@@ -215,6 +215,7 @@ class UserUnits:
     def is_timer_link_into(self, directory: Path, entry: Path, units_directory: Path) -> bool:
         return (
             directory.name == TIMERS_WANTS_DIRECTORY
+            and not directory.is_symlink()
             and entry.name in self.timer_names
             and entry.is_symlink()
             and entry.readlink() == units_directory / entry.name
@@ -228,7 +229,6 @@ class UserUnits:
             for directory in self.user_units.iterdir()
             if directory.suffix in DEPENDENCY_DIRECTORY_SUFFIXES
             and directory.is_dir()
-            and not directory.is_symlink()
         )
 
     @staticmethod
