@@ -77,6 +77,15 @@ def test_a_link_that_already_points_here_is_unchanged_and_stays_the_same_link(
     assert entry_of(home).lstat().st_ino == before
 
 
+def test_a_relative_link_that_already_points_here_is_unchanged(
+    link: PathLink, home: Path
+) -> None:
+    entry_of(home).symlink_to(Path("..") / ".." / "git" / "hal" / "bin" / "hal")
+
+    assert link.check() is CheckState.UNCHANGED
+    assert link.apply() is Applied.UNCHANGED
+
+
 def test_a_wheel_without_a_checkout_touches_nothing(home: Path) -> None:
     entry_of(home).write_text("uv's own script\n")
     wheel = PathLink(Layout(home), None)
@@ -101,13 +110,23 @@ def relative_link_to_another_hal_clone(home: Path) -> None:
     entry_of(home).symlink_to(Path("..") / ".." / "git" / "hal-land" / "bin" / "hal")
 
 
+def relative_link_to_a_moved_clone(home: Path) -> None:
+    entry_of(home).symlink_to(Path("..") / ".." / "git" / "edge" / "bin" / "hal")
+
+
 @pytest.mark.parametrize(
     "arrange",
-    [link_to_a_moved_clone, link_to_another_hal_clone, relative_link_to_another_hal_clone],
+    [
+        link_to_a_moved_clone,
+        link_to_another_hal_clone,
+        relative_link_to_another_hal_clone,
+        relative_link_to_a_moved_clone,
+    ],
     ids=[
         "missing clone directly under ~/git",
         "existing clone named overnightworks-hal",
         "relative target",
+        "relative target to a missing clone directly under ~/git",
     ],
 )
 def test_a_link_into_another_hal_checkout_is_repointed_atomically_after_the_plan(

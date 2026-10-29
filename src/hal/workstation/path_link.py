@@ -57,14 +57,19 @@ class PathLink:
                 raise StepFailed(self.refusal())
             return True
         current = self.current_target()
-        if current == self.target:
+        if current == self.directory_resolved(self.target):
             return False
         if not self.is_hal_checkout_launcher(current):
             raise StepFailed(self.refusal())
         return True
 
     def current_target(self) -> Path:
-        return self.entry.parent / self.entry.readlink()
+        return self.directory_resolved(self.entry.parent / self.entry.readlink())
+
+    @staticmethod
+    def directory_resolved(launcher: Path) -> Path:
+        """The launcher with its directory resolved by the filesystem (a dot-dot after a symlink), and the launcher itself left unfollowed."""
+        return launcher.parent.resolve() / launcher.name
 
     def is_hal_checkout_launcher(self, launcher: Path) -> bool:
         """A `<root>/bin/hal` whose root names this project, or is gone and sits directly under `~/git`, where clones move within."""
@@ -76,7 +81,7 @@ class PathLink:
                 project = tomllib.load(pyproject).get("project")
                 return isinstance(project, dict) and project.get("name") == DISTRIBUTION_NAME
         except FileNotFoundError:
-            return not root.exists() and root.parent == self.clones_directory
+            return not root.exists() and root.parent == self.clones_directory.resolve()
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
             return False
 
