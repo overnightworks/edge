@@ -1,7 +1,0 @@
-claim_id = "eeafe05d41f845f5a2a332017fb81de0"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "20b1fd646e790b10ebdb43888e6478b92ce89d82"
-branch = "claude/issue-669-s1-github-and-sonar-rename-to-hal-the-ke"
-scope = ["docs/naming.md", "sonar-project.properties", "tests/old_names_baseline.toml"]
-opened_commit = "a625646aaa9a54565844b1e709a004806dd6eec6"
