@@ -37,6 +37,50 @@ def run_at_the_prompt(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *fla
     return code, captured.out, captured.err
 
 
+def a_checkout_under(home: Path) -> Path:
+    root = home / "git" / "hal"
+    (root / "bin").mkdir(parents=True)
+    (root / "bin" / "hal").write_text("#!/bin/sh\n")
+    return root
+
+
+def test_the_path_row_plans_the_link_changes_nothing_before_the_yes_and_creates_it_after(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    """#655 L1, L2: the plan names the link, the yes creates it, and the second run is `unchanged` and asks nothing for it."""
+    checkout = a_checkout_under(sandbox.home)
+    entry = sandbox.home / ".local" / "bin" / "hal"
+    planned_only = run_at_the_prompt(sandbox, capsys, "--dry-run", checkout=checkout)
+    assert not entry.is_symlink()
+
+    code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+    plan, run = split_at_the_prompt(out)
+
+    assert (code, err) == (ExitCode.OK, "")
+    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/hal/bin/hal" in planned_only[1].splitlines()
+    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/hal/bin/hal" in plan
+    assert "  ✓ path            changed" in run
+    assert entry.readlink() == checkout / "bin" / "hal"
+
+    again = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+    assert "  · path            unchanged" in again[1].splitlines()
+
+
+def test_a_foreign_entry_at_the_link_fails_the_plan_before_any_change_and_the_later_rows_are_not_run(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+    """#655 L1: a file of the person's own is named, never replaced; no question is asked and nothing runs."""
+    checkout = a_checkout_under(sandbox.home)
+    entry = sandbox.home / ".local" / "bin" / "hal"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("my own\n")
+
+    code, out, err = run_at_the_prompt(sandbox, capsys, checkout=checkout)
+
+    assert (code, err.splitlines()[0]) == (ExitCode.FAILURE, "error: setup stopped at path")
+    assert "  ✗ path            failed         ~/.local/bin/hal is a file of its own, not a link; you decide: move it away or delete it, then rerun" in out.splitlines()
+    assert "  · system          not run" in out.splitlines()
+    assert "Type yes" not in out
+    assert entry.read_text() == "my own\n"
+    assert nothing_was_done(sandbox)
+
+
 def test_setup_prints_the_plan_asks_the_yes_and_then_runs_with_one_sudo_after_it(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
     """E1, E3 A, E4 A: plan rows, the prompt, then the run; sudo's announcement and the one playbook run come after the yes."""
     code, out, err = run_at_the_prompt(sandbox, capsys)
@@ -45,6 +89,7 @@ def test_setup_prints_the_plan_asks_the_yes_and_then_runs_with_one_sudo_after_it
     assert (code, err) == (ExitCode.OK, "")
     assert plan == [
         "  ~ commit hook     will change",
+        "  · path            unchanged",
         "  · timers          unchanged",
         NOT_CHECKED_UNTIL_THE_YES,
         "  · secrets         complete",
@@ -52,11 +97,12 @@ def test_setup_prints_the_plan_asks_the_yes_and_then_runs_with_one_sudo_after_it
     assert PROMPT in out
     assert run == [
         "  ✓ commit hook     changed",
+        "  · path            unchanged",
         "  · timers          unchanged",
         SUDO_ANNOUNCEMENT,
         "  ✓ system          changed",
         "  · secrets         complete",
-        "✓ setup done · 2 changed, 2 unchanged · 47s",
+        "✓ setup done · 2 changed, 3 unchanged · 47s",
     ]
     assert [("--check" in argv) for argv in sandbox.system.playbook.calls] == [False]
 
@@ -89,7 +135,7 @@ def test_dry_run_only_shows_and_never_acts_or_asks(sandbox: Sandbox, capsys: pyt
 
     assert (code, err) == (ExitCode.OK, "")
     assert split_at_the_prompt(out)[1] == []
-    assert out.splitlines()[-1] == "~ setup plan · 2 open, 2 unchanged · 47s · run hal setup"
+    assert out.splitlines()[-1] == "~ setup plan · 2 open, 3 unchanged · 47s · run hal setup"
     assert not sandbox.layout.git_hooks_dir.exists()
     assert not sandbox.uv_calls.exists()
 
@@ -114,6 +160,7 @@ def test_without_a_terminal_the_plan_prints_and_the_refusal_runs_no_step(sandbox
     assert (code, err) == (ExitCode.REFUSED, NOT_AT_A_TERMINAL)
     assert out.splitlines() == [
         "  ~ commit hook     will change",
+        "  · path            unchanged",
         "  · timers          unchanged",
         NOT_CHECKED_UNTIL_THE_YES,
         "  · secrets         complete",
@@ -142,7 +189,7 @@ def test_the_agent_with_nothing_open_gets_no_question_and_needs_no_terminal(sand
 
     assert (code, err) == (ExitCode.OK, "")
     assert not re.search("Type yes", out)
-    assert out.splitlines()[-1] == "✓ setup up to date · 1 unchanged, 3 skipped · 47s"
+    assert out.splitlines()[-1] == "✓ setup up to date · 1 unchanged, 4 skipped · 47s"
 
 
 def test_a_failing_plan_check_stops_before_any_question_and_before_any_earlier_row_acts(
