@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from workstation_support import FAKE_SECRET_VALUE, symlinked_folder_fix
+from workstation_support import symlinked_folder_fix
 from workstation_secrets_support import (
     FakeCli,
     FakeSync,
@@ -37,42 +37,12 @@ from hal.workstation.secrets_setup import (
 from hal.workstation.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
 from hal.workstation.secrets_view import SecretEntry, TokenSource, load_manifest
 
-# Two guided tokens, one generated passphrase, in the order the walk must keep.
-SETUP_MANIFEST = """\
-[[secret]]
-name = "cloudflare/read"
-kind = "token"
-paths = ["~/.secrets/cloudflare/read"]
-read_by = ["hal apply"]
-recreate = "https://dash.cloudflare.com/profile/api-tokens"
-purpose = "liest Cloudflare"
-provider = "cloudflare"
-resource = "example.invalid"
-scope = ["Zone › DNS › Read"]
-expires_in_days = 30
+from support import workstation_secrets_wizard
+from support.workstation_secrets_wizard import PASSPHRASE_FILE, PASTED_VALUE, PASTED_VALUE_PARTS, SETUP_MANIFEST, files_under
 
-[[secret]]
-name = "github/read"
-kind = "token"
-paths = ["~/.secrets/github/read"]
-read_by = ["hal apply"]
-recreate = "https://github.com/settings/personal-access-tokens/new"
-purpose = "liest GitHub"
-provider = "github"
-resource = "example-org"
-scope = ["metadata:read", "organization_secrets:read"]
-expires_in_days = 366
+home, terminal = workstation_secrets_wizard.home, workstation_secrets_wizard.terminal
 
-[[secret]]
-name = "opentofu/passphrase"
-kind = "service-password"
-paths = ["~/.secrets/opentofu/passphrase"]
-read_by = ["hal apply"]
-recreate = "hal setup"
-purpose = "verschlüsselt den State"
-"""
 TOKEN_FILES = (".secrets/cloudflare/read", ".secrets/github/read")
-PASSPHRASE_FILE = ".secrets/opentofu/passphrase"
 EVERY_FILE = (*TOKEN_FILES, PASSPHRASE_FILE)
 
 # An entry the wizard has no way for, one whose presence cannot be told, an optional one and a retired one it never touches.
@@ -110,9 +80,6 @@ retired_on = 2026-10-14
 revoke_url = "https://github.com/settings/tokens"
 """
 
-# A pasted token carries no whitespace, so the canary's parts are joined; each part alone must stay unseen too.
-PASTED_VALUE_PARTS = tuple(FAKE_SECRET_VALUE.split())
-PASTED_VALUE = ".".join(PASTED_VALUE_PARTS)
 WRONG_VALUE = "FAKE-WRONG-VALUE-0000"
 
 
@@ -131,14 +98,6 @@ class FakeVerifier:
 
 
 @pytest.fixture
-def home(tmp_path: Path, use_manifest) -> Path:
-    use_manifest(SETUP_MANIFEST)
-    home = tmp_path / "home"
-    home.mkdir()
-    return home
-
-
-@pytest.fixture
 def verifier() -> FakeVerifier:
     return FakeVerifier()
 
@@ -146,11 +105,6 @@ def verifier() -> FakeVerifier:
 @pytest.fixture
 def disk() -> FakeSync:
     return FakeSync()
-
-
-@pytest.fixture
-def terminal() -> FakeTerminal:
-    return FakeTerminal()
 
 
 @pytest.fixture
@@ -164,10 +118,6 @@ def boundaries(
 ) -> Boundaries:
     """The operator at the keyboard; the walk sees only these fakes, never a browser, a prompt, a provider or a CLI."""
     return Boundaries(terminal.boundary(), verifier, disk.sync, cli)
-
-
-def files_under(home: Path) -> set[str]:
-    return {str(path.relative_to(home)) for path in home.rglob("*") if path.is_file()}
 
 
 def test_every_secret_is_written_0600_in_directories_kept_0700(home: Path, terminal: FakeTerminal, boundaries: Boundaries) -> None:

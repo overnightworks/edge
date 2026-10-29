@@ -14,6 +14,8 @@ from pathlib import Path, PurePosixPath
 import pytest
 from workstation_secrets_support import never_run, run_wizard
 from workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
+from support.workstation_secrets_report import cells_of, findings_of
+
 
 from hal.workstation import secrets_view
 from hal.workstation.secrets_setup import Boundaries, Terminal, WalkEnd
@@ -45,20 +47,9 @@ revoke_url = "https://github.com/settings/tokens"
 """
 
 
-def cells_of(table: str) -> list[list[str]]:
-    """The body rows of a Markdown table, cells stripped."""
-    return [[cell.strip() for cell in line.strip("|").split(" | ")] for line in table.strip().splitlines()[2:]]
-
-
 def rows_of(output: str) -> dict[str, list[str]]:
     """The status table, keyed by entry name."""
     return {cells[0]: cells for cells in cells_of(output.split("\n\n")[1])}
-
-
-def findings_of(output: str, rule: str) -> dict[str, list[str]]:
-    """The findings of one rule, keyed by subject: [detail, recommendation]."""
-    table = output.split("## Findings\n\n", 1)[1].split("\n\n")[0] if "## Findings" in output else ""
-    return {cells[1]: cells[2:] for cells in cells_of(table) if cells[0] == rule}
 
 
 def finding_subjects(output: str) -> set[str]:
