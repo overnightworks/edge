@@ -33,7 +33,9 @@ from pathlib import Path, PurePosixPath
 
 from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
+from hal.workstation.manifest_fields import ManifestError, fail, string, strings
 from hal.workstation.report import findings_count, markdown_table, write_state_file
+from hal.workstation.secrets_create import CreateCommand, left_by_cli, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
@@ -147,6 +149,7 @@ class SecretEntry:
     elsewhere: str = ""
     loosest_mode: int = LOOSEST_FILE_MODE
     loosest_mode_reason: str = ""
+    create: CreateCommand | None = None
 
     @property
     def retired(self) -> bool:
@@ -159,8 +162,8 @@ class SecretEntry:
 
     @property
     def written_by_setup(self) -> bool:
-        """the wizard writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
-        return self.source is not None or self.kind in (SecretKind.SERVICE_PASSWORD, SecretKind.UNVERIFIED_TOKEN)
+        """the wizard writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, and has the CLI of `create` make its login, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
+        return self.source is not None or self.create is not None or self.kind in (SecretKind.SERVICE_PASSWORD, SecretKind.UNVERIFIED_TOKEN)
 
     @property
     def place(self) -> PurePosixPath:
@@ -168,38 +171,26 @@ class SecretEntry:
         (path,) = self.paths
         return path
 
+    @property
+    def folder(self) -> PurePosixPath:
+        """The folder the CLI of `create` writes into; the manifest guarantees one place for it."""
+        return self.place.parent
 
-class ManifestError(ValueError):
-    """The manifest cannot be trusted; `hal secrets` exits 2 on it."""
+    @property
+    def renewal(self) -> str:
+        """How the entry is made again: derived from `create` and the entry's own folder, else the `recreate` text."""
+        return self.create.renewal(f"{HOME_PREFIX}{self.folder}") if self.create else self.recreate
 
 
 # --- manifest --------------------------------------------------------------
 
-REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by", "recreate"})
+REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by"})
 SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
 RETIREMENT_KEYS = frozenset({"retired_on", "revoke_url", "revocation_confirmed"})
 MODE_KEYS = frozenset({"loosest_mode", "loosest_mode_reason"})
-OPTIONAL_KEYS = frozenset({"verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
+OPTIONAL_KEYS = frozenset({"recreate", "create", "verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
 GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
 LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
-
-
-def _fail(path: Path, where: str, message: str) -> ManifestError:
-    return ManifestError(f"{path}: {where}: {message}")
-
-
-def _string(path: Path, where: str, raw: Mapping[str, object], key: str) -> str:
-    value = raw[key]
-    if not isinstance(value, str) or not value.strip():
-        raise _fail(path, where, f"{key} must be a non-empty string")
-    return value
-
-
-def _strings(path: Path, where: str, raw: Mapping[str, object], key: str) -> tuple[str, ...]:
-    value = raw[key]
-    if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
-        raise _fail(path, where, f"{key} must be a list of non-empty strings")
-    return tuple(value)
 
 
 def _has_wildcard(name: str) -> bool:
@@ -211,14 +202,14 @@ def _home_relative(path: Path, where: str, text: str) -> PurePosixPath:
     relative = PurePosixPath(text.removeprefix(HOME_PREFIX))
     escapes = not text.startswith(HOME_PREFIX) or relative.is_absolute() or ".." in relative.parts or not relative.parts
     if escapes or any(_has_wildcard(part) for part in relative.parent.parts):
-        raise _fail(path, where, "every paths entry must start with '~/', stay inside the home and keep wildcards in its last part")
+        raise fail(path, where, "every paths entry must start with '~/', stay inside the home and keep wildcards in its last part")
     return relative
 
 
 def _patterns(path: Path, where: str, raw: Mapping[str, object]) -> tuple[PurePosixPath, ...]:
-    texts = _strings(path, where, raw, "paths")
+    texts = strings(path, where, raw, "paths")
     if not texts:
-        raise _fail(path, where, "paths must name at least one place")
+        raise fail(path, where, "paths must name at least one place")
     return tuple(_home_relative(path, where, text) for text in texts)
 
 
@@ -227,13 +218,13 @@ def _enum_value[E: Enum](path: Path, where: str, raw: Mapping[str, object], key:
         return enum(raw[key])
     except ValueError:
         allowed = ", ".join(repr(member.value) for member in enum)
-        raise _fail(path, where, f"{key} must be one of {allowed}") from None
+        raise fail(path, where, f"{key} must be one of {allowed}") from None
 
 
 def _date(path: Path, where: str, raw: Mapping[str, object], key: str) -> date:
     value = raw[key]
     if not isinstance(value, date) or isinstance(value, datetime):
-        raise _fail(path, where, f"{key} must be a date like 2026-10-14")
+        raise fail(path, where, f"{key} must be a date like 2026-10-14")
     return value
 
 
@@ -247,14 +238,14 @@ class Retirement:
 def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> Retirement:
     """A retired entry always carries the page where it is revoked, and only a retired one does or records a confirmed revocation."""
     if ("retired_on" in raw) != ("revoke_url" in raw):
-        raise _fail(path, where, "retired_on and revoke_url come together or not at all")
+        raise fail(path, where, "retired_on and revoke_url come together or not at all")
     if "retired_on" not in raw:
         if "revocation_confirmed" in raw:
-            raise _fail(path, where, "revocation_confirmed belongs to a retired entry only")
+            raise fail(path, where, "revocation_confirmed belongs to a retired entry only")
         return Retirement()
-    revoke_url = _string(path, where, raw, "revoke_url")
+    revoke_url = string(path, where, raw, "revoke_url")
     if not revoke_url.startswith("https://"):
-        raise _fail(path, where, "revoke_url must be an https:// link")
+        raise fail(path, where, "revoke_url must be an https:// link")
     confirmed = _date(path, where, raw, "revocation_confirmed") if "revocation_confirmed" in raw else None
     return Retirement(_date(path, where, raw, "retired_on"), revoke_url, confirmed)
 
@@ -262,20 +253,20 @@ def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> Retirement
 def _flag(path: Path, where: str, raw: Mapping[str, object], key: str) -> bool:
     value = raw.get(key, False)
     if not isinstance(value, bool):
-        raise _fail(path, where, f"{key} must be true or false")
+        raise fail(path, where, f"{key} must be true or false")
     return value
 
 
 def _declared_mode(path: Path, where: str, raw: Mapping[str, object]) -> tuple[int, str]:
     """The loosest mode a file of the entry may have and why; both keys together, never looser than a container user needs."""
     if set(raw) & MODE_KEYS and not set(raw) >= MODE_KEYS:
-        raise _fail(path, where, "loosest_mode and loosest_mode_reason belong together")
+        raise fail(path, where, "loosest_mode and loosest_mode_reason belong together")
     if "loosest_mode" not in raw:
         return LOOSEST_FILE_MODE, ""
     mode = raw["loosest_mode"]
     if not isinstance(mode, int) or isinstance(mode, bool) or mode <= 0 or mode & ~LOOSEST_DECLARABLE_FILE_MODE:
-        raise _fail(path, where, f"loosest_mode must be a file mode within {LOOSEST_DECLARABLE_FILE_MODE:04o}, e.g. 0o644")
-    return mode, _string(path, where, raw, "loosest_mode_reason")
+        raise fail(path, where, f"loosest_mode must be a file mode within {LOOSEST_DECLARABLE_FILE_MODE:04o}, e.g. 0o644")
+    return mode, string(path, where, raw, "loosest_mode_reason")
 
 
 def _is_github_right(right: str) -> bool:
@@ -289,55 +280,59 @@ def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: Secre
     if not named:
         return None
     if named != SOURCE_KEYS or kind is not SecretKind.TOKEN or "purpose" not in raw:
-        raise _fail(path, where, "provider, resource, scope, expires_in_days and purpose come together, on a token entry only")
+        raise fail(path, where, "provider, resource, scope, expires_in_days and purpose come together, on a token entry only")
     provider = _enum_value(path, where, raw, "provider", Provider)
-    scope = _strings(path, where, raw, "scope")
+    scope = strings(path, where, raw, "scope")
     if not scope or (provider is Provider.GITHUB and not all(_is_github_right(right) for right in scope)):
-        raise _fail(path, where, "scope must name the rights; a github right reads 'permission:read', ':write' or ':admin'")
+        raise fail(path, where, "scope must name the rights; a github right reads 'permission:read', ':write' or ':admin'")
     days = raw["expires_in_days"]
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= LONGEST_EXPIRY_DAYS:
-        raise _fail(path, where, f"expires_in_days must be a whole number from 1 to {LONGEST_EXPIRY_DAYS}")
-    return TokenSource(provider, _string(path, where, raw, "resource"), scope, days)
+        raise fail(path, where, f"expires_in_days must be a whole number from 1 to {LONGEST_EXPIRY_DAYS}")
+    return TokenSource(provider, string(path, where, raw, "resource"), scope, days)
 
 
 def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...]) -> None:
     if len(patterns) != 1 or _has_wildcard(patterns[0].name):
-        raise _fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
+        raise fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
 
 
 def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     where = f"[[secret]] #{index + 1}"
     if not isinstance(raw, dict):
-        raise _fail(path, where, "must be a table")
+        raise fail(path, where, "must be a table")
     if isinstance(raw.get("name"), str):
         where = f"[[secret]] {raw['name']!r}"
-    missing = sorted(REQUIRED_KEYS - set(raw))
+    required = REQUIRED_KEYS if "create" in raw else REQUIRED_KEYS | {"recreate"}
+    missing = sorted(required - set(raw))
     unknown = sorted(set(raw) - REQUIRED_KEYS - OPTIONAL_KEYS)
     if missing or unknown:
-        raise _fail(path, where, f"missing key(s) {missing}, unknown key(s) {unknown}")
+        raise fail(path, where, f"missing key(s) {missing}, unknown key(s) {unknown}")
     kind = _enum_value(path, where, raw, "kind", SecretKind)
     if (kind is SecretKind.DERIVED_MIRROR) != ("mirror_of" in raw):
-        raise _fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
+        raise fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
+    create = parse_create(path, where, raw, is_tool_login=kind is SecretKind.TOOL_LOGIN)
+    patterns = _patterns(path, where, raw)
     entry = SecretEntry(
-        name=_string(path, where, raw, "name"),
+        name=string(path, where, raw, "name"),
         kind=kind,
-        paths=_patterns(path, where, raw),
-        read_by=_strings(path, where, raw, "read_by"),
-        recreate=_string(path, where, raw, "recreate"),
+        paths=patterns,
+        read_by=strings(path, where, raw, "read_by"),
+        recreate="" if create else string(path, where, raw, "recreate"),
         verifier=_enum_value(path, where, raw, "verify", Verifier) if "verify" in raw else None,
         retired_on=retirement.retired_on,
         revoke_url=retirement.revoke_url,
         revocation_confirmed=retirement.revocation_confirmed,
-        mirror_of=_string(path, where, raw, "mirror_of") if "mirror_of" in raw else "",
-        purpose=_string(path, where, raw, "purpose") if "purpose" in raw else "",
+        mirror_of=string(path, where, raw, "mirror_of") if "mirror_of" in raw else "",
+        purpose=string(path, where, raw, "purpose") if "purpose" in raw else "",
         source=source,
         optional=_flag(path, where, raw, "optional"),
-        elsewhere=_string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
+        elsewhere=string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
         loosest_mode=loosest_mode,
         loosest_mode_reason=loosest_mode_reason,
+        create=create,
     )
     if entry.written_by_setup:
         _require_one_plain_place(path, where, entry.paths)
@@ -348,10 +343,10 @@ def _require_consistent(path: Path, entries: tuple[SecretEntry, ...]) -> None:
     names = Counter(entry.name for entry in entries)
     duplicates = sorted(name for name, count in names.items() if count > 1)
     if duplicates:
-        raise _fail(path, "[[secret]]", f"name(s) used twice: {', '.join(duplicates)}")
+        raise fail(path, "[[secret]]", f"name(s) used twice: {', '.join(duplicates)}")
     for entry in entries:
         if entry.mirror_of and entry.mirror_of not in names:
-            raise _fail(path, f"[[secret]] {entry.name!r}", f"mirror_of names no entry: {entry.mirror_of!r}")
+            raise fail(path, f"[[secret]] {entry.name!r}", f"mirror_of names no entry: {entry.mirror_of!r}")
 
 
 def load_manifest(path: Path) -> tuple[SecretEntry, ...]:
@@ -362,7 +357,7 @@ def load_manifest(path: Path) -> tuple[SecretEntry, ...]:
         raise ManifestError(f"{path}: {error}") from None
     unknown = sorted(set(raw) - {"secret"})
     if unknown or not isinstance(raw.get("secret"), list):
-        raise _fail(path, "top level", f"holds only a [[secret]] array, found key(s) {unknown or sorted(raw)}")
+        raise fail(path, "top level", f"holds only a [[secret]] array, found key(s) {unknown or sorted(raw)}")
     entries = tuple(_entry(path, index, item) for index, item in enumerate(raw["secret"]))
     _require_consistent(path, entries)
     return entries
@@ -748,19 +743,17 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
         SecretStatus(entry, presence(entry, observation.matches), _verification(entry, observation.probe_codes)) for entry in manifest
     )
     patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
+    logins = tuple(entry.place for entry in manifest if entry.create and not entry.retired)
+    tree = tuple(fact for fact in observation.tree if not any(left_by_cli(fact.relative, login) for login in logins))
     unknown = (
-        SecretFinding(
-            FindingRule.UNKNOWN_FILE,
-            f"{HOME_PREFIX}{fact.relative}",
-            fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it",
-        )
-        for fact in observation.tree
+        SecretFinding(FindingRule.UNKNOWN_FILE, f"{HOME_PREFIX}{fact.relative}", fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it")
+        for fact in tree
         if not _is_named(fact.relative, patterns)
     )
     findings = (
         *(f for status in statuses for f in _entry_findings(status)),
         *unknown,
-        *_tree_findings(observation.tree, manifest, patterns),
+        *_tree_findings(tree, manifest, patterns),
     )
     return SecretsView(statuses, findings)
 
@@ -781,7 +774,7 @@ def _status_row(status: SecretStatus) -> list[str]:
         revocation = REVOCATION_CONFIRMED.format(date=entry.revocation_confirmed) if entry.revocation_confirmed else REVOCATION_UNCONFIRMED
         return [entry.name, entry.kind.label, RETIRED, revocation, EXPIRY_UNKNOWN, places(entry), f"revoke: {entry.revoke_url}"]
     presence = OPTIONAL.format(presence=status.presence.value) if entry.optional else status.presence.value
-    return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.recreate]
+    return [entry.name, entry.kind.label, presence, status.verification.value, EXPIRY_UNKNOWN, places(entry), entry.renewal]
 
 
 def render_view(view: SecretsView, now: datetime) -> str:
