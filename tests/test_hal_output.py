@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 
 import pytest
-from terminal_support import put_on_terminals
+from support.terminal_support import put_on_terminals
 
 from hal.output import (
     HEADING_THRESHOLD,

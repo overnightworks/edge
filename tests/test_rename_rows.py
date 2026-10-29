@@ -2,10 +2,17 @@
 findings and its refusals."""
 
 import pytest
-from terminal_support import put_stdout_on_a_terminal, type_at_prompt
+from support import rename_support
+from support.terminal_support import put_stdout_on_a_terminal, type_at_prompt
 
 from hal import cli
 from hal.grammar import ExitCode
+
+(everything, cli_world, fakes, home, locked, repository, through_cli, world) = (
+    rename_support.everything, rename_support.cli_world, rename_support.fakes,
+    rename_support.home, rename_support.locked, rename_support.repository,
+    rename_support.through_cli, rename_support.world,
+)  # fmt: skip
 
 
 @pytest.mark.parametrize(
