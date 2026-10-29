@@ -403,11 +403,11 @@
 …
 Aktivierung: unchanged
 User units: changed
-  hal-backup-restore-test.service: ExecStart=<live-checkout>/.venv/bin/hal restore --test
+  hal-backup-restore-test.service: ExecStart=&lt;live-checkout&gt;/.venv/bin/hal restore --test
   hal-backup-restore-test.service: Result=success
-  hal-backup.service: ExecStart=<live-checkout>/.venv/bin/hal backup
+  hal-backup.service: ExecStart=&lt;live-checkout&gt;/.venv/bin/hal backup
   hal-backup.service: Result=success
-  home-check.service: ExecStart=<live-checkout>/.venv/bin/home check
+  home-check.service: ExecStart=&lt;live-checkout&gt;/.venv/bin/home check
   home-check.service: Result=success
 Ansible: unchanged
 BECOME password:
@@ -418,7 +418,7 @@ TASK [Read cloudflared's config for the tunnel id] *****************************
 [ERROR]: Task failed: Timed out waiting for become success or become password prompt.
 >>> Standard Error
 [sudo: [sudo via ansible, key=…] password:] Passwort:
-Origin: <live-checkout>/src/home_tools/system/playbook.yml:76:7
+Origin: &lt;live-checkout&gt;/src/home_tools/system/playbook.yml:76:7
 
 fatal: [localhost]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Timed out waiting for become success or become password prompt. ..."}
 
