@@ -1,7 +1,0 @@
-claim_id = "05ff256458524ef18a26ff34f127a312"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "657e92269f9c1979ce4eb6fd7bca84d1dd328c7d"
-branch = "claude/issue-692-the-barrier-test-for-endless-headers-dep"
-scope = ["tests/test_stack_barrier.py"]
-opened_commit = "0f352f8aa58e5eae84947c8376d5fd5cfbd58a1c"
