@@ -1,7 +1,7 @@
 /* The look of hallucinai.de's legal pages: songmaker's shapes and app colour on appkit's family
    tokens and fonts, which appkit.css brings in first. */
 
-:root{--primary:#d41a0a;--accent:#7a18c0;--on-accent:#fff;--grid-line:rgba(212,26,10,.04)}
+:root{--primary:#c8180a;--accent:#7a18c0;--on-accent:#fff;--grid-line:rgba(212,26,10,.04)}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--grid-line:rgba(255,50,32,.04)}}
 :root[data-theme="dark"]{--primary:#ff3220;--accent:#b45cf5;--on-accent:#111;--grid-line:rgba(255,50,32,.04)}
 *{box-sizing:border-box}

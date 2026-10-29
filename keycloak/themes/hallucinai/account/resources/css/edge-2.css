@@ -3,7 +3,7 @@
    docs/design/keycloak-theme.html is the picture. */
 
 :root {
-  --primary: #d41a0a;
+  --primary: #c8180a;
   --accent: #7a18c0;
   --on-accent: #ffffff;
   --h-bad: var(--fail);
