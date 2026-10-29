@@ -31,7 +31,9 @@ class PathLink:
         return CheckState.WOULD_CHANGE if self.is_open() else CheckState.UNCHANGED
 
     def fact(self) -> str:
-        return "" if self.target is None else f"{self.shown(self.entry)} → {self.shown(self.target)}"
+        return (
+            "" if self.target is None else f"{self.shown(self.entry)} → {self.shown(self.target)}"
+        )
 
     def apply(self) -> Applied:
         target = self.target
@@ -50,13 +52,21 @@ class PathLink:
             return False
         if not self.entry.is_symlink():
             if self.entry.exists():
-                raise StepFailed(self.refusal("a directory, not a link" if self.entry.is_dir() else "a file of its own, not a link"))
+                raise StepFailed(
+                    self.refusal(
+                        "a directory, not a link"
+                        if self.entry.is_dir()
+                        else "a file of its own, not a link"
+                    )
+                )
             return True
         current = self.current_target()
         if current == self.target:
             return False
         if not self.is_hal_checkout_launcher(current):
-            raise StepFailed(self.refusal(f"a link to {printable(str(current))}, not a hal checkout"))
+            raise StepFailed(
+                self.refusal(f"a link to {printable(str(current))}, not a hal checkout")
+            )
         return True
 
     def current_target(self) -> Path:
@@ -80,4 +90,6 @@ class PathLink:
 
     def shown(self, path: Path) -> str:
         """The path with the home as `~`, and what a terminal would act on escaped."""
-        return printable(f"~/{path.relative_to(self.home)}" if path.is_relative_to(self.home) else str(path))
+        return printable(
+            f"~/{path.relative_to(self.home)}" if path.is_relative_to(self.home) else str(path)
+        )

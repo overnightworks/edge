@@ -46,7 +46,9 @@ def entry_of(home: Path) -> Path:
     return home / ".local" / "bin" / "hal"
 
 
-def test_a_missing_link_is_created_and_the_plan_shows_it_with_the_home_as_a_tilde(link: PathLink, home: Path, running: Path) -> None:
+def test_a_missing_link_is_created_and_the_plan_shows_it_with_the_home_as_a_tilde(
+    link: PathLink, home: Path, running: Path
+) -> None:
     assert link.check() is CheckState.WOULD_CHANGE
     assert link.fact() == "~/.local/bin/hal → ~/git/hal/bin/hal"
     assert not entry_of(home).is_symlink()
@@ -64,7 +66,9 @@ def test_a_missing_bin_directory_is_created_with_the_link(tmp_path: Path) -> Non
     assert entry_of(home).readlink() == running / "bin" / "hal"
 
 
-def test_a_link_that_already_points_here_is_unchanged_and_stays_the_same_link(link: PathLink, home: Path, running: Path) -> None:
+def test_a_link_that_already_points_here_is_unchanged_and_stays_the_same_link(
+    link: PathLink, home: Path, running: Path
+) -> None:
     entry_of(home).symlink_to(running / "bin" / "hal")
     before = entry_of(home).lstat().st_ino
 
@@ -100,7 +104,11 @@ def relative_link_to_another_hal_clone(home: Path) -> None:
 @pytest.mark.parametrize(
     "arrange",
     [link_to_a_moved_clone, link_to_another_hal_clone, relative_link_to_another_hal_clone],
-    ids=["missing clone directly under ~/git", "existing clone named overnightworks-hal", "relative target"],
+    ids=[
+        "missing clone directly under ~/git",
+        "existing clone named overnightworks-hal",
+        "relative target",
+    ],
 )
 def test_a_link_into_another_hal_checkout_is_repointed_atomically_after_the_plan(
     link: PathLink, home: Path, running: Path, arrange: Callable[[Path], None]
@@ -173,7 +181,10 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     link: PathLink, home: Path, arrange: Callable[[Path], None], kind: str
 ) -> None:
     arrange(home)
-    before = (entry_of(home).is_symlink(), os.readlink(entry_of(home)) if entry_of(home).is_symlink() else None)
+    before = (
+        entry_of(home).is_symlink(),
+        os.readlink(entry_of(home)) if entry_of(home).is_symlink() else None,
+    )
 
     with pytest.raises(StepFailed) as refusal:
         link.check()
@@ -182,7 +193,10 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     assert "you decide: move it away or delete it, then rerun" in str(refusal.value)
     with pytest.raises(StepFailed):
         link.apply()
-    assert (entry_of(home).is_symlink(), os.readlink(entry_of(home)) if entry_of(home).is_symlink() else None) == before
+    assert (
+        entry_of(home).is_symlink(),
+        os.readlink(entry_of(home)) if entry_of(home).is_symlink() else None,
+    ) == before
 
 
 def test_the_refusal_escapes_what_a_terminal_would_act_on(link: PathLink, home: Path) -> None:
