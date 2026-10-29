@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "3e7c6b2b12ca409c3ab5b4cfc654a8b1670dd17e"
 branch = "claude/issue-679-hal-setup-installs-mise"
-scope = ["docs/home.md", "src/hal/workstation/check.py", "src/hal/workstation/hook_check.py", "src/hal/workstation/layout.py", "src/hal/workstation/ports.py", "src/hal/workstation/setup.py", "tests/conftest.py", "tests/test_workstation_commit_hook.py", "tests/test_workstation_hook_check.py", "tests/test_workstation_setup.py", "tests/workstation_support.py"]
+scope = ["docs/home.md", "src/hal/workstation/check.py", "src/hal/workstation/hook_check.py", "src/hal/workstation/layout.py", "src/hal/workstation/ports.py", "src/hal/workstation/setup.py", "tests/conftest.py", "tests/test_workstation_check_recovery.py", "tests/test_workstation_commit_hook.py", "tests/test_workstation_hook_check.py", "tests/test_workstation_setup.py", "tests/workstation_support.py"]
 opened_commit = "01ad9972cf942adc5b77a749bf46d086d8a70b14"
 whole_reason = "The one pin shows on the install side (setup, ports and layout) and on the check side (hook check and its rule report), and the docs and tests pin both; a split leaves one side reporting or installing a tool the other does not know."
