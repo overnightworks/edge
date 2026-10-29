@@ -128,6 +128,7 @@ def test_every_alias_is_a_router_host_inside_the_names_the_ca_allows(traefik_mcp
 
     assert all(any(fnmatch(alias, pattern) for pattern in ca_policy) for alias in aliases)
     assert router_hosts == aliases
+    assert all(any(fnmatch(host, pattern) for host in router_hosts) for pattern in ca_policy)
 
 
 def test_every_router_matches_one_host_and_at_most_one_exact_path_and_keeps_the_host_header(

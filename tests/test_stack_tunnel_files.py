@@ -104,9 +104,9 @@ def test_the_unit_keeps_its_hardening_and_has_one_exec_start():
     assert sum(line.startswith("ExecStart=") for line in lines) == 1
     assert protection <= set(lines)
     assert any(line.startswith("LoadCredential=") for line in lines)
-    assert not [line for line in lines if line.startswith("User=")]
+    assert not [line for line in lines if line.partition("=")[0].strip() == "User"]
     for kept in protection:
-        assert sum(line.partition("=")[0] == kept.partition("=")[0] for line in lines) == 1
+        assert sum(line.partition("=")[0].strip() == kept.partition("=")[0] for line in lines) == 1
 
 
 @pytest.mark.parametrize("path", ALL_FILES, ids=lambda path: path.name)
