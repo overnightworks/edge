@@ -77,8 +77,8 @@ no API key (`sk-ant-api…`), nothing group or others can touch. The service ref
 otherwise, naming `cli.anthropic.token_file` and the path, never the content. `hal secrets` lists
 the entry `agent-service-claude`.
 
-The service runs Codex under a login of its own beside it, `~/.secrets/agent-service/codex/auth.json`
-(folder 0700, file 0600), which `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes. It is a
+A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/auth.json`
+(folder 0700, file 0600); the service does not bind it yet. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
 rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
 leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file.
