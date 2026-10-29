@@ -87,7 +87,7 @@ def test_the_security_headers_stand_at_server_level_and_no_location_overrides_th
 
 
 def test_the_stylesheet_declares_no_face_and_no_family_token_appkit_owns():
-    stylesheet = (ROOT / "legal/assets/legal.css").read_text()
+    stylesheet = (ROOT / "legal/assets/legal-2.css").read_text()
     assert "@font-face" not in stylesheet
     assert "--font-display:" not in stylesheet
     assert "--text-muted:" not in stylesheet
@@ -148,7 +148,7 @@ def test_every_appkit_link_and_preload_names_the_installed_version(name):
 def test_a_page_links_appkit_css_before_legal_css(name):
     page = read_page(name)
     assert page.index(f"/_rechtliches/appkit-{VERSION}/appkit.css") < page.index(
-        "/_rechtliches/legal.css"
+        "/_rechtliches/legal-2.css"
     )
 
 
