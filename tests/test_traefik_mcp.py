@@ -178,7 +178,15 @@ def test_the_file_provider_reads_a_directory_of_its_own(traefik_mcp, static_conf
     assert directory != public_directory
 
 
-def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(static_config):
+def provisioned_challenges(acme: dict) -> set[str]:
+    """The ACME challenge types the resolver is configured for, in the CA provisioner's names."""
+    names = {"httpChallenge": "http-01", "dnsChallenge": "dns-01", "tlsChallenge": "tls-alpn-01"}
+    return {name for key, name in names.items() if key in acme}
+
+
+def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(
+    static_config, traefik_mcp
+):
     """#48 rule 4: the resolver trusts the CA root alone, over TLS-ALPN-01."""
 
     acme = static_config["certificatesResolvers"]["internal"]["acme"]
@@ -186,7 +194,14 @@ def test_the_internal_resolver_trusts_only_the_cas_root_over_tls_alpn_01(static_
 
     assert ca_server_host == f"step-ca:{load('step-ca/ca.json')['address'].lstrip(':')}"
     assert acme["caSystemCertPool"] is False
-    assert len(acme["caCertificates"]) == 1
+    (root_certificate,) = acme["caCertificates"]
+    assert Path(root_certificate).name in traefik_mcp["secrets"]
+    assert provisioned_challenges(acme) <= {
+        challenge
+        for provisioner in load("step-ca/ca.json")["authority"]["provisioners"]
+        for challenge in provisioner["challenges"]
+    }
+    assert provisioned_challenges(acme)
     assert not {"httpChallenge", "dnsChallenge"} & set(acme)
 
 
@@ -212,6 +227,7 @@ def test_the_acme_storage_is_a_named_volume_that_traefik_mcp_can_write(
     assert f"traefik-mcp-acme:{Path(storage).parent}" in traefik_mcp["volumes"]
     assert "traefik-mcp-acme" in compose["volumes"]
     assert owner["entrypoint"] == ["chown", traefik_mcp["user"], str(Path(storage).parent)]
+    assert not traefik_mcp["user"].startswith(("0", "root"))
     assert owner["network_mode"] == "none"
     assert traefik_mcp["depends_on"]["traefik-mcp-acme-owner"] == {
         "condition": "service_completed_successfully"

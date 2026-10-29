@@ -511,6 +511,16 @@ def test_a_serving_apex_is_refused_naming_the_key_it_breaks(redirect, entries, k
     assert refusal(with_redirect(redirect, *entries)).startswith(f"{key}:")
 
 
+def test_the_apex_serves_publicly_only_its_legal_pages_and_the_files_prefix():
+    """The apex redirects everything else; its public allow-list stays exactly these paths."""
+    serve = catalog.read(PROJECT_ROOT / catalog.FLEET_FILE)["cloudflare"]["redirect"]["serve"]
+
+    assert serve == {
+        "pages": ["/impressum", "/datenschutz", "/nutzungsbedingungen", "/favicon.ico"],
+        "files": "/_rechtliches/",
+    }
+
+
 def test_b6_an_app_host_without_ready_is_refused_and_with_ready_is_read():
     app = {"repo": {"default_branch": "master"}, "run": {"enabled": True}}
     unready = document(hosted(host("app"), key="app", **app))

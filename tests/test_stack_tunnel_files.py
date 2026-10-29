@@ -89,6 +89,22 @@ def test_the_files_carry_exactly_the_three_placeholders_the_installer_fills():
     assert not [text for text in texts if PLACEHOLDER.search(render(text, values))]
 
 
+def test_the_unit_keeps_its_hardening_and_has_one_exec_start():
+    """The base unit and its non-root drop-in together carry the protective limits and a single
+    `ExecStart` (a second one breaks the unit)."""
+    lines = key_value_lines(BASE_UNIT.read_text()) + key_value_lines(NONROOT_DROP_IN.read_text())
+    protection = {
+        "DynamicUser=yes",
+        "NoNewPrivileges=yes",
+        "ProtectSystem=strict",
+        "ProtectHome=yes",
+        "PrivateTmp=yes",
+    }
+
+    assert sum(line.startswith("ExecStart=") for line in lines) == 1
+    assert protection <= set(lines)
+
+
 @pytest.mark.parametrize("path", ALL_FILES, ids=lambda path: path.name)
 def test_no_tunnel_file_asks_for_sudo(path):
     """#76 rule 4, cell 9: the files are content; installing them is home-tools#9's one sudo."""
