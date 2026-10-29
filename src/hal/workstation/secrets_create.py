@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from hal.workstation.manifest_fields import fail, string, strings
 
@@ -26,6 +26,11 @@ class CreateCommand:
         """The command that makes the login again, as the operator types it, its variables pointing at `folder`."""
         variables = (f"{name}={folder}" for name in self.home)
         return " ".join((*variables, *self.run))
+
+
+def left_by_cli(relative: PurePosixPath, login: PurePosixPath) -> bool:
+    """Whether a path lies in the folder of a `create` entry's login file without being it: the folder is the CLI's, its 0700 guards it, and hal never reads it."""
+    return login.parent in relative.parents and relative != login
 
 
 def parse_create(path: Path, where: str, raw: Mapping[str, object], *, is_tool_login: bool) -> CreateCommand | None:

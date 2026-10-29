@@ -534,10 +534,18 @@ def _seal_login(entry: SecretEntry, layout: Layout) -> PurePosixPath | None:
     return made[0].relative if made else None
 
 
-def _discard_login(entry: SecretEntry, layout: Layout) -> None:
-    """After a failed CLI: what it left of the login goes, so that a refused sign-in stores nothing and the next run asks again."""
-    for fact in stat_matches(layout, entry.place) or ():
-        (layout.home / fact.relative).unlink()
+def _folder_contents(folder: Path) -> frozenset[Path]:
+    """Every path below the entry's folder, by name only."""
+    return frozenset(folder.rglob("*"))
+
+
+def _discard_login(folder: Path, before: frozenset[Path]) -> None:
+    """After a failed CLI: what that run left in the folder goes, deepest first, so that a refused sign-in stores nothing and the next run asks again; what was there before stays."""
+    for left in sorted(_folder_contents(folder) - before, key=lambda path: len(path.parts), reverse=True):
+        if left.is_dir() and not left.is_symlink():
+            left.rmdir()
+        else:
+            left.unlink()
 
 
 def _login_refusal(create: CreateCommand, exit_code: int | None) -> str:
@@ -549,26 +557,20 @@ def _login_refusal(create: CreateCommand, exit_code: int | None) -> str:
     return f"{' '.join(create.run)} ended without a login file · nothing stored"
 
 
-def _login_subject(entry: SecretEntry) -> str:
-    """The rows name a login by its service and tool apart by a slash (`agent-service/codex`) while the manifest name joins them (`agent-service-codex`)."""
-    service, _, tool = entry.name.rpartition("-")
-    return f"{service}/{tool}"
-
-
 def _set_up_tool_login(entry: SecretEntry, create: CreateCommand, layout: Layout, boundaries: Boundaries) -> bool:
     """The CLI makes the secret itself in the entry's folder; hal checks path and mode only and never reads what the CLI wrote."""
-    subject = _login_subject(entry)
+    subject = entry.name
     suffix = ", a login of its own" if create.home else ""
     _write_entry_row(Glyph.ANNOUNCE, subject, WizardEvent.NEW_LOGIN, f"your {create.label} account{suffix}")
     write_detail(f"why: {entry.purpose}")
     boundaries.terminal.ask(f"{DETAIL_INDENT}Enter opens the {create.label} sign-in in your browser: ")
     _private_directories(layout.home, layout.home / entry.folder)
-    folder = str(layout.home / entry.folder)
-    exit_code = boundaries.run_command(create.run, {name: folder for name in create.home})
-    if exit_code:
-        _discard_login(entry, layout)
+    folder = layout.home / entry.folder
+    before = _folder_contents(folder)
+    exit_code = boundaries.run_command(create.run, {name: str(folder) for name in create.home})
     made = _seal_login(entry, layout) if exit_code == 0 else None
     if made is None:
+        _discard_login(folder, before)
         _write_entry_row(Glyph.FAILED, subject, WizardEvent.NOT_SIGNED_IN, _login_refusal(create, exit_code))
         return False
     write_row(Row(Glyph.DONE, subject, WizardEvent.SIGNED_IN, f"{HOME_PREFIX}{made} ({entry.loosest_mode:o}) · never shown"))

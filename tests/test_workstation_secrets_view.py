@@ -62,7 +62,7 @@ INVENTORY = {
     "keycloak/config-cli-secret",
     "keycloak/bootstrap-admin-password",
     "keycloak/clients/*",
-    "agent-service-claude", "agent-service-codex", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token", "smtp/password", "smtp/account.toml",
+    "agent-service-claude", "agent-service/codex", "agent-service/signing-key", "agent-service/signing-public-key", "hopin/session-secret", "cloudflare/turn-hopin/key-id", "cloudflare/turn-hopin/api-token", "smtp/password", "smtp/account.toml",
 }
 DECLARED_MODE_ENTRY = (
     '[[secret]]\nname = "step-ca/password"\nkind = "token"\npaths = ["~/.secrets/step-ca/password"]\nread_by = []\nrecreate = "r"\n'

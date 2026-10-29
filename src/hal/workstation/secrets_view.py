@@ -35,7 +35,7 @@ from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
 from hal.workstation.manifest_fields import ManifestError, fail, string, strings
 from hal.workstation.report import findings_count, markdown_table, write_state_file
-from hal.workstation.secrets_create import CreateCommand, parse_create
+from hal.workstation.secrets_create import CreateCommand, left_by_cli, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
@@ -743,19 +743,17 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
         SecretStatus(entry, presence(entry, observation.matches), _verification(entry, observation.probe_codes)) for entry in manifest
     )
     patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
+    logins = tuple(entry.place for entry in manifest if entry.create and not entry.retired)
+    tree = tuple(fact for fact in observation.tree if not any(left_by_cli(fact.relative, login) for login in logins))
     unknown = (
-        SecretFinding(
-            FindingRule.UNKNOWN_FILE,
-            f"{HOME_PREFIX}{fact.relative}",
-            fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it",
-        )
-        for fact in observation.tree
+        SecretFinding(FindingRule.UNKNOWN_FILE, f"{HOME_PREFIX}{fact.relative}", fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it")
+        for fact in tree
         if not _is_named(fact.relative, patterns)
     )
     findings = (
         *(f for status in statuses for f in _entry_findings(status)),
         *unknown,
-        *_tree_findings(observation.tree, manifest, patterns),
+        *_tree_findings(tree, manifest, patterns),
     )
     return SecretsView(statuses, findings)
 

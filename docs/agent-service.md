@@ -81,8 +81,8 @@ A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/au
 (folder 0700, file 0600); the service does not bind it yet. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
 rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
-leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file.
-`hal secrets` lists the entry `agent-service-codex` and shows the renewal command above.
+leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file. What the CLI leaves beside it (`log/`, `tmp/`) is part of the entry, never an unknown file, and a failed login removes only what that run left.
+`hal secrets` lists the entry `agent-service/codex` and shows the renewal command above.
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC, so his
