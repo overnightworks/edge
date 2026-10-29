@@ -112,7 +112,8 @@ Rulings of overnightworks/edge#24 recorded in the table:
    A step that fails stops it, names the step and what is done; run the same
    command again once the cause is fixed and it finishes the half-moved clones.
 4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that
-   point into a moved clone; the repository's own head fixes those (reinstall
+   point into a moved clone; the repository's own head fixes those (a rerun of
+   `hal setup` from the moved clone re-points its `~/.local/bin/hal`; reinstall
    uv tools from the new path).
 5. Update the repo description and the callers' URLs (git URLs redirect in the
    meantime).

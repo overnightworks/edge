@@ -46,7 +46,7 @@ read it ([docs/architecture.md](docs/architecture.md), sections 3 and 5).
 renamed repository's clones on this PC, asks one `yes` before it moves, and ends 0, 1 (declined or
 findings), 3 or 4 ([docs/naming.md](docs/naming.md), P1).
 The five stack commands and `hal setup` deviate from the grammar
-(Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints four rows, a verdict
+(Exception E in [docs/stack.md](docs/stack.md)); `hal setup` prints five rows, a verdict
 and, when it stops, an `error:`/`next:` pair, asks one `yes` before it acts (`--dry-run` only shows), and ends 0, 1 (declined), 3 or 4 (no terminal).
 
 ## Adding a tool: the label rule

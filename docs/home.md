@@ -414,11 +414,13 @@ mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 ## hal setup
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
+Then it links `~/.local/bin/hal` to the `bin/hal` of the checkout `hal` runs from (the `path` row: it creates a missing link,
+re-points a link into another hal checkout, such as a clone that has moved, and refuses to replace a file, a directory or a link into anything else).
 Then it links the checkout's user units and runs the system step.
 `hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal.output.confirmed`: nur genau `yes`,
 Ende der Eingabe heißt nein, Strg-C wird nicht gefangen) und führt es erst danach der Reihe nach aus; es hält beim ersten Fehler an.
 `hal setup --dry-run` zeigt nur, überspringt das yes und ändert nichts (an einem Terminal fragt sudo trotzdem, um `system` zu prüfen). Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
-als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print four rows (below) and a verdict.
+als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print five rows (below) and a verdict.
 Exit: 0 fertig oder nichts offen, 1 abgelehnt (`error: aborted, nothing changed`), 3 ein Schritt ist gescheitert (auch eine Prüfung des Plans, ohne Frage), 4 braucht ein Terminal
 (`error: setup asks yes at a terminal · nothing changed`, `next: hal setup in your own terminal window`; der Plan steht, kein Schritt läuft), 130 unterbrochen.
 Ist nichts offen, fragt es nicht und braucht kein Terminal (das trifft nur das Konto des Agenten). `--apply` gibt es nicht: `error: unrecognized arguments: --apply`, Exit 2.
@@ -474,21 +476,21 @@ come before the system step, which is the one that asks for sudo:
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
 (`AGENT_USER` in `src/hal/workstation/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
-Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
+Aktivierung run, and PATH link, User units, Ansible, System and Geheimnisse are skipped (`path  skipped  the operator's step`, likewise `timers`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 3.
 If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 3 with a line saying so.
 
-**The rows.** The eight steps print as four rows, in the form of
+**The rows.** The nine steps print as five rows, in the form of
 [docs/design/hal-output.html](design/hal-output.html): `commit hook` (quality, Engines,
-Hook-Dateien, Aktivierung), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
+Hook-Dateien, Aktivierung), `path` (der Link `~/.local/bin/hal`; `unchanged` ohne Checkout, etwa aus einem Wheel), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
 event is its worst step's: failed or not started, then needs you, then changed, then unchanged,
 then skipped. After the yes a row says `changed` or `unchanged` (`stored` or `complete` for the
 secrets), `skipped` for the agent role; a dry run says `will change`, `unchanged`, `not checked`
 (`needs sudo at a terminal`, or `needs Ansible, …` before the Ansible step has installed it) or, for the
 secrets, `missing` with the names (`(by hand)` for an entry only a person can create, `(unknown)` for one whose
-presence `stat` cannot tell). The last line is the verdict, counted over the four rows:
-`✓ setup done · 1 changed, 3 unchanged · 47s`, `~ setup plan · 2 open, 2 unchanged · 3s · run hal setup`
-or `✓ setup up to date · 4 unchanged · 21s`. The run time is whole seconds rounded down (`<1s` under one second, `1m05s` from
+presence `stat` cannot tell). The last line is the verdict, counted over the five rows:
+`✓ setup done · 1 changed, 4 unchanged · 47s`, `~ setup plan · 2 open, 3 unchanged · 3s · run hal setup`
+or `✓ setup up to date · 5 unchanged · 21s`. The run time is whole seconds rounded down (`<1s` under one second, `1m05s` from
 a minute, `1h02m` from an hour) and stands after the counts and before the hint; a failed run ends with the error pair and shows none. A step that fails prints its row as `failed` with its own
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup`. For the
@@ -704,8 +706,7 @@ notify = true
 ```
 cd ~/git/edge
 uv sync --locked
-ln -s ~/git/edge/bin/hal ~/.local/bin/hal
-hal setup
+bin/hal setup
 ```
 
 Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
@@ -713,7 +714,8 @@ Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) ver
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist der Starter,
 der `.venv/bin/hal` des Checkouts ausführt; der Link
-unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet. Die systemd-Unit ruft
+unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet; den Link legt der Schritt `path` von `hal setup` an
+und zieht ihn nach, wenn der Checkout umzieht. Die systemd-Unit ruft
 `~/git/edge/.venv/bin/hal` direkt auf und hängt so an keinem Link. `hal`
 läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
