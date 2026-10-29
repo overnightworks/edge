@@ -101,7 +101,7 @@ def test_the_unit_keeps_its_hardening_and_has_one_exec_start():
         "PrivateTmp=yes",
     }
 
-    assert sum(line.startswith("ExecStart=") for line in lines) == 1
+    assert sum(line.partition("=")[0].strip() == "ExecStart" for line in lines) == 1
     assert protection <= set(lines)
     assert any(line.startswith("LoadCredential=") for line in lines)
     assert not [line for line in lines if line.partition("=")[0].strip() == "User"]
