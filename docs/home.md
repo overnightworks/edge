@@ -427,8 +427,8 @@ sudo password never keeps the commit hook from being active; the user units
 come before the system step, which is the one that asks for sudo:
 
 1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
-   `src/hal/workstation/setup.py`, einem Commit-SHA von overnightworks/quality (ein
-   Tag gibt es noch nicht; eine neue Version ist eine Zeile). Der Schritt
+   `src/hal/workstation/setup.py`, dem Commit-SHA eines Tags von overnightworks/quality
+   (eine neue Version ist eine Zeile). Der Schritt
    läuft auch, wenn `~/.local/bin/quality` fehlt oder nicht ausführbar ist.
 2. **Engines.** `quality engines install` nach
    `~/.local/share/quality/engines`, wenn `quality engines verify` es verlangt;
