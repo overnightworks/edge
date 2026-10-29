@@ -150,7 +150,8 @@ class Machine:
     def assert_complete(self) -> None:
         for name in UNIT_NAMES:
             entry = self.user_units / name
-            assert entry.is_file() and not entry.is_symlink()
+            assert entry.is_file()
+            assert not entry.is_symlink()
             assert self.unit_text(name).startswith(GENERATED_MARKER + "\n")
         for name in TIMER_NAMES:
             assert (self.wants / name).readlink() == self.user_units / name
