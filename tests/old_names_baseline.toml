@@ -9,7 +9,6 @@
 [edge-script]
 "docs/architecture.md" = 1
 "docs/backup.md" = 5
-"docs/naming.md" = 2
 "src/hal/backup/runner.py" = 1
 "src/hal/backup/settings.py" = 1
 "tests/backup_support.py" = 3
@@ -26,7 +25,6 @@
 "docs/backup.md" = 1
 "docs/external.md" = 1
 "docs/home.md" = 1
-"docs/naming.md" = 1
 "pyproject.toml" = 3
 "scripts/system-proof/run.sh" = 2
 "src/hal/workstation/secrets_manifest.toml" = 1
