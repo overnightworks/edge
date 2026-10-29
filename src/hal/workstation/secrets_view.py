@@ -128,6 +128,15 @@ class TokenSource:
 
 
 @dataclass(frozen=True)
+class CreateCommand:
+    """The CLI that makes a secret itself: its argv, the variables hal points at the entry's folder, and how the operator knows the account."""
+
+    run: tuple[str, ...]
+    home: tuple[str, ...]
+    label: str
+
+
+@dataclass(frozen=True)
 class SecretEntry:
     """One manifest entry: names, places and links, never a value."""
 
@@ -147,6 +156,7 @@ class SecretEntry:
     elsewhere: str = ""
     loosest_mode: int = LOOSEST_FILE_MODE
     loosest_mode_reason: str = ""
+    create: CreateCommand | None = None
 
     @property
     def retired(self) -> bool:
@@ -159,14 +169,19 @@ class SecretEntry:
 
     @property
     def written_by_setup(self) -> bool:
-        """the wizard writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
-        return self.source is not None or self.kind in (SecretKind.SERVICE_PASSWORD, SecretKind.UNVERIFIED_TOKEN)
+        """the wizard writes a token it guides through and verifies, a token it asks hidden and stores unverified, and a service password it generates, and has the CLI of `create` make its login, unless that is optional: then the unit named in `recreate` writes it; every other entry is by hand."""
+        return self.source is not None or self.create is not None or self.kind in (SecretKind.SERVICE_PASSWORD, SecretKind.UNVERIFIED_TOKEN)
 
     @property
     def place(self) -> PurePosixPath:
         """The one file of an entry the wizard writes; the manifest guarantees one plain path for it."""
         (path,) = self.paths
         return path
+
+    @property
+    def folder(self) -> PurePosixPath:
+        """The folder the CLI of `create` writes into; the manifest guarantees one place for it."""
+        return self.place.parent
 
 
 class ManifestError(ValueError):
@@ -175,11 +190,12 @@ class ManifestError(ValueError):
 
 # --- manifest --------------------------------------------------------------
 
-REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by", "recreate"})
+REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by"})
+CREATE_KEYS = frozenset({"run", "home", "label"})
 SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
 RETIREMENT_KEYS = frozenset({"retired_on", "revoke_url", "revocation_confirmed"})
 MODE_KEYS = frozenset({"loosest_mode", "loosest_mode_reason"})
-OPTIONAL_KEYS = frozenset({"verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
+OPTIONAL_KEYS = frozenset({"recreate", "create", "verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
 GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
 LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
 
@@ -300,8 +316,29 @@ def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: Secre
     return TokenSource(provider, _string(path, where, raw, "resource"), scope, days)
 
 
-def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...]) -> None:
-    if len(patterns) != 1 or _has_wildcard(patterns[0].name):
+def _create_command(path: Path, where: str, raw: Mapping[str, object], kind: SecretKind) -> CreateCommand | None:
+    """The CLI that makes a tool login: `run` and `label`, optional `home`; the entry then derives its renewal from it instead of declaring `recreate`."""
+    if "create" not in raw:
+        return None
+    table = raw["create"]
+    if not isinstance(table, dict) or {"run", "label"} - set(table) or set(table) - CREATE_KEYS:
+        raise _fail(path, where, "create must be a table with run and label, and home when the CLI takes its folder from variables")
+    if kind is not SecretKind.TOOL_LOGIN or "recreate" in raw or "purpose" not in raw:
+        raise _fail(path, where, "create belongs to a tool-login entry with a purpose and without recreate")
+    run = _strings(path, where, table, "run")
+    if not run:
+        raise _fail(path, where, "create.run must name the CLI")
+    return CreateCommand(run, _strings(path, where, table, "home") if "home" in table else (), _string(path, where, table, "label"))
+
+
+def _renewal(create: CreateCommand, folder: PurePosixPath) -> str:
+    """The command that makes the login again, as the operator types it."""
+    variables = (f"{name}={HOME_PREFIX}{folder}" for name in create.home)
+    return " ".join((*variables, *create.run))
+
+
+def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...], *, wildcard_allowed: bool) -> None:
+    if len(patterns) != 1 or (_has_wildcard(patterns[0].name) and not wildcard_allowed):
         raise _fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
 
 
@@ -311,7 +348,8 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         raise _fail(path, where, "must be a table")
     if isinstance(raw.get("name"), str):
         where = f"[[secret]] {raw['name']!r}"
-    missing = sorted(REQUIRED_KEYS - set(raw))
+    required = REQUIRED_KEYS if "create" in raw else REQUIRED_KEYS | {"recreate"}
+    missing = sorted(required - set(raw))
     unknown = sorted(set(raw) - REQUIRED_KEYS - OPTIONAL_KEYS)
     if missing or unknown:
         raise _fail(path, where, f"missing key(s) {missing}, unknown key(s) {unknown}")
@@ -321,12 +359,14 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
+    create = _create_command(path, where, raw, kind)
+    patterns = _patterns(path, where, raw)
     entry = SecretEntry(
         name=_string(path, where, raw, "name"),
         kind=kind,
-        paths=_patterns(path, where, raw),
+        paths=patterns,
         read_by=_strings(path, where, raw, "read_by"),
-        recreate=_string(path, where, raw, "recreate"),
+        recreate=_renewal(create, patterns[0].parent) if create else _string(path, where, raw, "recreate"),
         verifier=_enum_value(path, where, raw, "verify", Verifier) if "verify" in raw else None,
         retired_on=retirement.retired_on,
         revoke_url=retirement.revoke_url,
@@ -338,9 +378,10 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         elsewhere=_string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
         loosest_mode=loosest_mode,
         loosest_mode_reason=loosest_mode_reason,
+        create=create,
     )
     if entry.written_by_setup:
-        _require_one_plain_place(path, where, entry.paths)
+        _require_one_plain_place(path, where, entry.paths, wildcard_allowed=create is not None)
     return entry
 
 
