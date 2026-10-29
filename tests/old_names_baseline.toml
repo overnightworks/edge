@@ -17,7 +17,6 @@
 "tests/test_backup_runner.py" = 11
 "tests/test_backup_sqlite.py" = 2
 "tests/test_hal_backup.py" = 1
-"tests/test_workstation_user_units.py" = 3
 
 [home-verb]
 "docs/design/hal-output.html" = 1

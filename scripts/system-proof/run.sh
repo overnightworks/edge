@@ -5,7 +5,7 @@
 #
 #   scripts/system-proof/run.sh <edge checkout> <evidence dir>
 #
-# <edge checkout> is a clone whose `origin/main` (or $EDGE_REF) carries tunnel/ and systemd/; only `git archive` reads it.
+# <edge checkout> is a clone whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it.
 # It takes /tmp/probe-stack.lock itself (flock -o, so no child holds it), waits while the load is high, keeps the
 # container ids in the evidence dir and removes both containers, with their volumes and nothing else, on exit. The sudo password is generated per run.
 set -euo pipefail
@@ -14,7 +14,7 @@ if [[ -z ${SYSTEM_PROOF_LOCKED:-} ]]; then
     exec env SYSTEM_PROOF_LOCKED=1 flock -o /tmp/probe-stack.lock "$0" "$@"
 fi
 
-edge_checkout=${1:?the edge checkout to read tunnel/ and systemd/ from}
+edge_checkout=${1:?the edge checkout to read tunnel/ from}
 evidence=${2:?the directory for the evidence}
 edge_ref=${EDGE_REF:-origin/main}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -39,7 +39,7 @@ trap cleanup EXIT
 
 mkdir -p "$context/context"
 (cd "$repo" && timeout 300 uv build --wheel --out-dir "$context/context" >/dev/null)
-git -C "$edge_checkout" archive "$edge_ref" tunnel systemd | tar -x -C "$context/context"
+git -C "$edge_checkout" archive "$edge_ref" tunnel | tar -x -C "$context/context"
 cp "$here/Dockerfile" "$context/"
 cp "$here/drive.sh" "$here/terminal.exp" "$context/context/"
 timeout 1800 docker build --quiet --tag "$image" "$context" >/dev/null

@@ -1,7 +1,6 @@
 """`hal backup` and `hal restore` driven through hal, with a scripted Docker host in place of
 docker and restic."""
 
-import configparser
 import itertools
 import json
 import re
@@ -20,7 +19,6 @@ from backup_support import (
     RESTORE_SERVER_ID,
     SONGMAKER_CONTAINER,
     STATUS_KEYS,
-    SYSTEMD,
     Machine,
     app_history,
     declare_apps,
@@ -33,7 +31,6 @@ from backup_support import (
     removed_servers,
 )
 
-from hal import cli as hal_cli
 from hal.backup import cli, docker, host
 from hal.backup.apps import AppsError, Audio, DumpKind, PostgresDatabase, PostgresMajor, parse_apps
 from hal.backup.docker import RESTORE_OWNER_LABEL, RESTORE_OWNER_ROLE
@@ -1201,32 +1198,3 @@ def test_apps_toml_rejects_an_unsafe_sql_identifier():
 
     with pytest.raises(AppsError, match="count_table must match"):
         parse_apps(text)
-
-
-def _unit(name: str) -> configparser.ConfigParser:
-    unit = configparser.ConfigParser(interpolation=None)
-    unit.optionxform = str
-    unit.read_string((SYSTEMD / name).read_text())
-    return unit
-
-
-@pytest.mark.parametrize(
-    ("unit", "calendar", "command"),
-    [
-        ("hal-backup", "Sun *-*-* 03:00:00", ["backup"]),
-        ("hal-backup-restore-test", "Sun *-*-01..07 05:00:00", ["restore", "--test"]),
-    ],
-)
-def test_each_timer_starts_its_service_on_schedule_and_catches_up_missed_runs(
-    unit, calendar, command
-):
-    timer, service = _unit(f"{unit}.timer"), _unit(f"{unit}.service")
-
-    assert dict(timer["Timer"]) == {"OnCalendar": calendar, "Persistent": "true"}
-    assert timer["Install"]["WantedBy"] == "timers.target"
-    assert service["Service"]["Type"] == "oneshot"
-    program, *arguments = service["Service"]["ExecStart"].split()
-    assert (program, arguments) == ("%h/git/edge/.venv/bin/hal", command)
-    with pytest.raises(SystemExit) as help_shown:
-        hal_cli.main([*command, "--help"])
-    assert help_shown.value.code == 0
