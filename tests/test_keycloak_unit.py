@@ -303,6 +303,26 @@ def test_a_back_channel_logout_call_needs_no_session_id():
     assert [a for a in attributes if a["backchannel.logout.session.required"] != "false"] == []
 
 
+def test_a_client_with_a_back_channel_logout_address_has_its_own_back_channel_network_on_keycloak():
+    """The address is reached over the client's isolated network; a client given one without
+    a network of its own would send keycloak's call through a shared route."""
+    keycloak_networks = compose_document()["services"]["keycloak"]["networks"]
+    with_address = [
+        client_id
+        for client_id, client in realm_clients().items()
+        if "backchannel.logout.url" in client.get("attributes", {})
+    ]
+
+    assert with_address
+    assert all(f"backchannel-{client_id}" in keycloak_networks for client_id in with_address)
+
+
+def test_the_account_console_offers_no_groups_page():
+    content = REPOSITORY / "keycloak/themes/hallucinai/account/resources/content.json"
+
+    assert "groups" not in [entry["label"] for entry in json.loads(content.read_text())]
+
+
 def test_hopin_has_a_workload_service_account_in_no_group_and_without_personal_scopes():
     """#506: the account holds `agent-workload` only; no `email`, `web-origins` or `acr`."""
     realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
