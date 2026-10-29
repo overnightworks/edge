@@ -1,0 +1,7 @@
+claim_id = "0938b9b4128745158ade0612bd8973a0"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "4c3b9d837b4c8094a867a659c855ebcc6f31ca52"
+branch = "fix/sonar-314-findings"
+scope = ["probe/agent-service/login_checks.py", "src/hal/backup/cli.py", "src/hal/stack/app_contract.py"]
+opened_commit = "3b2e29559a09b56d675ad49d929213930df739ec"
