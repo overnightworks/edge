@@ -206,14 +206,14 @@ def test_an_entry_that_is_not_provably_a_hal_checkout_fails_the_plan_and_is_neve
     ) == before
 
 
-def test_the_refusal_escapes_what_a_terminal_would_act_on(link: PathLink, home: Path) -> None:
-    entry_of(home).symlink_to("/tmp/\x1b[31mred\nline/bin/hal")
+def test_the_plan_fact_escapes_what_a_terminal_would_act_on_in_the_checkout_path(home: Path) -> None:
+    checkout = home / "git" / "\x1b[31mred\nline"
+    make_checkout(checkout)
 
-    with pytest.raises(StepFailed) as refusal:
-        link.check()
+    fact = PathLink(Layout(home), checkout).fact()
 
-    assert "\x1b" not in str(refusal.value)
-    assert "\n" not in str(refusal.value)
+    assert "\x1b" not in fact
+    assert "\n" not in fact
 
 
 def test_an_unrelated_file_beside_the_link_survives_the_creation_untouched(link: PathLink, home: Path) -> None:
