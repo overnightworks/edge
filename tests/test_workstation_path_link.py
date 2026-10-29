@@ -161,6 +161,13 @@ def link_to_a_tree_with_an_unreadable_pyproject(home: Path) -> None:
     entry_of(home).symlink_to(broken / "bin" / "hal")
 
 
+def link_to_a_pyproject_that_is_not_utf8(home: Path) -> None:
+    foreign = home / "git" / "foreign"
+    make_checkout(foreign, project=None)
+    (foreign / "pyproject.toml").write_bytes(b'[project]\nname = "\xff\xfe"\n')
+    entry_of(home).symlink_to(foreign / "bin" / "hal")
+
+
 def link_to_a_missing_tree_outside_git(home: Path) -> None:
     entry_of(home).symlink_to(home / "elsewhere" / "gone" / "bin" / "hal")
 
@@ -187,6 +194,7 @@ def link_to_a_hal_file_outside_a_bin_directory(home: Path) -> None:
         link_to_a_tree_without_pyproject,
         link_to_a_pyproject_whose_project_is_no_table,
         link_to_a_tree_with_an_unreadable_pyproject,
+        link_to_a_pyproject_that_is_not_utf8,
         link_to_a_missing_tree_outside_git,
         link_to_a_missing_tree_deeper_in_git,
         link_to_a_missing_file_not_named_hal,

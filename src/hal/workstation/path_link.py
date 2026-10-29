@@ -78,7 +78,7 @@ class PathLink:
                 return isinstance(project, dict) and project.get("name") == DISTRIBUTION_NAME
         except FileNotFoundError:
             return not root.exists() and root.parent == self.clones_directory
-        except (OSError, tomllib.TOMLDecodeError):
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
             return False
 
     def refusal(self) -> str:
