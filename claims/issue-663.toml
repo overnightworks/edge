@@ -1,8 +1,0 @@
-claim_id = "4d433e09aab041c99d61cbeeb22fc0ef"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "67aec3a686c8d93f648040e6e8176351802d2a93"
-branch = "claude/issue-663-appkit-v0-6-0"
-scope = [".gitignore", "docs/design/keycloak-theme.html", "docs/design/legal-pages.html", "docs/keycloak.md", "keycloak/themes/hallucinai/account/resources/css/edge-2.css", "keycloak/themes/hallucinai/account/resources/css/edge.css", "keycloak/themes/hallucinai/account/resources/js/always-dark.js", "keycloak/themes/hallucinai/account/theme.properties", "keycloak/themes/hallucinai/login/resources/css/edge-2.css", "keycloak/themes/hallucinai/login/resources/css/edge.css", "keycloak/themes/hallucinai/login/theme.properties", "legal/assets/legal-2.css", "legal/assets/legal.css", "legal/frame/datenschutz.html", "legal/frame/impressum.html", "legal/frame/nutzungsbedingungen.html", "pyproject.toml", "tests/test_keycloak_unit.py", "tests/test_legal_unit.py", "uv.lock"]
-opened_commit = "d3f307f5f0a6d317fa006d8b12626d4ddd491f45"
-whole_reason = "One kit version bump: the pin, the three consumers that load it, the token test that names the kit's tokens and the two picture owners must move together, or a consumer loads a removed path or a token the kit no longer sets."
