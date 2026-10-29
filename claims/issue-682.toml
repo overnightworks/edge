@@ -1,8 +1,0 @@
-claim_id = "3fb63a3fd706402b8d6b0ef25589a051"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "3e7c6b2b12ca409c3ab5b4cfc654a8b1670dd17e"
-branch = "claude/issue-682-agent-service-tests-no-copies"
-scope = ["tests/test_agent_egress.py", "tests/test_agent_service_image.py", "tests/test_agent_service_smoke.py", "tests/test_agent_service_unit.py"]
-opened_commit = "486dddfb9589c7b4b92f86acb3423681fee0d021"
-whole_reason = "The four agent-service test modules read one unit (compose service, Dockerfile, service.toml, egress files); one builder judges its copied values once"
