@@ -467,9 +467,9 @@ come before the system step, which is the one that asks for sudo:
    after a change (also when only a unit file changed), and each timer is enabled and
    started. A file is replaced by rename, so a unit name never lacks a unit and a loaded
    timer stays active. The step replaces only a regular file whose first line is the
-   marker and the nine links an earlier `hal setup` wrote (six units linked into
-   `~/srv/hal/systemd/` and the three `timers.target.wants/` links of the timers, which
-   it repoints at the written files whatever the timers' state). Every other entry of a
+   marker, and the links into the live checkout's `systemd/` with the three
+   `timers.target.wants/` links of the timers, which it repoints at the written files
+   whatever the timers' state; no current `hal setup` writes such links. Every other entry of a
    unit's name (a file without the marker, a link elsewhere, a mask to `/dev/null`, a
    dependency link in a `*.wants/` or `*.requires/` directory) is refused before
    anything changes: `<entry> was not written by hal · move or delete it, then rerun`,
