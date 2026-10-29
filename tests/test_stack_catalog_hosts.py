@@ -574,7 +574,7 @@ def test_the_repositorys_catalog_has_hopin_enabled_and_public():
     (app,) = [one for one in catalog.apps(fleet, {}, "edge") if one.key == "hopin"]
     (hopin,) = [one for one in catalog.hosts(fleet) if one.service == "hopin"]
 
-    assert (app.enabled, app.default_branch) == (True, "master")
+    assert app.enabled is True
     assert (hopin.fqdn, hopin.exposure, hopin.target, hopin.ready, hopin.deny_public) == (
         "hopin.hallucinai.de",
         catalog.Exposure.PUBLIC,

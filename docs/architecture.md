@@ -176,7 +176,7 @@ The catalog is **`fleet.yaml`**, the manifest that epic E3 already plans for Ope
 ```yaml
 services:
   hopin:
-    repo: {default_branch: master}   # the release branch; `visibility` (GitHub settings, E3, X2) is planned
+    repo: {default_branch: main}   # the release branch; `visibility` (GitHub settings, E3, X2) is planned
     run:
       enabled: true              # Dienst an/aus: the one switch
       # setup: step-ca/init      # only where a unit needs key material (step-ca, keycloak)
@@ -216,7 +216,7 @@ The apex and `www` are hosts only as the catalog's `cloudflare.redirect` (the ap
 | DNS, Access app, tunnel line, repo settings | the catalog itself (rendered by OpenTofu) | is the owner |
 | The LOOK page's service lights, Prometheus's scrape targets | the catalog | `hal apply` renders the Gatus endpoint list and the scrape list from the enabled entries |
 | The deploy watchers | the catalog | `hal apply` installs one watcher per enabled entry with `deploy: tags` |
-| The release branch | the catalog (`repo.default_branch`) | the planned `hal release` tags that branch; hopin's is `master` |
+| The release branch | the catalog (`repo.default_branch`) | the planned `hal release` tags that branch |
 
 **Why the catalog does not generate `realm.yaml`.** keycloak-config-cli adds and changes and deletes no undeclared top-level object or person: every `IMPORT_MANAGED_*` type is `no-delete` (`compose.yaml`), so a group missing from the YAML stays with its members (docs/keycloak.md). Even so, `realm.yaml` stays the group owner. Switching off never touches a group. Deleting a group is done in the admin console, after a backup, with the operator's yes.
 
@@ -345,7 +345,7 @@ in the line is edge's, not the app's. Apps' own texts are not read from their re
 
 - **hopin#25 first:** login through webauth (`/apps/hopin`), Impressum and Datenschutz.
 - **A `compose.yaml` and a Dockerfile** with `edge.name: hopin`, `restart: unless-stopped` and **no published port**. Hopin's container listens on 8080, which songmaker already uses on the host; Traefik reaches it by its bridge IP, so no host port is needed.
-- **Its first release:** the planned `hal release hopin` tags the green tip of `master`.
+- **Its first release:** the planned `hal release hopin` tags the green tip of `main`.
 - **The catalog entry above;** then `hal apply`.
 - **Its SonarCloud project** already exists: hopin has `sonar-project.properties`.
 
@@ -456,7 +456,7 @@ Every finding names the subject and a page to fix it, never a value.
 
 | Branch or tag | Role |
 |---|---|
-| the default branch (`main`; hopin: `master`) | the always-green integration branch; a landing never deploys by itself |
+| the default branch (`main`) | the always-green integration branch; a landing never deploys by itself |
 | `v*` tag | a release. It is immutable: org ruleset 25224012 "release tags are immutable" blocks deletion, update and force-push of `refs/tags/v*` in every repo (checked 16.10.2026) |
 
 **What each deploy watcher does** (one per service, a systemd timer every 2 minutes):
@@ -805,7 +805,7 @@ These lines become true only after D14: agents under their own user, without Doc
 | D2 | **What happens after a merge in edge** | The operator runs `hal apply` (one command, plan, `yes`), the one publisher. Automatic apply only after D14. | (a) as recommended; (b) the platform part applies by itself after merge and only external waits for him; (c) everything automatic now (a write token on a timer, readable by every agent) | **yes** (rights) |
 | D3 | **Re-setup without new passwords** | Back up all of `~/.secrets` as the separate secrets backup that [backup.md](backup.md) describes, and give the data backup a second target off this disk (a USB disk first; later the rclone `gdrive` remote). Build the recovery form: `--repo` on the command line, the password typed at a hidden prompt, the snapshot run picked from the repository itself; the restore order is the one [backup.md](backup.md) gives. Done only when the clean-machine drill passes (section 6). This changes the 14.10.2026 ruling "a wizard instead of a backup": the wizard still serves rotation and first-ever. | (a) as recommended; (b) secrets via the wizard only, but the Keycloak DB and app data off-disk (every token re-created, people keep their passkeys); (c) as today: same disk only (a dead disk = first-ever path, people re-enrol, songmaker data lost) | **yes** (secrets, irreversible loss) |
 | D4 | **Where people live** | Keycloak for every app user (ruled). songmaker joins through its own cutover item (section 3: client, OIDC login, confirmed account mapping, then the old login goes); deploying alone does not move anyone. The Cloudflare Access group holds one member, the operator, set once with Google + MFA (R4). Operator-only tools (LOOK, Grafana) stay behind Access, **not** behind Keycloak: the LOOK page must still open when Keycloak or the PC's login is broken. Forward-auth at Traefik comes only when a login-less tool must be shared with other people (no such tool today). | (a) as recommended; (b) Keycloak becomes Access's identity provider, so even the operator's tool access lives in Keycloak (one people place, but LOOK goes dark with Keycloak); (c) forward-auth (oauth2-proxy) for Grafana and LOOK now | **yes** (rights; the hash deletion in the cutover too) |
-| D5 | **Release rhythm and tool** | One release per service per working session (about 1–2 a day for songmaker), plus one right after a production fix. One implementation, `edge release <service>`: it tags the green tip of the catalog's default branch (hopin: `master`) and writes the `schema:` line. `vYYYY.MM.DD.N` for services, SemVer for libraries. The head runs it as a mechanical step. | (a) as recommended; (b) one tag per landing (about 7 a day for songmaker, nearly main-deploy); (c) only when the operator says "release" | no (default a) |
+| D5 | **Release rhythm and tool** | One release per service per working session (about 1–2 a day for songmaker), plus one right after a production fix. One implementation, `edge release <service>`: it tags the green tip of the catalog's default branch and writes the `schema:` line. `vYYYY.MM.DD.N` for services, SemVer for libraries. The head runs it as a mechanical step. | (a) as recommended; (b) one tag per landing (about 7 a day for songmaker, nearly main-deploy); (c) only when the operator says "release" | no (default a) |
 | D6 | **The tunnel: mode and credential, decided once** (replaces E3 D5) | **Ruled (operator, 18.10.2026: „Cloudflare steuert“): Cloudflare manages the tunnel's configuration.** The ingress lives once, at Cloudflare, and OpenTofu writes its lines from the catalog (planned: X6a, #168; the `config.yml` cleanup is #144, B7). The tunnel's JSON credential stays: the unit reads it with `LoadCredential=` (`tunnel/cloudflared.service.d/20-nonroot.conf`). There is no tunnel token. Operator ruling of 20.10.2026: the catalog owns the whole tunnel configuration, and a line outside it is removed after the plan and `yes` („a“). Cost: the switch is one-way (back = a new local tunnel plus a DNS cutover) per a cloudflared maintainer's statement (cloudflared#1029, 11.09.2023), not per Cloudflare's documentation; and the write token gains Cloudflare Tunnel › Edit. | Ruled; the options considered were (a) remote management, (b) local with `hal apply` rendering `config.yml` into `/etc`, (c) local, `/etc` only | ruled (irreversible) |
 | D7 | **The engine under `hal setup`** | Ansible, run locally (`--check --diff` is the dry run), as home-tools#9 recommends; `hal setup` wraps it, so the operator sees one command. | (a) Ansible; (b) plain Python in home-tools (no new tool, but idempotence by hand); (c) NixOS (a reinstall, not now) | no (default a) |
 | D8 | **Read-only credentials for the checks** | Yes to: E3's `fleet-read` tokens; a SonarCloud read token; a Keycloak service account with only `view-clients` and `view-realm`; `github/deploy-read`. No to Cloudflare "API Tokens Read" and to a GitHub App for now: each token checks itself, and the full token lists stay a yearly glance. | each line yes/no | **yes** (secrets) |
