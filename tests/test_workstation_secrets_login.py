@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from workstation_secrets_support import (
 from workstation_support import FakeProbe, run_hal_secrets
 
 from hal.workstation import secrets_setup, secrets_view
-from hal.workstation.secrets_setup import Boundaries, Outcome, Verdict, WalkEnd
+from hal.workstation.secrets_setup import Boundaries, Outcome, Verdict, WalkEnd, run_command
 from hal.workstation.secrets_view import MANIFEST_PATH as PACKAGED_MANIFEST
 from hal.workstation.secrets_view import SecretKind, load_manifest
 
@@ -230,3 +231,22 @@ def test_the_packaged_manifest_lists_the_codex_login_as_a_required_tool_login() 
         ("codex", "login"),
         ("CODEX_HOME",),
     )
+
+
+def test_the_real_login_runner_keeps_the_operators_environment_and_adds_its_home_variable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#666 E1/E2: the CLI sees CODEX_HOME at the folder it is given and still the operator's PATH, HOME, DISPLAY and BROWSER."""
+    monkeypatch.setenv("OPERATOR_ENVIRONMENT_MARKER", "present")
+    check = (
+        "import os, sys; "
+        "sys.exit(0 if os.environ.get('CODEX_HOME') == sys.argv[1] "
+        "and os.environ.get('OPERATOR_ENVIRONMENT_MARKER') == 'present' else 7)"
+    )
+
+    assert run_command([sys.executable, "-c", check, str(tmp_path)], {"CODEX_HOME": str(tmp_path)}) == 0
+
+
+def test_the_real_login_runner_reports_a_missing_cli_as_none(tmp_path: Path) -> None:
+    """#666 D1: an absent executable is answered with None, which the wizard words as 'not installed'."""
+    assert run_command([str(tmp_path / "no-such-cli")], {}) is None

@@ -523,7 +523,7 @@ def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Bou
 
 
 def _seal_login(entry: SecretEntry, layout: Layout) -> PurePosixPath | None:
-    """After the CLI exits: the folder 0700 and every file it left 0600 (the entry's loosest mode); the file made, None when it made none.
+    """After the CLI exits: the folder 0700 and the declared login file 0600 (the entry's loosest mode), leaving what the CLI put beside it alone; the file made, None when it made none.
 
     Only `stat` and `chmod`: the content is never opened.
     """

@@ -408,11 +408,11 @@ Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
 `expires_in_days` (1 bis 366), alle vier zusammen; ein `unverified-token` nennt keinen davon und hat
 genau einen Pfad: der Assistent fragt seinen Wert unsichtbar ab und speichert ihn ungeprüft; ein `service-password`
 hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
-dann schreibt ihn die Einheit aus `recreate`. Ein `tool-login` nennt statt `recreate` ein `create`
+dann schreibt ihn die Einheit aus `recreate`. Ein `tool-login` nennt ein `create` (statt eines `recreate`, das er weiter haben darf)
 (`run`: die CLI, `home`: die Variablen, die sie auf den Ordner des Eintrags zeigen lässt, `label`: das
 Konto, wie der Mensch es nennt) und hat genau einen Pfad ohne Platzhalter: der Assistent lässt die CLI im
 Browser anmelden (`new login`, danach `signed in` mit Pfad und Rechten, oder `not signed in` mit dem Grund),
-setzt Ordner 0700 und Dateien 0600 und liest die Datei nie; bei einem Fehlschlag löscht er, was die CLI
+setzt den Ordner auf 0700 und die Anmeldedatei auf 0600 und liest sie nie; was die CLI daneben ablegt, gehört zum Eintrag (nie unbekannt, nie auf den Modus geprüft, durch den Ordner 0700 geschützt); bei einem Fehlschlag löscht er, was die CLI
 hinterließ, und der nächste Lauf fragt wieder. `hal secrets` zeigt als Erneuerung den aus `create`
 abgeleiteten Befehl. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `hal secrets`

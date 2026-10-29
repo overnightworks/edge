@@ -3,7 +3,6 @@ from __future__ import annotations
 import http.server
 import json
 import os
-import sys
 import threading
 import urllib.request
 from collections.abc import Callable, Iterator
@@ -22,7 +21,7 @@ from test_workstation_secrets_setup import (  # noqa: F401 the fixtures, request
     terminal,
 )
 
-from hal.workstation.secrets_setup import UNSENDABLE_PASTE, run_command, Boundaries, Outcome, Response, Verdict, WalkEnd, http_fetch, verify_token
+from hal.workstation.secrets_setup import UNSENDABLE_PASTE, Boundaries, Outcome, Response, Verdict, WalkEnd, http_fetch, verify_token
 from hal.workstation.secrets_view import Provider, TokenSource
 
 GITHUB = TokenSource(Provider.GITHUB, "example-org", ("metadata:read",), 366)
@@ -261,15 +260,3 @@ def test_a_value_http_cannot_send_is_refused_without_quoting_it(local_server: Lo
     verdict = verify_token(GITHUB, canary_with(character), local_server.fetch("/ok"))
 
     assert verdict == Verdict(Outcome.REFUSED, "the value cannot be sent to GitHub as a token")
-
-
-def test_the_real_login_runner_hands_the_cli_its_home_variable(tmp_path: Path) -> None:
-    """#666 E1: the CLI sees CODEX_HOME at the folder it is given, so it never writes into the operator's own ~/.codex."""
-    check = "import os, sys; sys.exit(0 if os.environ.get('CODEX_HOME') == sys.argv[1] else 7)"
-
-    assert run_command([sys.executable, "-c", check, str(tmp_path)], {"CODEX_HOME": str(tmp_path)}) == 0
-
-
-def test_the_real_login_runner_reports_a_missing_cli_as_none(tmp_path: Path) -> None:
-    """#666 D1: an absent executable is answered with None, which the wizard words as 'not installed'."""
-    assert run_command([str(tmp_path / "no-such-cli")], {}) is None
