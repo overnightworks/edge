@@ -598,20 +598,23 @@ Type <span class="w">yes</span> to set up 2 open rows: yes
         <figcaption><span class="tag new">neu H5o1-3a</span> erster Lauf nach dem Umbau: <code>timers</code> schreibt die Units und löst die alten sechs Links ab</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="b">  ~</span> timers          will change    <span class="d">replaces 6 links with 3 timers</span>
 <span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
 <span class="d">  · secrets         complete</span>
 Type <span class="w">yes</span> to set up 2 open rows: yes
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="d">…</span>
-<span class="w">✓ setup done</span> <span class="d">· 1 changed, 3 unchanged · 47s</span></pre>
+<span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 47s</span></pre>
         <p class="was">Der Fakt <code>replaces 6 links with 3 timers</code> steht nur im Plan des einen Laufs, solange noch ein Link in <code>git/edge/systemd</code> liegt; die Zeile nach dem Lauf ist wie bisher. Fehlt nur eine Datei, hat der Plan keinen Fakt. Danach <code>unchanged</code>.</p>
       </figure>
       <figure id="f-setup-timers-refused">
         <figcaption><span class="tag fail">neu H5o1-3a, kaputt</span> eine Unit, die hal nicht geschrieben hat</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="r">  ✗</span> timers          failed         <span class="d">hal-check.timer was not written by hal · move or delete it, then rerun</span>
 <span class="d">  · system          not run</span>
 <span class="d">  · secrets         not run</span>
@@ -624,6 +627,7 @@ Type <span class="w">yes</span> to set up 2 open rows: yes
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="n">… Plan, dann das yes</span>
 <span class="d">  · commit hook     unchanged</span>
+<span class="d">  · path            unchanged</span>
 <span class="r">  ✗</span> timers          failed         <span class="d">systemctl daemon-reload failed</span>
 <span class="d">  · system          not run</span>
 <span class="d">  · secrets         not run</span>
