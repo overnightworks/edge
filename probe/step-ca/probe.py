@@ -16,8 +16,8 @@ them runs from a throwaway container on the network a client would sit on. Needs
 --scratch directory. Proof 9 waits for a renewal, 10 runs three applies, 11 drives the emergency
 switch, 12 runs the setup from `hal apply`, 13 lets traefik-mcp follow its file and definition
 through about ten applies (traefik_mcp_follows.py), and 14 drives songmaker's route (#346
-P13-P27, mcp_networks.py): about 14 minutes, 10 of them proof 9's renewal wait, bounded by the
-1800 s cap above, so a run that needs longer is cut, not given more. Needs `uv`: proof 8 runs
+P13-P27, mcp_networks.py): 13 to 20 minutes measured, 10 of them proof 9's renewal wait, bounded
+by the 1800 s cap above, so a run that needs longer is cut, not given more. Needs `uv`: proof 8 runs
 `hal check exposure` through it, proofs 10 to 13 `uv sync` in a copy of the repository. The copy
 is a clean `main` with a bare remote under the scratch directory, and every edit a proof makes
 there is published (committed and pushed) before the apply that follows it (#95 P3).
@@ -153,11 +153,11 @@ class Probe(McpNetworks, TraefikMcpFollows):
             raise ProbeFailed(f"{' '.join(command[:4])} exited {result.returncode}: {tail[-1:]}")
         return result
 
-    def compose(self, *args: str, check=True, own_session=False, profiles=("probe", "step-ca")):
-        files = [flag for file in self.compose_files for flag in ("--file", str(file))]
+    def compose(self, *args: str, check: bool = True, own_session: bool = False, all_units=False):
         command = [
-            "docker", "compose", "--project-directory", str(REPO), *files,
-            *[flag for profile in profiles for flag in ("--profile", profile)],
+            "docker", "compose", "--project-directory", str(REPO),
+            *[flag for file in self.compose_files for flag in ("--file", str(file))],
+            *(["--profile", "*"] if all_units else ["--profile", "probe", "--profile", "step-ca"]),
         ]  # fmt: skip
         if args[0] in GUARDED_COMPOSE_VERBS:
             self.guard.expect(command)
@@ -793,7 +793,7 @@ class Probe(McpNetworks, TraefikMcpFollows):
         # Own session: a signal to the probe's process group must not reach these.
         self.compose(
             "down", "--volumes", "--remove-orphans", "--timeout", "10", check=False,
-            own_session=True, profiles=("*",),  # apply also starts the copy's units, e.g. legal
+            own_session=True, all_units=True,  # apply also starts the copy's units, e.g. legal
         )  # fmt: skip
         left = self.run(
             ["docker", "ps", "-a", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"],

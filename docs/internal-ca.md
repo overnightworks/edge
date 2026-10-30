@@ -65,7 +65,7 @@ name reaches the stand-in), no new host listener, renewal without restart, apply
 keeping both volumes, the emergency switch, setup asked by apply, the follower recreate rules). Its
 compose calls run from a copy of `compose.yaml` whose fixed `hal_*` network names are moved into the
 probe's project, and each checks first that it resolves no other network, so it never touches a live
-one. It takes about 14 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock` with a time cap (its
+one. It takes 13 to 20 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock` with a time cap (its
 docstring gives the command line). Re-run it for every step-ca or Traefik upgrade.
 
 ## agent-egress
