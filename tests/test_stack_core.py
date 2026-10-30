@@ -681,5 +681,7 @@ def test_a_bind_source_of_any_service_that_head_cannot_classify_fails_the_read(
     def runner(_tree, arguments, _profile):
         return subprocess.CompletedProcess(arguments, 0, listing, b"")
 
+    git = git_checkout.Git(checkout, runner)
+
     with pytest.raises(core.CoreError, match=named):
-        core.Checkout.read(config, git_checkout.Git(checkout, runner))
+        core.Checkout.read(config, git)
