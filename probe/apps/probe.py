@@ -6,9 +6,10 @@ Cells: A1 the first apply, A2 a second, A3 an update that keeps the volume's dat
 a side branch, A7 a declined `yes`, A8 a tag never healthy, A9 a failed build, A12 containers
 without a record, A18 a sentinel in an interpolation error, A23 an update interrupted midway, B5 an
 image `VOLUME` that no named volume covers and covered, B8 a service with `pull_policy: always`, and
-block C, `enabled: false`: C1 an app switched off running, C2 on again at the same tag, C3 off after
-a renamed service, a failed build, C4 off with `compose.yaml` unusable at HEAD, C5 off with a
-leftover container. D and R: `emergency_switch.py`, `alias_routing.py`. hal's exits: 0 or 3.
+block C, `enabled: false` (`switched_off.py`): C1 an app switched off running, C2 on again at the
+same tag, C3 off after a renamed service, a failed build, C4 off with `compose.yaml` unusable at
+HEAD, C5 off with a leftover container. D and R: `emergency_switch.py`, `alias_routing.py`. hal's
+exits: 0 or 3.
 
 It never touches the live stack. It runs its own Traefik and socket proxy of a copy of the
 repository under the compose project `edge-apps-probe`, on two free loopback ports instead of 8081
@@ -51,7 +52,9 @@ import edge_copy  # noqa: E402
 from alias_routing import AliasRouting  # noqa: E402
 from edge_copy import HAL_FAILURE, HAL_OK, ProbeFailed, expect  # noqa: E402
 from emergency_switch import EmergencySwitch  # noqa: E402
+from switched_off import SwitchedOff  # noqa: E402
 
+from hal.output import write_line  # noqa: E402
 from hal.stack import checkout  # noqa: E402
 
 CORE_PROJECT = "edge-apps-probe"
@@ -401,35 +404,6 @@ class Probe:
         expect(len(rows) == 1, f"one container expected, found {[r['name'] for r in rows]}")
         return rows[0]
 
-    def volumes(self) -> list[str]:
-        """The names of the volumes of the app's project."""
-        project = f"label=com.docker.compose.project={self.key}"
-        listed = self.docker("volume", "ls", "--quiet", "--filter", project).stdout.decode()
-        return sorted(listed.split())
-
-    def switch_off(self, cell: str) -> str:
-        """`enabled: false` applied while containers run: the plan's output, after which no
-        container of the project is left, every volume is still there, and the checkout and the
-        record stay."""
-        volumes, head, record = self.volumes(), self.head(), self.record.read_text()
-        expect(len(volumes) >= 1 and self.containers() != [], f"{cell}: nothing to switch off")
-        self.set_enabled(False)
-        out = self.apply()
-        expect(
-            re.search(rf"- {self.key}\s+switch off\s+volumes kept · ~/srv/{self.key} kept", out)
-            is not None
-            and not any(name in out for name in volumes),
-            f"{cell}: the plan said: {out[-400:]}",
-        )
-        expect(self.containers() == [], f"{cell}: containers left: {self.containers()}")
-        expect(self.volumes() == volumes, f"{cell}: the volumes changed: {self.volumes()}")
-        expect(
-            self.head() == head and self.record.read_text() == record,
-            f"{cell}: the checkout or the record moved",
-        )
-        expect(self.ask("/version")[0] == 404, f"{cell}: Traefik still routes the app")
-        return out
-
     def starts(self) -> list[str]:
         return self.exec_cat(self.only()["id"], "/data/starts")
 
@@ -450,14 +424,16 @@ class Probe:
         expect(self.only()["health"] == "healthy", "the container is not healthy")
         self.serves(tag)
         expect(self.starts() == [tag], "the volume does not hold the first start")
-        print("A1 held: on at the tag, detached, healthy, recorded after health, routed (hal 0)")
+        write_line(
+            "A1 held: on at the tag, detached, healthy, recorded after health, routed (hal 0)"
+        )
 
     def cell_a2_second_apply(self) -> None:
         before = self.only()["id"]
         out = self.apply(typed=b"no\n")
         expect("nothing to change" in out, f"the second apply said: {out[-200:]}")
         expect(self.only()["id"] == before, "the second apply replaced the container")
-        print("A2 held: a second apply changes nothing and keeps the container (hal 0)")
+        write_line("A2 held: a second apply changes nothing and keeps the container (hal 0)")
 
     def cell_a3_update(self) -> None:
         tag = TAGS["a3"]
@@ -470,7 +446,9 @@ class Probe:
         expect(self.deployed()["tag"] == tag, "the record is not the new tag")
         self.serves(tag)
         expect(self.starts() == [TAGS["a1"], tag], "the named volume lost the first tag's data")
-        print("A3 held: updated to the new tag, the named volume's data from the first tag present")
+        write_line(
+            "A3 held: updated to the new tag, the named volume's data from the first tag present"
+        )
 
     def cell_a4_side_branch(self) -> None:
         self.release(TAGS["a4_side"], on="side")
@@ -479,7 +457,7 @@ class Probe:
         expect(
             "nothing to change" in out and self.deployed()["tag"] == TAGS["a3"], "the newest moved"
         )
-        print("A4 held: a tag only on a side branch is named and the newest stays")
+        write_line("A4 held: a tag only on a side branch is named and the newest stays")
 
     def cell_a7_declined(self) -> None:
         self.release(TAGS["a7"])
@@ -490,7 +468,7 @@ class Probe:
             (self.only()["id"], self.head(), self.record.read_text()) == (before, head, record),
             "something changed",
         )
-        print("A7 held: a declined yes leaves HEAD, the container and the record (hal 3)")
+        write_line("A7 held: a declined yes leaves HEAD, the container and the record (hal 3)")
 
     def cell_a9_build_fails(self) -> None:
         tag = TAGS["a9"]
@@ -507,7 +485,7 @@ class Probe:
         self.serves(TAGS["a3"])
         again = self.apply(typed=b"no\n", exit_code=HAL_FAILURE)
         expect(f"update to {tag} did not finish" in again, again[-300:])
-        print("A9 held: a failed build keeps the old container and record; the plan says so")
+        write_line("A9 held: a failed build keeps the old container and record; the plan says so")
 
     def cell_a8_never_healthy(self) -> None:
         tag = TAGS["a8"]
@@ -521,7 +499,7 @@ class Probe:
             f"update {TAGS['a3']} → {tag} · update to {tag} did not finish" in again,
             again[-300:],
         )
-        print(
+        write_line(
             "A8 held: partial (hal 3), record stays, Traefik routes nothing, plan says unfinished"
         )
 
@@ -531,7 +509,7 @@ class Probe:
         self.apply()
         expect(self.deployed()["tag"] == tag, "the fix was not recorded")
         self.serves(tag)
-        print("Q1 held: a newer tag fixes forward and Traefik routes it")
+        write_line("Q1 held: a newer tag fixes forward and Traefik routes it")
 
     def cell_a18_sentinel(self) -> None:
         tag = TAGS["a18"]
@@ -545,7 +523,7 @@ class Probe:
             "the positive control shows no sentinel",
         )
         expect(self.deployed()["tag"] == TAGS["fix"], "the record moved")
-        print(
+        write_line(
             "A18 held: compose's own error carries the sentinel (control), hal's output never does"
         )
 
@@ -561,7 +539,9 @@ class Probe:
         self.apply()
         expect(self.deployed()["tag"] == tag, "the record was not written")
         expect(len(self.starts()) >= 3 and TAGS["a1"] in self.starts(), "the volume's data is gone")
-        print("A12 held: containers without a record are replaced, the named volume's data kept")
+        write_line(
+            "A12 held: containers without a record are replaced, the named volume's data kept"
+        )
 
     def interrupt_after_web(self, tag: str, *, second_web: bool) -> None:
         """What an apply interrupted at `create` leaves: HEAD at the new tag, `web` recreated and
@@ -610,7 +590,7 @@ class Probe:
                 TAGS["a1"] in self.exec_cat(rows[0]["id"], "/data/starts"),
                 "the volume's data is gone",
             )
-        print(
+        write_line(
             "A23 held: an update interrupted after part of the containers is repaired (also 2 webs)"
         )
 
@@ -633,7 +613,9 @@ class Probe:
         self.apply()
         expect(self.deployed()["tag"] == covered, "the covered release was not recorded")
         self.serves(covered)
-        print("B5 held: an uncovered image VOLUME is refused after build, before create (hal 3)")
+        write_line(
+            "B5 held: an uncovered image VOLUME is refused after build, before create (hal 3)"
+        )
 
     def cell_b8_pull_policy_always(self) -> None:
         tag = TAGS["b8"]
@@ -642,69 +624,7 @@ class Probe:
         expect(self.deployed()["tag"] == tag, "the record is not the tag")
         expect(self.only()["tag"] == tag, "the container is not from the tag")
         self.serves(tag)
-        print("B8 held: pull_policy always starts healthy at the tag from the built image")
-
-    def cell_c1_c2_off_and_on_again(self) -> None:
-        tag, before = self.deployed()["tag"], self.starts()
-        out = self.switch_off("C1")
-        expect("partial" not in out, f"C1: {out[-300:]}")
-        again = self.apply(typed=b"no\n")
-        expect("nothing to change" in again, f"C1: a second apply said: {again[-200:]}")
-        print("C1 held: off removes every container, the named volumes, checkout and record stay")
-        self.set_enabled(True)
-        out = self.apply()
-        expect(f"start again {tag} · recorded" in out, f"C2: the plan said: {out[-300:]}")
-        self.serves(tag)
-        after = self.starts()
-        expect(after[: len(before)] == before and len(after) > len(before), f"C2: {after}")
-        print(f"C2 held: on again at {tag} finds the same named volume with its data")
-
-    def cell_c3_renamed_service(self) -> None:
-        self.release(TAGS["c3_renamed"], services=("app",), builds=False)
-        out = self.apply(exit_code=HAL_FAILURE)
-        expect(f"could not build at {TAGS['c3_renamed']}" in out, f"C3: {out[-300:]}")
-        expect([r["service"] for r in self.containers()] == ["web"], "C3: setup")
-        expect(self.head() == self.shas[TAGS["c3_renamed"]], "C3: HEAD is not the failed tag")
-        self.switch_off("C3")
-        print("C3 held: off after a renamed service and a failed build removes the old web")
-
-    def cell_c4_compose_file_unusable(self) -> None:
-        for shape, text in (("missing", ""), ("invalid", "services: [unclosed\n")):
-            self.release(TAGS[f"c4_{shape}_ok"])
-            self.set_enabled(True)
-            self.apply()
-            self.release(TAGS[f"c4_{shape}"], compose_file=text)
-            self.git_in_srv(
-                "fetch", "--quiet", "--no-tags", "origin", "+refs/tags/v*:refs/edge/releases/v*"
-            )
-            self.git_in_srv("checkout", "--quiet", "--detach", self.shas[TAGS[f"c4_{shape}"]])
-            control = self.app_compose("config", check=False)
-            expect(control.returncode != 0, f"C4: the compose file at HEAD loads ({shape})")
-            self.switch_off(f"C4 {shape}")
-        print("C4 held: with compose.yaml missing or invalid at HEAD, off still removes")
-
-    def cell_c5_dropped_service_and_leftover(self) -> None:
-        self.release(TAGS["c5_first"], services=("web", "worker"))
-        self.set_enabled(True)
-        self.apply()
-        expect(sorted(r["service"] for r in self.containers()) == ["web", "worker"], "C5: setup")
-        self.release(TAGS["c5_second"])
-        self.apply()
-        expect([r["service"] for r in self.containers()] == ["web"], "C5: worker was not removed")
-        side = self.scratch / "ghost.yaml"
-        side.write_text(GHOST)
-        self.docker("compose", "-p", self.key, "--file", str(side), "up", "--detach")
-        expect(
-            sorted(r["service"] for r in self.containers()) == ["ghost", "web"],
-            f"C5: setup, {self.containers()}",
-        )
-        self.docker(
-            "compose", "-p", self.key, "--file", str(side), "run", "--detach",
-            "--name", f"{self.key}-oneoff", "ghost",
-        )  # fmt: skip
-        expect(len(self.containers()) == 3, f"C5: setup, no one-off in {self.containers()}")
-        self.switch_off("C5")
-        print("C5 held: the update removed worker, off removed web, a leftover and a one-off")
+        write_line("B8 held: pull_policy always starts healthy at the tag from the built image")
 
     def cell_h1_service_without_healthcheck(self) -> None:
         self.set_enabled(True)
@@ -714,7 +634,9 @@ class Probe:
         expect(seen["helper"] == seen["sealed"] == ("running", ""), f"H1: the helpers are {seen}")
         expect(self.deployed()["tag"] == TAGS["h1"], "H1: the app was not recorded")
         expect("nothing to change" in self.apply(typed=b"no\n"), "H1: plan not quiet")
-        print("H1 held: a running service without a healthcheck (absent, disabled) is recorded")
+        write_line(
+            "H1 held: a running service without a healthcheck (absent, disabled) is recorded"
+        )
 
 
 def prove(probe: Probe, *, switch_only: bool) -> int:
@@ -737,17 +659,14 @@ def prove(probe: Probe, *, switch_only: bool) -> int:
         probe.cell_b5_image_volume()
         probe.cell_b8_pull_policy_always()
         EmergencySwitch(probe, TAGS).prove()
-        probe.cell_c1_c2_off_and_on_again()
-        probe.cell_c3_renamed_service()
-        probe.cell_c4_compose_file_unusable()
-        probe.cell_c5_dropped_service_and_leftover()
+        SwitchedOff(probe, TAGS, GHOST).prove()
         probe.cell_h1_service_without_healthcheck()
         AliasRouting(probe, DOMAIN, TAGS).prove()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
-        print(f"PROBE FAILED: {failure}")
+        write_line(f"PROBE FAILED: {failure}")
         return 1
     except KeyboardInterrupt:
-        print("PROBE FAILED: interrupted")
+        write_line("PROBE FAILED: interrupted")
         return 1
     return 0
 
@@ -764,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     if arguments.scratch.exists() and any(arguments.scratch.iterdir()):
-        print("PROBE FAILED: --scratch is not empty")
+        write_line("PROBE FAILED: --scratch is not empty")
         return NOT_RUNNABLE
     arguments.scratch.mkdir(parents=True, exist_ok=True)
     probe = Probe(arguments.scratch)
@@ -778,12 +697,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         probe.teardown()
     except (ProbeFailed, subprocess.TimeoutExpired) as failure:
-        print(f"PROBE FAILED: teardown, {failure}")
+        write_line(f"PROBE FAILED: teardown, {failure}")
         exit_code = 1
     if exit_code == 0 and arguments.switch_only:
-        print("PROBE PASSED: #255 A1, D1, D2, D4, D7 hold")
+        write_line("PROBE PASSED: #255 A1, D1, D2, D4, D7 hold")
     elif exit_code == 0:
-        print("PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5, D1, D2, D4, D7 hold")
+        write_line(
+            "PROBE PASSED: #255 A1-A4, A7-A9, A12, A18, A23, B5, B8, C1-C5, D1, D2, D4, D7 hold"
+        )
     return exit_code
 
 
