@@ -441,7 +441,9 @@ def test_ctrl_c_during_the_probe_exits_130_without_a_traceback(
 
 
 def test_the_help_names_the_verbose_option(capsys: pytest.CaptureFixture[str]) -> None:
+    missing_home = Path("/nonexistent")
+    probe = FakeProbe()
     with pytest.raises(SystemExit):
-        run_hal_secrets(Path("/nonexistent"), FakeProbe(), "--help")
+        run_hal_secrets(missing_home, probe, "--help")
 
     assert "--verbose" in capsys.readouterr().out
