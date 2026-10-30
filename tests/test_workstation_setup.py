@@ -14,7 +14,7 @@ from typing import BinaryIO
 
 import pytest
 from workstation_secrets_support import never_run
-from workstation_support import FAKE_MISE, STALE_MISE, FakeClock, RecordingDownload, Sandbox, bin_entries, cut_off_mid_transfer, fail_to_write, plant_mise
+from workstation_support import FAKE_MISE, STALE_MISE, TASK_MESSAGE, FakeClock, RecordingDownload, Sandbox, bin_entries, cut_off_mid_transfer, fail_to_write, plant_mise
 from workstation_support import run_captured_hal_setup, run_hal_setup, serve_half, serve_wrong_bytes, time_out
 
 import hal.workstation
@@ -600,10 +600,11 @@ def test_the_system_steps_check_answers_with_one_of_the_three_states(
     assert SystemStep(sandbox.layout, sandbox.system.boundaries).check() is expected
 
 
-def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
-    """Rule 2, rule 7 and cells 12, 13, 17: a wrong password or a missing tunnel id fails only the last step, with exit 3."""
+@pytest.mark.parametrize(("failure", "fact"), [("", "Ansible did not finish · its output above says why"), (TASK_MESSAGE, TASK_MESSAGE)], ids=["no failed task", "a failed task's message"])
+def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], failure: str, fact: str) -> None:
+    """Rule 2, rule 7 and cells 12, 13, 17: a wrong password or a missing tunnel id fails only the last step, with exit 3; the failed task's message is the fact."""
     sandbox.system.playbook.succeeds = False
-
+    sandbox.system.playbook.failure = failure
     code, lines, error = run_setup(sandbox, capsys)
 
     assert (code, lines) == (
@@ -611,7 +612,7 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
         [
             *FRESH_APPLY[:3],
             SUDO_ANNOUNCEMENT,
-            "  ✗ system          failed         Ansible did not finish · its output above says why",
+            f"  ✗ system          failed         {fact}",
             NOT_RUN[SECRETS],
         ],
     )
@@ -622,17 +623,18 @@ def test_a_failed_ansible_run_fails_the_system_step_alone_and_records_nothing(sa
     assert global_hooks_path(sandbox) == str(sandbox.layout.git_hooks_dir)
 
 
-def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:
+@pytest.mark.parametrize(("failure", "fact"), [("", "Ansible's check did not finish · its output above says why"), (TASK_MESSAGE, TASK_MESSAGE)], ids=["no failed task", "a failed task's message"])
+def test_a_failed_check_fails_the_dry_run(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], failure: str, fact: str) -> None:
     """E1: a check Ansible could not finish (a wrong password) is a failure, never `unchanged`."""
     run_setup(sandbox, capsys)
     sandbox.system.playbook.succeeds = False
-
+    sandbox.system.playbook.failure = failure
     code, lines, error = run_setup(sandbox, capsys, "--dry-run")
 
     assert (code, lines[3:]) == (
         ExitCode.FAILURE,
         [
-            "  ✗ system          failed         Ansible's check did not finish · its output above says why",
+            f"  ✗ system          failed         {fact}",
             NOT_RUN[SECRETS],
         ],
     )
