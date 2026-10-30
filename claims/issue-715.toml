@@ -1,0 +1,8 @@
+claim_id = "05025379f46c4904925f0450ece4f8a7"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "ec12836abddec46e45f71527e3bd756790240b0c"
+branch = "claude/issue-715-s8b-of-472-backup-workstation-markers"
+scope = ["src/hal/backup/docker.py", "src/hal/backup/host.py", "src/hal/backup/restic.py", "src/hal/backup/sqlite_copy.py", "src/hal/backup/status.py", "src/hal/exposure/host.py", "src/hal/workstation/check.py", "src/hal/workstation/ports.py", "src/hal/workstation/secrets_setup.py", "src/hal/workstation/secrets_view.py", "src/hal/workstation/setup.py", "src/hal/workstation/system_step.py"]
+opened_commit = "eb64920774c9e2db9d26a198d5416acbf2c07b1a"
+whole_reason = "One rule across three packages: twelve files whose findings need a reasoned trailing marker each and nothing else; a split would pay twelve claims for one-line edits."
