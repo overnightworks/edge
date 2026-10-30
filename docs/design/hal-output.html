@@ -823,7 +823,7 @@ Type <span class="w">yes</span> to set up 1 open row: yes
     <li><b>Ein Warum vor der Eingabe:</b> <code>why:</code> ist der Zweck aus dem Manifest. Er wird Englisch, wie jede Terminalzeile. Bei GitHub wird er auch die Beschreibung des Tokens.</li>
     <li><b>Enter, dann Browser:</b> du liest die Liste, bevor der Browser das Terminal verdeckt. Die Cloudflare-Figur unten ist darauf angepasst.</li>
     <li><b>Das Ende sagt <code>setup</code>:</b> der Assistent druckt kein eigenes „noch offen“ und kein eigenes <code>next:</code> mehr. Die <code>secrets</code>-Zeile und das Urteil von <code>hal setup</code> sagen es. Ist alles gespeichert, zeigt <code>next: hal apply</code> den Plan statt des alten Plan-Befehls.</li>
-    <li><b>Nicht in diesem Bild:</b> der Bericht von <code>hal secrets</code>, der nur zeigt und keinen Assistenten startet; der Assistent hat eine einzige Tür, <code>hal setup</code>.</li>
+    <li><b>Nicht in diesem Bild:</b> <code>hal secrets</code>, das nur zeigt und keinen Assistenten startet (Abschnitt „<code>hal secrets</code>“ unten); der Assistent hat eine einzige Tür, <code>hal setup</code>.</li>
   </ul>
 </section>
 
@@ -890,6 +890,98 @@ Type <span class="w">yes</span> to set up 1 open row: yes
     <li><b>Mail und Popup bleiben, wie sie sind</b> (seit heute Englisch). Das Terminal zeigt nur die Kurzform; der Bericht in der Datei ist die Langform.</li>
     <li><code>hal check</code> ohne Bereich ist die tägliche Prüfung; <code>hal check exposure</code> zeigt nur diesen Bereich, <code>--json</code> gibt es nur mit einem Bereich.</li>
     <li><b>Der Bericht liegt in <code>~/.local/state/hal/</code></b>, ebenso das Gemerkte der letzten Meldung.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="s-secrets">
+  <div class="head">
+    <h2 id="s-secrets"><span class="tag new">neu für S9e</span> <code>hal secrets</code>: nur Funde als Zeilen, <code>-v</code> zeigt jeden Eintrag</h2>
+    <p class="sub">Gewählt 30.10.2026 (Option A): wie <code>hal setup</code> nur Probleme als Zeilen, Funde je Ordner gebündelt, eine Zeile für alles Gesunde; <code>-v</code> zeigt jeden Eintrag als ausgerichtete Tabelle. Der Markdown-Bericht bleibt die Datei, die <code>hal check</code> und seine Mail lesen. Namen aus deinem Stand, Zahlen erfunden.</p>
+  </div>
+  <p class="s2note"><b>An den Zeilen-Renderer angepasst:</b> Betreff und Ereignis sind je 14 Zeichen breit wie in jeder Zeile; ein längerer Name schiebt seine Zeile. Das Urteil hat die Form von Bild A und zählt jeden Fund wie der Bericht und <code>hal check</code> (<code>88 findings</code>, nicht die zwei Zeilen); der Hinweis steht hinten (<code>· hal secrets -v lists every entry</code>). Die Fakten sind allgemein statt von Hand: <code>86 paths · not in the manifest</code> statt „86 files of a Grok login hal does not know yet“, der Befund im Wortlaut des Berichts (<code>has mode 755; at most 700 allowed</code>).</p>
+  <p class="s2note"><b>Bündeln:</b> ab 6 Fund-Zeilen werden Datei- und Ordnerfunde mit gleicher Regel, gleichem Ordner und gleichem Befund eine Zeile. Der Ordner ist der nächste, in dem das Manifest eine Datei nennt, ohne <code>~/.secrets/</code> davor; bis drei Pfade stehen mit Namen da, sonst ihre Zahl. Fehlende, ungeprüfte und zurückgezogene Einträge bleiben je eine Zeile. Unter 6 steht jeder Fund für sich, mit seinem Schritt gedimmt darunter.</p>
+  <div class="pair">
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> viele Funde in einem Login-Ordner: gebündelt</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal secrets</span>
+<span class="y">  !</span> agent-service/grok  unknown        <span class="d">86 paths · not in the manifest</span>
+<span class="y">  !</span> agent-service/grok  too open       <span class="d">.cache, .cache/fontconfig · has mode 755; at most 700 allowed</span>
+<span class="g">  ✓</span> 42 entries      present        <span class="d">gh checked: valid; the rest not checked</span>
+<span class="d">  · 2 retired       revoked        github/token, github/overnightworks-read-token</span>
+<span class="y">! 88 findings</span><span class="d"> · hal secrets -v lists every entry</span></pre>
+      <p class="was">heute: 88 Zeilen <code>| unknown-file | ~/.secrets/agent-service/grok/… |</code> unter einer siebenspaltigen Tabelle mit jedem Eintrag</p>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> alles gut</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal secrets</span>
+<span class="g">  ✓</span> 45 entries      present        <span class="d">gh checked: valid; the rest not checked</span>
+<span class="d">  · 1 optional      not set up     ssh/id_ed25519.ppk</span>
+<span class="d">  · 2 retired       revoked        github/token, github/overnightworks-read-token</span>
+<span class="w">✓ no findings</span><span class="d"> · 48 entries · hal secrets -v lists every entry</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> wenige Funde: je eine Zeile, der Schritt darunter</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal secrets</span>
+<span class="y">  !</span> cloudflare/fleet-write  missing        <span class="d">token</span>
+<span class="d">    hal setup</span>
+<span class="y">  !</span> cloudflared/old.json  unknown        <span class="d">not in the manifest</span>
+<span class="d">    add ~/.secrets/cloudflared/old.json to the manifest or delete it</span>
+<span class="y">  !</span> gmail-cleanup   too open       <span class="d">has mode 775; at most 700 allowed</span>
+<span class="d">    chmod 700 ~/.secrets/gmail-cleanup</span>
+<span class="g">  ✓</span> 44 entries      present        <span class="d">gh checked: valid; the rest not checked</span>
+<span class="d">  · 2 retired       revoked        github/token, github/overnightworks-read-token</span>
+<span class="y">! 3 findings</span><span class="d"> · hal secrets -v lists every entry</span></pre>
+      </figure>
+    </div>
+    <div class="stack">
+      <figure>
+        <figcaption><span class="tag new">neu</span> <code>-v</code>: jeder Eintrag als Tabelle, dann jeder Fund für sich</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal secrets -v</span>
+<span class="hd">name                    kind          file                check                            place                              renew</span>
+cloudflare/fleet-write  token         missing             not checked                      ~/.secrets/cloudflare/fleet-write  hal setup
+gh                      tool login    present             checked: valid                   ~/.config/gh                       gh auth login --web
+gmail-cleanup           token         present             not checked                      ~/.secrets/gmail-cleanup/token     Google › App passwords
+ssh/id_ed25519.ppk      derived copy  missing (optional)  not checked                      ~/.ssh/id_ed25519.ppk              puttygen ~/.ssh/id_ed25519 -o ~/.ssh/id_ed25519.ppk
+github/token            token         retired             revocation confirmed 15.10.2026  ~/.secrets/github/token            revoke: https://github.com/settings/tokens
+<span class="n">… one line per entry, 48 in all</span>
+<span class="y">  !</span> cloudflare/fleet-write  missing        <span class="d">token</span>
+<span class="d">    hal setup</span>
+<span class="y">  !</span> cloudflared/old.json  unknown        <span class="d">not in the manifest</span>
+<span class="d">    add ~/.secrets/cloudflared/old.json to the manifest or delete it</span>
+<span class="y">  !</span> gmail-cleanup   too open       <span class="d">has mode 775; at most 700 allowed</span>
+<span class="d">    chmod 700 ~/.secrets/gmail-cleanup</span>
+<span class="y">! 3 findings</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> Pipe, <code>NO_COLOR</code>, <code>TERM=dumb</code>: dieselben Wörter ohne Farbe</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">NO_COLOR=1 hal secrets | cat</span>
+  ! agent-service/grok  unknown        86 paths · not in the manifest
+  ! agent-service/grok  too open       .cache, .cache/fontconfig · has mode 755; at most 700 allowed
+  ✓ 42 entries      present        gh checked: valid; the rest not checked
+  · 2 retired       revoked        github/token, github/overnightworks-read-token
+! 88 findings · hal secrets -v lists every entry</pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu, Vorschlag</span> <code>--by-service</code> mit derselben Tabelle</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal secrets --by-service</span>
+<span class="hd">service        reads</span>
+agent-service  agent-service/codex, agent-service/grok, agent-service/signing-key
+cloudflared    cloudflared
+hal apply      cloudflare/fleet-read, opentofu/state-passphrase
+<span class="n">… one line per service</span>
+<span class="hd">copy                source</span>
+ssh/id_ed25519.ppk  ssh/id_ed25519
+<span class="d">· declared dependencies</span><span class="d"> · 14 services · not proven complete</span></pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Zeichen:</b> <code>!</code> du musst etwas tun, <code>✓</code> die gesunden Einträge (vorhanden, ohne eigenen Fund) mit dem Prüfergebnis, <code>·</code> nur ein Hinweis (zurückgezogen und widerrufen, optional und nicht eingerichtet). Eine Sammelzeile ohne Eintrag fällt weg.</li>
+    <li><b>Ereignisse:</b> <code>missing</code>, <code>not checked</code> (Ordner nicht lesbar oder die Prüfung hing), <code>invalid</code>, <code>retired</code> (Widerruf unbestätigt, darunter die Widerrufsseite), <code>unknown</code>, <code>too open</code>, <code>closed</code>, <code>symlink</code>, <code>not a folder</code>.</li>
+    <li><b>Der Schritt unter einer Zeile</b> ist der Befehl des Funds ohne Backticks, <code>hal setup</code> für einen Eintrag, den der Assistent schreibt, sonst sein Erneuerungstext; eine gebündelte Zeile trägt keinen, <code>-v</code> zeigt jeden.</li>
+    <li><b>Nie ein Wert:</b> <code>hal secrets</code> liest Geheimnisdateien nur per <code>stat</code>; jeder Name und Pfad wird vor dem Auffüllen maskiert.</li>
+    <li><b>Exit-Codes wie heute:</b> 0 sauber, 1 Funde, 2 Manifest oder Aufruf ungültig, 3 unerwarteter Fehler, 130 unterbrochen. Der Bericht bleibt Markdown, Byte für Byte.</li>
   </ul>
 </section>
 
