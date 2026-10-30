@@ -249,7 +249,6 @@ def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypat
 
 
 def _seeing_verbose(monkeypatch, command, outcome=ExitCode.OK):
-    """`command` replaced by one that records what the run sees and then ends as `outcome`."""
     seen = []
 
     def recording(arguments):
@@ -296,13 +295,13 @@ def test_a_run_sees_the_verbose_flag_only_when_given(command, flags, expected, m
     ],
     ids=["success", "ctrl-c", "unexpected-error"],
 )
-def test_a_run_after_a_verbose_run_sees_verbose_off(outcome, code, monkeypatch):
+def test_verbose_ends_with_its_run_after_success_ctrl_c_or_an_error(outcome, code, monkeypatch):
     command = cli.COMMANDS[-1]
     seen = _seeing_verbose(monkeypatch, command, outcome)
 
     assert cli.main(_line(command, "-v")) == code
-    cli.main(_line(command))
-    assert seen == [True, False]
+    assert seen == [True]
+    assert not is_verbose()
 
 
 def test_the_verbose_flag_before_the_command_is_a_usage_error_that_names_the_help(capsys):
