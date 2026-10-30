@@ -135,8 +135,8 @@ class TermsPage(HTMLParser):
 
 def message(locale: str, key: str) -> str:
     lines = (MESSAGES / f"messages_{locale}.properties").read_text(encoding="utf-8").splitlines()
-    entries = (line.split("=", 1) for line in lines if line and not line.startswith("#"))
-    return {name: value for name, value in entries}[key]
+    (value,) = (line.removeprefix(f"{key}=") for line in lines if line.startswith(f"{key}="))
+    return value
 
 
 def page_of(html: str) -> TermsPage:
