@@ -140,7 +140,7 @@ class WalkTold(StepFailed):
 
 
 class StillOpenSecret(Noun):
-    SECRET = "secret still open"
+    SECRET = "secret still open"  # noqa: S105 - a noun for a count and no credential
 
 
 class OpenRow(TrailingNoun):
