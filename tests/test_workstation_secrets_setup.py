@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from workstation_support import symlinked_folder_fix
-from workstation_secrets_support import (
+from support.workstation_support import symlinked_folder_fix
+from support.workstation_secrets_support import (
     FakeCli,
     FakeSync,
     FakeTerminal,

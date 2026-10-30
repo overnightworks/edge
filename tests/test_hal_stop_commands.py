@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from app_support import FLEET, KEY
+from support.app_support import FLEET, KEY
 from support.hal_stack_commands import (
     UNIT,
     Fakes,

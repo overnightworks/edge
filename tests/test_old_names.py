@@ -2,7 +2,7 @@
 
 The operator types only `hal`; every remaining old name is counted per tracked
 file and may only shrink. When the test is red it prints the whole baseline to
-paste into tests/old_names_baseline.toml, so the baseline is regenerated, never
+paste into tests/fixtures/old_names_baseline.toml, so the baseline is regenerated, never
 hand-tuned.
 """
 
@@ -15,8 +15,8 @@ from pathlib import Path
 import pytest
 
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
-BASELINE_PATH = Path(__file__).with_name("old_names_baseline.toml")
-OWN_FILES = frozenset({"tests/test_old_names.py", "tests/old_names_baseline.toml"})
+BASELINE_PATH = Path(__file__).parent / "fixtures" / "old_names_baseline.toml"
+OWN_FILES = frozenset({"tests/test_old_names.py", "tests/fixtures/old_names_baseline.toml"})
 
 OLD_NAME_PATTERNS: dict[str, re.Pattern[str]] = {
     "edge-verb": re.compile(r"\bedge (apply|stop|start|external|offline|online)\b"),
@@ -113,7 +113,7 @@ def test_old_names_only_shrink() -> None:
     assert not violations, (
         "Old operator-facing names must only shrink (#207):\n"
         + "\n".join(violations)
-        + "\n\nPaste this as tests/old_names_baseline.toml:\n\n"
+        + "\n\nPaste this as tests/fixtures/old_names_baseline.toml:\n\n"
         + render_baseline(counts)
     )
 

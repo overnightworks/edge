@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from app_support import (
+from support.app_support import (
     FLEET,
     KEY,
     ScriptedDocker,

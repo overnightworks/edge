@@ -4,8 +4,8 @@ home and terminal, and the files a run leaves."""
 from pathlib import Path
 
 import pytest
-from workstation_secrets_support import FakeTerminal
-from workstation_support import FAKE_SECRET_VALUE
+from support.workstation_secrets_support import FakeTerminal
+from support.workstation_support import FAKE_SECRET_VALUE
 
 # Two guided tokens, one generated passphrase, in the order the walk must keep.
 SETUP_MANIFEST = """\

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from workstation_support import Sandbox, run_hal_setup, write_hal_config
+from support.workstation_support import Sandbox, run_hal_setup, write_hal_config
 
 from hal import cli as hal_cli
 from hal.grammar import ExitCode

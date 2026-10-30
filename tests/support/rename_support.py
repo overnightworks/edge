@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
-from git_support import committed_main, plain_git
+from support.git_support import committed_main, plain_git
 from support.terminal_support import type_at_prompt
 
 from hal import cli, rename_commands

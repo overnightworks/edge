@@ -6,7 +6,7 @@ import dataclasses
 from pathlib import Path
 
 import pytest
-from workstation_support import write_hal_config
+from support.workstation_support import write_hal_config
 
 from hal import config as hal_config
 from hal.workstation.alarm import AlarmSettings

@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 
 import pytest
-from workstation_support import REPORT_DISPLAY
+from support.workstation_support import REPORT_DISPLAY
 
 from hal.workstation import check
 

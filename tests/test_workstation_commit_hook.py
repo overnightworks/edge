@@ -10,7 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from workstation_support import FAKE_KEY, Sandbox, run_hal_setup
+from support.workstation_support import FAKE_KEY, Sandbox, run_hal_setup
 
 from hal.grammar import ExitCode
 from hal.workstation.setup import HOOK_NAMES
