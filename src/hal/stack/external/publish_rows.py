@@ -36,6 +36,23 @@ def warning_rows(stream: tofu.PlanStream, token_values: dict[str, str]) -> tuple
     )
 
 
+def unparsed_rows(stream: tofu.PlanStream, token_values: dict[str, str]) -> tuple[Row, ...]:
+    """One warning row for the lines tofu wrote outside its stream, which a plan that went on must
+    not swallow; none when there are none."""
+    lines = _unparsed_lines(stream, token_values)
+    if not lines:
+        return ()
+    return (
+        Row(
+            Glyph.NEEDS_YOU,
+            SUBJECT,
+            PublishEvent.WARNING,
+            "tofu printed text outside its stream",
+            details=lines,
+        ),
+    )
+
+
 def failed_plan_rows(stream: tofu.PlanStream, token_values: dict[str, str]) -> tuple[Row, ...]:
     """A row for each error; the lines tofu wrote outside its stream stand under the last one,
     or under a row of their own when the stream names no error."""
@@ -44,7 +61,7 @@ def failed_plan_rows(stream: tofu.PlanStream, token_values: dict[str, str]) -> t
         for each in stream.diagnostics
         if each.severity is tofu.Severity.ERROR
     ]
-    unparsed = tuple(secrets.redact(line, token_values) for line in stream.unparsed)
+    unparsed = _unparsed_lines(stream, token_values)
     if not rows:
         return (_not_planned("tofu ended without naming a reason", unparsed, token_values),)
     rows[-1] = replace(rows[-1], details=(*rows[-1].details, *unparsed))
@@ -72,3 +89,8 @@ def _not_planned(summary: str, details: tuple[str, ...], token_values: dict[str,
 def _lines(text: str, token_values: dict[str, str]) -> tuple[str, ...]:
     redacted = secrets.redact(text, token_values)
     return tuple(line.rstrip() for line in redacted.splitlines() if line.strip())
+
+
+def _unparsed_lines(stream: tofu.PlanStream, token_values: dict[str, str]) -> tuple[str, ...]:
+    """The lines are joined first so a secret that spans lines is redacted whole."""
+    return _lines("\n".join(stream.unparsed), token_values)

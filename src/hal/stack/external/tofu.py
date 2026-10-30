@@ -115,8 +115,12 @@ def read_plan_stream(output: str) -> PlanStream:
     and detail are read: the snippet and difference objects of a diagnostic can carry values."""
     diagnostics = []
     unparsed = []
-    for line in filter(None, (line.strip() for line in output.splitlines())):
-        message = _json_object(line)
+    for line in output.splitlines():
+        if not line.strip():
+            if unparsed:  # a blank line inside crash text can sit inside a secret
+                unparsed.append(line)
+            continue
+        message = _json_object(line.strip())
         if message is None:
             unparsed.append(line)
         elif message.get("type") == "diagnostic":

@@ -230,7 +230,7 @@ def test_a_line_that_is_not_a_json_object_is_kept_apart_and_other_types_are_igno
     )
     stream = tofu.read_plan_stream(output)
     assert stream.diagnostics == ()
-    assert stream.unparsed == ("panic: tofu crashed", "42", "[1]")
+    assert stream.unparsed == ("panic: tofu crashed", "42", "", "[1]")
 
 
 @pytest.mark.parametrize(
@@ -534,6 +534,82 @@ def test_a_line_that_is_no_json_stands_under_the_row_of_a_failed_plan(
         "✗ cloudflare not planned tofu ended without naming a reason",
         "panic \\x1b[1m ***",
     ]
+
+
+def test_a_line_outside_the_stream_of_an_empty_plan_is_a_warning_before_the_current_row(
+    fake, capsys, publish_answering
+):
+    """#754 gate finding 1: a truncated line is shown, the exit stays 0."""
+    configure_plan(fake, plan=0, plan_lines=["panic: truncated {"])
+    assert publish_answering() == 0
+    lines = [said(line) for line in capsys.readouterr().out.splitlines()]
+    assert lines == [
+        "! cloudflare warning tofu printed text outside its stream",
+        "panic: truncated {",
+        "✓ cloudflare current nothing to publish",
+    ]
+    assert "apply" not in commands_of(fake)
+
+
+def test_a_line_outside_the_stream_of_a_plan_with_changes_is_a_warning_before_the_diff(
+    fake, capsys, monkeypatch, request
+):
+    """#754 gate finding 1: the warning stands before the diff and the prompt."""
+    configure_plan(
+        fake,
+        plan=2,
+        plan_lines=["panic: truncated {", *REAL_PLAN_WITH_CHANGES],
+        show_lines=["the diff"],
+    )
+    seen_before_asking = []
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _prompt: seen_before_asking.append(capsys.readouterr().out) or "yes",
+    )
+    assert request.getfixturevalue("publish")() == 0
+    (before_the_prompt,) = seen_before_asking
+    assert [said(line) for line in before_the_prompt.splitlines()] == [
+        "! cloudflare warning tofu printed text outside its stream",
+        "panic: truncated {",
+        "the diff",
+    ]
+    assert commands_of(fake) == ["version", "init", "plan", "show", "apply"]
+
+
+MULTILINE_PASSPHRASE = "alpha\nbeta"
+
+
+@pytest.fixture
+def multiline_passphrase(request) -> None:
+    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
+        MULTILINE_PASSPHRASE + "\n"
+    )
+
+
+def test_a_passphrase_with_a_newline_in_crash_text_is_not_printed(
+    fake, capsys, publish_answering, multiline_passphrase
+):
+    """#754 gate finding 2: the secret is redacted whole before the text is split into lines."""
+    configure_plan(fake, plan=1, plan_lines=[f"panic: {MULTILINE_PASSPHRASE} leaked"])
+    assert publish_answering() == 2
+    printed = capsys.readouterr()
+    for part in ("alpha", "beta"):
+        assert part not in printed.out + printed.err
+
+
+def test_a_passphrase_with_a_newline_in_a_diagnostic_detail_is_not_printed(
+    fake, capsys, publish_answering, multiline_passphrase
+):
+    """#754 gate finding 2: a value JSON escapes appears only decoded, and is redacted decoded."""
+    configure_plan(
+        fake,
+        plan=0,
+        plan_lines=[diagnostic_line("warning", "careful", f"echo {MULTILINE_PASSPHRASE} end")],
+    )
+    assert publish_answering() == 0
+    printed = capsys.readouterr()
+    for part in ("alpha", "beta"):
+        assert part not in printed.out + printed.err
 
 
 @pytest.mark.parametrize("plan_exit", [0, 2])

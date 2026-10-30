@@ -350,6 +350,9 @@ def _print_plan(
         return ApplyExit.CANNOT_PLAN
     for row in publish_rows.warning_rows(stream, token_values):
         write_row(row)
+    if planned.exit_code in (tofu.PlanExit.NO_CHANGES, tofu.PlanExit.CHANGES):
+        for row in publish_rows.unparsed_rows(stream, token_values):
+            write_row(row)
     if planned.exit_code == tofu.PlanExit.NO_CHANGES:
         progress.plan_was_empty = True
         write_row(publish_rows.current_row())
