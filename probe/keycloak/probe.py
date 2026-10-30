@@ -238,7 +238,7 @@ CHANGED_CONFIG = "browser-mfa-without-passkey"
 # list stays in it.
 EMPTY_REALM_ROLES = "roles:\n  realm: []\n"
 ESCAPING_GROUP = "probe\x1b[31mconsole\nname"
-OBSERVER_SECRET = "/run/secrets/config_cli_secret"
+OBSERVER_SECRET = "/run/secrets/config_cli_secret"  # noqa: S105 - the path of a mounted secret file and no secret
 OBSERVER_SCRIPT = "/opt/observer/observe.py"
 OBSERVER_START_SECONDS = 60
 GO_LIVE_ADMIN = "probe-owner"
@@ -340,7 +340,7 @@ def http(
         request_headers["Content-Type"] = "application/json"
     if bearer:
         request_headers["Authorization"] = f"Bearer {bearer}"
-    request = Request(url, data=data, method=method, headers=request_headers)
+    request = Request(url, data=data, method=method, headers=request_headers)  # noqa: S310 - the URL is an address of the probe stack
     try:
         with opener.open(request, timeout=15) as reply:
             return Response(reply.status, dict(reply.headers), reply.read())
@@ -426,8 +426,8 @@ def is_workload_identity_of(access: dict[str, Any], client_id: str) -> bool:
 def write_appkit_files() -> None:
     """The themes bind appkit's files from this checkout, where no apply runs. The repository's own
     `uv run` writes them, because the interpreter this probe runs under may lack appkit."""
-    result = subprocess.run(
-        ["uv", "run", "--project", str(REPO), "python", "-m", "hal.stack.appkit_step", str(REPO)],
+    result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+        ["uv", "run", "--project", str(REPO), "python", "-m", "hal.stack.appkit_step", str(REPO)],  # noqa: S607 - uv is found on PATH by design
         capture_output=True,
         text=True,
         check=False,
@@ -519,7 +519,7 @@ class Stack:
         config_dir: Path | None = None,
         stdin: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             [*self.compose_command(bootstrap), *args],
             env=self.environment(config_dir or self.config_dir),
             input=stdin,
@@ -575,7 +575,7 @@ class Stack:
             config_dir=config_dir,
         )
         self.see_env(container)
-        subprocess.run(["docker", "rm", container], capture_output=True, check=True)
+        subprocess.run(["docker", "rm", container], capture_output=True, check=True)  # noqa: S603, S607 - argv is built by the program itself and docker is found on PATH by design
         return result
 
     def observe(self, digest_key: str, *, keep_as: str = "") -> subprocess.CompletedProcess[str]:
@@ -588,7 +588,7 @@ class Stack:
         self, digest_key: str, stop_signal: signal.Signals, moment: Callable[[Observing], bool]
     ) -> list[str]:
         """Sends `stop_signal` to an observe once `moment` holds; names the containers left."""
-        observing = subprocess.Popen(
+        observing = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             [*self.compose_command(), "run", "-T", "--rm", OBSERVER_SERVICE],
             env=self.environment(self.config_dir),
             stdin=subprocess.PIPE,
@@ -596,7 +596,7 @@ class Stack:
             stderr=subprocess.PIPE,
             text=True,
         )
-        assert observing.stdin is not None
+        assert observing.stdin is not None  # noqa: S101 - narrows the type after stdin is a pipe
         observing.stdin.write(digest_key + "\n")
         observing.stdin.flush()
         deadline = time.monotonic() + OBSERVER_START_SECONDS
@@ -656,8 +656,8 @@ class Stack:
         return removed
 
     def see_env(self, container: str) -> None:
-        inspected = subprocess.run(
-            ["docker", "inspect", "--format", "{{.Name}} {{json .Config.Env}}", container],
+        inspected = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["docker", "inspect", "--format", "{{.Name}} {{json .Config.Env}}", container],  # noqa: S607 - docker is found on PATH by design
             capture_output=True,
             text=True,
             check=True,
@@ -682,7 +682,7 @@ class Stack:
 
 
 def docker(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)  # noqa: S603, S607 - argv is built by the program itself and docker is found on PATH by design
 
 
 def observer_containers(*states: str) -> list[str]:
@@ -909,7 +909,7 @@ def load_go_live() -> ModuleType:
         "keycloak_go_live", str(REPO / "keycloak/go-live")
     )
     spec = importlib.util.spec_from_loader(loader.name, loader)
-    assert spec is not None
+    assert spec is not None  # noqa: S101 - narrows the type after the loader is built
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
     loader.exec_module(module)
@@ -1006,7 +1006,7 @@ class RealmStepStand:
 
     def hal(self, *arguments: str) -> subprocess.CompletedProcess[str]:
         command = [*self.backup_command, *arguments, "--apps", str(self.root / "apps.toml")]
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             command,
             env={**os.environ, "HOME": str(self.root / "home")},
             capture_output=True,
