@@ -66,7 +66,7 @@ def test_waiting_commits_are_one_row_with_the_merge_command_and_head_is_planned(
         out, CHECKOUT, CheckoutEvent.BEHIND, f"plan applies {short(real_main)} without them"
     )
     assert f"{waiting} behind" in plain(out)
-    assert detail_lines(out)[0] == f"git -C {checkout.LIVE_CHECKOUT} merge --ff-only {tip}"
+    assert detail_lines(out)[0] == f"git -C ~/git/edge merge --ff-only {tip}"
     assert find_row(out, "step-ca", PlanEvent.SWITCH_ON)
     assert not [text for text in OLD_TEXT if text in out]
     assert exit_code == 1

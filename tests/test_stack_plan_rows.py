@@ -642,7 +642,7 @@ def test_a_checkout_behind_is_one_needs_you_row_with_the_merge_command_under_it(
         CheckoutEvent.BEHIND,
         "plan applies c280a80 without them",
         count=behind,
-        details=(f"git -C {checkout.LIVE_CHECKOUT} merge --ff-only {'f' * 40}",),
+        details=(f"git -C ~/git/edge merge --ff-only {'f' * 40}",),
     )
 
 

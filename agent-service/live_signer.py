@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The live signer proof of the agent service (docs/agent-service.md, "Proofs").
 
-    cd ~/srv/hal && python3 agent-service/live_signer.py
+    cd ~/git/edge && python3 agent-service/live_signer.py
 
 It proves what the service signs for one tool, through songmaker's own client and the real
 gateway, with no paid turn: both runs fail before any CLI starts. You sign in as for

@@ -93,9 +93,9 @@ password file is mounted read-only at `/run/secrets/restic-password` and handed 
 The one-time setup is: `uv sync` (builds the `.venv` the units run); a restic password in
 `~/.secrets/restic/password` (random, mode 0600, directory 0700); `hal backup --init` (creates
 `~/backups/restic` once, mode 700); `loginctl enable-linger "$USER"` so the user timers run without a
-login session; and `~/srv/hal/bin/hal setup`, which (after its `yes`) writes the units
+login session; and `~/git/edge/bin/hal setup`, which (after its `yes`) writes the units
 (`hal-backup{,-restore-test}.{service,timer}`, declared in `src/hal/workstation/jobs.py`) into
-`~/.config/systemd/user/`, reloads systemd and enables the user timers. The units expect the checkout at `~/srv/hal`.
+`~/.config/systemd/user/`, reloads systemd and enables the user timers. The units expect the checkout at `~/git/edge`.
 
 Keep a copy of the password in the password manager or on paper. **Without it the repository cannot be
 read by anyone, ever:** losing the key loses every backup, and restic has no recovery.
@@ -304,7 +304,7 @@ set -euo pipefail
 restored=~/restore-songmaker
 # The copy runs in the backup runner's own restic image, pinned by version and digest: no
 # unpinned image ever gets write access to the live audio volume.
-image=$(cd ~/srv/hal && .venv/bin/python -c \
+image=$(cd ~/git/edge && .venv/bin/python -c \
   'from hal.backup.settings import RESTIC_IMAGE; print(RESTIC_IMAGE)')
 pg=$(docker ps --quiet --filter label=com.docker.compose.project=songmaker \
   --filter label=com.docker.compose.service=postgres \

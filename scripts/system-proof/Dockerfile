@@ -83,9 +83,9 @@ RUN mkdir -p /etc/cloudflared \
 
 # The wheel of this checkout and edge's tunnel/ files, all staged by run.sh.
 COPY context/ /proof/
-RUN install -d -o tester -g tester /home/tester/srv/hal \
-    && cp -r /proof/tunnel /home/tester/srv/hal/tunnel \
-    && chown -R tester:tester /home/tester/srv \
+RUN install -d -o tester -g tester /home/tester/git/edge \
+    && cp -r /proof/tunnel /home/tester/git/edge/tunnel \
+    && chown -R tester:tester /home/tester/git \
     && chmod +x /proof/drive.sh /proof/terminal.exp
 
 STOPSIGNAL SIGRTMIN+3

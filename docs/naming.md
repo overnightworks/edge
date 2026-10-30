@@ -20,7 +20,6 @@ lives only in the property `role`.
 | systemd unit, compose service | `<stem>` or `<stem>-<job>` | `systemctl list-units '<stem>*'` finds them all |
 | platform unit in `fleet.yaml` | the catalog key equals the compose profile name (`step-ca`, `keycloak`) | `hal apply --local` switches the profile of that name; a key without a profile is refused |
 | app in `fleet.yaml` (an entry with `repo` and `run`) | the catalog key equals the repository name under `github.org`, its compose project and its checkout `~/srv/<key>`; no edge compose profile and not `edge` | `hal apply` switches the project of that name on at the repository's newest release; a key that names an edge profile or a project name that cannot be a repository is refused |
-| platform deploy checkout | `~/srv/hal`; no app key may be `hal` | `hal apply` runs only from there; the app checkouts `~/srv/<key>` live beside it |
 | Sonar project key | `overnightworks_<stem>` | SonarCloud's org-key form |
 | MCP origin host | `<stem>.mcp.internal`, the stem of the app's repository | the name `traefik-mcp` routes on and answers to, and the only suffix `step-ca/ca.json` issues for (edge#37) |
 | CSS / release asset | `<stem>.css`, `<stem>-<version>...` | |

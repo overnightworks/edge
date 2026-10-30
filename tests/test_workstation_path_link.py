@@ -50,7 +50,7 @@ def test_a_missing_link_is_created_and_the_plan_shows_it_with_the_home_as_a_tild
     link: PathLink, home: Path, live: Path
 ) -> None:
     assert link.check() is CheckState.WOULD_CHANGE
-    assert link.fact() == f"~/.local/bin/hal → ~/{live.relative_to(home)}/bin/hal"
+    assert link.fact() == "~/.local/bin/hal → ~/git/edge/bin/hal"
     assert not entry_of(home).is_symlink()
 
     assert link.apply() is Applied.CHANGED
@@ -77,8 +77,8 @@ def test_a_link_that_already_points_here_is_unchanged_and_stays_the_same_link(
     assert entry_of(home).lstat().st_ino == before
 
 
-def test_a_relative_link_that_already_points_here_is_unchanged(link: PathLink, home: Path, live: Path) -> None:
-    entry_of(home).symlink_to(Path(os.path.relpath(live / "bin" / "hal", entry_of(home).parent)))
+def test_a_relative_link_that_already_points_here_is_unchanged(link: PathLink, home: Path) -> None:
+    entry_of(home).symlink_to(Path("..") / ".." / "git" / "edge" / "bin" / "hal")
 
     assert link.check() is CheckState.UNCHANGED
     assert link.apply() is Applied.UNCHANGED
@@ -122,7 +122,6 @@ def relative_link_to_a_moved_clone(home: Path) -> None:
 
 
 def link_to_a_moved_clone_while_git_is_a_symlink(home: Path) -> None:
-    (home / "git").mkdir()
     (home / "git").rename(home / "real-git")
     (home / "git").symlink_to(home / "real-git")
     entry_of(home).symlink_to(home / "git" / "hal" / "bin" / "hal")

@@ -11,7 +11,6 @@ import pytest
 from workstation_support import Sandbox, run_hal_setup, split_at_the_prompt
 
 from hal.grammar import ExitCode
-from hal.workstation.layout import Layout
 from hal.workstation.path_link import PathLink
 from hal.workstation.system_step import AGENT_USER, Applied
 
@@ -40,7 +39,7 @@ def run_at_the_prompt(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], *fla
 
 
 def a_checkout_under(home: Path) -> Path:
-    root = Layout(home).live_checkout
+    root = home / "git" / "edge"
     (root / "bin").mkdir(parents=True)
     (root / "bin" / "hal").write_text("#!/bin/sh\n")
     return root
@@ -57,9 +56,8 @@ def test_the_path_row_plans_the_link_changes_nothing_before_the_yes_and_creates_
     plan, run = split_at_the_prompt(out)
 
     assert (code, err) == (ExitCode.OK, "")
-    row = f"  ~ path            will change    ~/.local/bin/hal → ~/{checkout.relative_to(sandbox.home)}/bin/hal"
-    assert row in planned_only[1].splitlines()
-    assert row in plan
+    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/edge/bin/hal" in planned_only[1].splitlines()
+    assert "  ~ path            will change    ~/.local/bin/hal → ~/git/edge/bin/hal" in plan
     assert "  ✓ path            changed" in run
     assert entry.readlink() == checkout / "bin" / "hal"
 

@@ -1,4 +1,4 @@
-"""The live checkout `$HOME/srv/hal`: whether a tree is it, judged from paths alone, and whether it
+"""The live checkout `$HOME/git/edge`: whether a tree is it, judged from paths alone, and whether it
 is a clean `main`, asked of real git in `tmp_path` through `checkout`'s isolated runner.
 
 Every tree is built under `tmp_path`. HOME and XDG_CONFIG_HOME are throwaway directories, so a
@@ -25,7 +25,6 @@ from git_support import (
 )
 
 from hal.stack import checkout
-from hal.workstation.layout import Layout
 
 # githooks(5): every hook git may run, so a sentinel catches whichever one would.
 HOOK_NAMES = (
@@ -50,7 +49,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def main_tree(home: Path) -> Path:
-    tree = checkout.live_checkout(home)
+    tree = home / "git" / "edge"
     tree.mkdir(parents=True)
     (tree / "traefik.yml").write_text("entryPoints: {}\n")
     (tree / "fleet.yaml").write_text("services: {}\n")
@@ -73,14 +72,14 @@ def tree(path: Path, *, linked: bool = False) -> Path:
     return path
 
 
-def test_the_main_worktree_at_the_live_path_is_the_live_checkout(home):
-    """#79 cell 1: `$HOME/srv/hal` with a `.git` directory proceeds."""
-    assert checkout.not_live_checkout(tree(checkout.live_checkout(home)), home) is None
+def test_the_main_worktree_at_home_git_edge_is_the_live_checkout(home):
+    """#79 cell 1: `$HOME/git/edge` with a `.git` directory proceeds."""
+    assert checkout.not_live_checkout(tree(home / "git" / "edge"), home) is None
 
 
 def test_a_linked_worktree_of_edge_elsewhere_is_another_copy(home, tmp_path):
     """#79 cell 2, #95 G2: a linked worktree is refused as the tree it is."""
-    tree(checkout.live_checkout(home))
+    tree(home / "git" / "edge")
     worktree = tree(tmp_path / "edge-worktrees" / "issue-9-y", linked=True)
 
     assert checkout.not_live_checkout(worktree, home) == f"this is {worktree}"
@@ -88,7 +87,7 @@ def test_a_linked_worktree_of_edge_elsewhere_is_another_copy(home, tmp_path):
 
 def test_another_copy_is_named_as_the_tree_it_is(home, tmp_path):
     """#79 cell 3, #95 G2: a main worktree elsewhere, e.g. `/tmp/x/edge`, says `this is X`."""
-    tree(checkout.live_checkout(home))
+    tree(home / "git" / "edge")
     copy = tree(tmp_path / "x" / "edge")
 
     assert checkout.not_live_checkout(copy, home) == f"this is {copy}"
@@ -96,41 +95,35 @@ def test_another_copy_is_named_as_the_tree_it_is(home, tmp_path):
 
 def test_the_live_checkout_reached_through_a_symlinked_home_is_the_live_checkout(tmp_path):
     """#79 cell 4: a HOME that is a symlink to the home holding the code tree proceeds."""
-    code_tree = tree(checkout.live_checkout(tmp_path / "real-home"))
+    code_tree = tree(tmp_path / "real-home" / "git" / "edge")
     home = tmp_path / "linked-home"
     home.symlink_to(tmp_path / "real-home")
 
     assert checkout.not_live_checkout(code_tree, home) is None
 
 
-def test_a_live_path_symlink_to_the_code_tree_is_the_live_checkout(home, tmp_path):
-    """#79 cell 4: `$HOME/srv/hal` as a symlink that resolves to the code tree proceeds."""
+def test_a_home_git_edge_symlink_to_the_code_tree_is_the_live_checkout(home, tmp_path):
+    """#79 cell 4: `$HOME/git/edge` as a symlink that resolves to the code tree proceeds."""
     code_tree = tree(tmp_path / "disk" / "edge")
-    checkout.live_checkout(home).parent.mkdir(parents=True)
-    checkout.live_checkout(home).symlink_to(code_tree)
+    (home / "git").mkdir(parents=True)
+    (home / "git" / "edge").symlink_to(code_tree)
 
     assert checkout.not_live_checkout(code_tree, home) is None
 
 
-def test_the_live_path_as_a_linked_worktree_says_so(home):
-    """#79 cell 5, #95 G3 (#34 finding 43): `$HOME/srv/hal` whose `.git` is a file."""
-    linked = tree(checkout.live_checkout(home), linked=True)
+def test_home_git_edge_as_a_linked_worktree_says_so(home):
+    """#79 cell 5, #95 G3 (#34 finding 43): `$HOME/git/edge` whose `.git` is a file."""
+    linked = tree(home / "git" / "edge", linked=True)
 
     assert checkout.not_live_checkout(linked, home) == "a linked worktree, not the main checkout"
 
 
 def test_a_tree_without_git_says_it_is_no_git_checkout(home):
-    """#79 rule 1, #95 G4: a bare copy of files at `$HOME/srv/hal` is refused with its reason."""
-    code_tree = checkout.live_checkout(home)
+    """#79 rule 1, #95 G4: a bare copy of files at `$HOME/git/edge` is refused with its reason."""
+    code_tree = home / "git" / "edge"
     code_tree.mkdir(parents=True)
 
     assert checkout.not_live_checkout(code_tree, home) == "no git checkout"
-
-
-def test_the_stack_and_the_workstation_name_one_live_checkout(home):
-    """`hal apply` and the link `hal setup` makes read two owners, and they must agree."""
-    assert checkout.live_checkout(home) == Layout(home).live_checkout
-    assert Path(checkout.LIVE_CHECKOUT).expanduser() == Layout(Path.home()).live_checkout
 
 
 def test_a_born_main_is_on_main(git):
@@ -155,7 +148,7 @@ def test_a_detached_head_is_named_by_its_short_sha(git, main_tree):
 
 def test_an_unborn_main_has_no_commit(home):
     """#95 rule 5, G14: `main` without a commit is refused."""
-    unborn = checkout.live_checkout(home)
+    unborn = home / "git" / "edge"
     unborn.mkdir(parents=True)
     plain_git(unborn, "init", "--quiet", "--initial-branch", checkout.MAIN)
 

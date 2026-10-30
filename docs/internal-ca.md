@@ -14,7 +14,7 @@ that the agent service calls over https only. It listens on `step-ca:9000` on th
 TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one configuration. `traefik-mcp`
 fetches its certificates from it.
 
-**Go live, once,** as the operator (uid 1000): pull `~/srv/hal` and run `hal apply`
+**Go live, once,** as the operator (uid 1000): pull `~/git/edge` and run `hal apply`
 (`services.step-ca.run.enabled: true` in `fleet.yaml`). `apply` makes no key material itself: while
 `step-ca/init --check` fails it asks separately and, on `yes`, runs `step-ca/init` in your terminal,
 re-checks, and shows a fresh plan.

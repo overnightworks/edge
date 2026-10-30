@@ -99,7 +99,6 @@ class Machine:
     """A home with the declared timer jobs, a fake systemd and the step over both."""
 
     def __init__(self, home: Path, replace: Callable[[Path, Path], None] = os.replace) -> None:
-        self.home = home
         self.layout = Layout(home)
         self.user_units = home / ".config" / "systemd" / "user"
         self.user_units.mkdir(parents=True)
@@ -109,10 +108,6 @@ class Machine:
     @property
     def wants(self) -> Path:
         return self.user_units / TIMERS_WANTS
-
-    def expected_unit_text(self, name: str) -> str:
-        live = self.layout.live_checkout.relative_to(self.home)
-        return GENERATED_MARKER + "\n" + EXPECTED_UNIT_TEXTS[name].format(live=live)
 
     @property
     def legacy_directory(self) -> Path:
@@ -185,11 +180,11 @@ EXPECTED_UNIT_TEXTS = {
     "hal-backup.service": """\
 [Unit]
 Description=hal backup: encrypted restic backup of the declared apps
-Documentation=file://%h/{live}/docs/backup.md
+Documentation=file://%h/git/edge/docs/backup.md
 
 [Service]
 Type=oneshot
-ExecStart=%h/{live}/.venv/bin/hal backup
+ExecStart=%h/git/edge/.venv/bin/hal backup
 TimeoutStartSec=6h
 """,
     "hal-backup.timer": """\
@@ -220,17 +215,17 @@ Description=hal check: reports what is wrong on this machine and in the secrets 
 
 [Service]
 Type=oneshot
-ExecStart=%h/{live}/.venv/bin/hal check
+ExecStart=%h/git/edge/.venv/bin/hal check
 SuccessExitStatus=1
 """,
     "hal-backup-restore-test.service": """\
 [Unit]
 Description=hal backup: restore the latest snapshots and prove they are good
-Documentation=file://%h/{live}/docs/backup.md
+Documentation=file://%h/git/edge/docs/backup.md
 
 [Service]
 Type=oneshot
-ExecStart=%h/{live}/.venv/bin/hal restore --test
+ExecStart=%h/git/edge/.venv/bin/hal restore --test
 TimeoutStartSec=6h
 """,
     "hal-backup-restore-test.timer": """\
@@ -253,7 +248,7 @@ def test_a_generated_unit_is_the_marker_then_the_declared_unit_text(
 ) -> None:
     machine.step.apply()
 
-    assert machine.unit_text(name) == machine.expected_unit_text(name)
+    assert machine.unit_text(name) == GENERATED_MARKER + "\n" + EXPECTED_UNIT_TEXTS[name]
 
 
 @pytest.mark.parametrize("job", DECLARED_JOBS, ids=lambda job: job.name)
@@ -340,7 +335,7 @@ def test_a_stale_marker_file_is_rewritten_and_systemd_reloaded(machine: Machine)
     machine.step.apply()
 
     assert machine.unit_text("hal-check.service") == (
-        machine.expected_unit_text("hal-check.service")
+        GENERATED_MARKER + "\n" + EXPECTED_UNIT_TEXTS["hal-check.service"]
     )
     assert machine.systemctl.changes == [["daemon-reload"]]
     machine.assert_complete()
@@ -489,7 +484,7 @@ def test_a_marker_file_with_undecodable_bytes_is_rewritten(machine: Machine) -> 
 
     machine.assert_complete()
     assert machine.unit_text("hal-check.service") == (
-        machine.expected_unit_text("hal-check.service")
+        GENERATED_MARKER + "\n" + EXPECTED_UNIT_TEXTS["hal-check.service"]
     )
 
 
