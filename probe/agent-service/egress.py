@@ -2,8 +2,10 @@
 service; #346 P26, P36): the gateway `agent-egress` and either the stand-in `agent-probe` or
 the real `agent-service` of compose.yaml, in a throwaway compose project of their own.
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
         python3 probe/agent-service/egress.py --scratch DIR [--target stand-in|service]
+
+Measured teardown: 2 s (K 50 s, CAP 1780 s).
 
 The stack runs from a copy of compose.yaml and of the gateway's static file with the egress
 network moved to a free /24 of its own (the gateway's address and the subject's `extra_hosts`
@@ -307,11 +309,11 @@ class Probe:
 
     def run(
         self, command: list[str], *, stdin: str | None = None, check: bool = True,
-        timeout: int = 300,
+        timeout: int = 300, own_session: bool = False,
     ) -> subprocess.CompletedProcess:  # fmt: skip
         result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, input=stdin, capture_output=True, text=True, env=self.environment, cwd=REPO,
-            check=False, timeout=timeout, close_fds=True,
+            check=False, timeout=timeout, close_fds=True, start_new_session=own_session,
         )  # fmt: skip
         if check and result.returncode != 0:
             tail = (result.stderr or result.stdout).strip().splitlines()
@@ -407,6 +409,7 @@ class Probe:
         copy.chmod(0o644)
 
     def __exit__(self, *_: object) -> None:
+        edge_copy.begin_teardown()
         if self.listener:
             self.listener.close()
         for window in self.windows:
@@ -428,7 +431,8 @@ class Probe:
         ).stdout.split()
         if stray:
             self.run(["docker", "rm", "-f", *stray], check=False)
-        self.compose("down", "--volumes", "--remove-orphans", "--timeout", "10", check=False)
+        down = self.compose_command("down", "--volumes", "--remove-orphans", "--timeout", "10")
+        self.run(down, check=False, own_session=True)  # `timeout`'s group signal must not stop it
 
     # --- the packet windows -------------------------------------------------------------------
 

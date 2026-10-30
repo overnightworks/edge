@@ -10,6 +10,7 @@ pure logic, checked here on synthetic frames.
 
 import importlib.util
 import re
+import signal
 import socket
 import struct
 import subprocess
@@ -596,3 +597,24 @@ def test_p36_checks_every_ordered_pair_of_the_three_agent_networks(agent_network
         if caller != other
     }
     assert len(refused_pairs) == 6
+
+
+def test_a_term_during_the_egress_probes_stack_removal_is_ignored(egress):
+    seen = {}
+
+    def remove_stack() -> None:
+        seen["handler"] = signal.getsignal(signal.SIGTERM)
+
+    stack = SimpleNamespace(
+        listener=None,
+        windows=[],
+        remove_stack=remove_stack,
+        run=lambda *_, **__: SimpleNamespace(stdout=""),
+        guard=SimpleNamespace(expect_clean_teardown=lambda: None),
+    )
+    before = signal.signal(signal.SIGTERM, signal.default_int_handler)
+    try:
+        egress.Probe.__exit__(stack)
+    finally:
+        signal.signal(signal.SIGTERM, before)
+    assert seen["handler"] == signal.SIG_IGN

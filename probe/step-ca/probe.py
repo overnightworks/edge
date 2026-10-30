@@ -8,8 +8,8 @@ the proofs and always removes its containers, networks and volumes. It never tou
 stack: the project name and HOME are set in the environment of every command, and its compose
 calls resolve only the project's networks (edge_copy.py, P26).
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 2400 \\
-        python3 probe/step-ca/probe.py --scratch DIR
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 \\
+        python3 probe/step-ca/probe.py --scratch DIR  # teardown measured 1 s (K 30 s, CAP 1800 s)
 
 The CA and the gateway are only reachable on their internal compose networks, so every call to
 them runs from a throwaway container on the network a client would sit on. Needs an empty or new
@@ -17,10 +17,10 @@ them runs from a throwaway container on the network a client would sit on. Needs
 switch, 12 runs the setup from `hal apply`, 13 lets traefik-mcp follow its file and definition
 through about ten applies (traefik_mcp_follows.py), and 14 drives songmaker's route (#346
 P13-P27, mcp_networks.py): about 13 minutes, 10 of them proof 9's renewal wait, bounded by the
-2400 s timeout above. Needs `uv`: proof 8 runs `hal check exposure` through it, proofs 10 to 13
-`uv sync` in a copy of the repository. The copy is a clean `main` with a bare remote under the
-scratch directory, and every edit a proof makes there is published (committed and pushed) before
-the apply that follows it (#95 P3).
+1800 s cap above, so a run that needs longer is cut, not given more. Needs `uv`: proof 8 runs
+`hal check exposure` through it, proofs 10 to 13 `uv sync` in a copy of the repository. The copy
+is a clean `main` with a bare remote under the scratch directory, and every edit a proof makes
+there is published (committed and pushed) before the apply that follows it (#95 P3).
 """
 
 from __future__ import annotations

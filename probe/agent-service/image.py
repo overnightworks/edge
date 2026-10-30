@@ -6,7 +6,10 @@ and answers an unauthenticated `POST /runs` with 401, the image holds no login, 
 packages are exactly the lock's, and a dropped configuration field stops the start. Run it from
 the repository root, in the probe-stack lock:
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3 probe/agent-service/image.py
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
+        python3 probe/agent-service/image.py
+
+Measured teardown: 1 s (K 50 s, CAP 1780 s).
 
 Every image and container it makes carries the probe-only name below and is removed at the end.
 Docker's transcripts go to `--output`, an existing directory (default: a new temporary one,

@@ -366,6 +366,13 @@ def _raise_interrupt(_signal: int, _frame: object) -> None:
     raise KeyboardInterrupt
 
 
+def begin_teardown() -> None:
+    """From here an alarm or a SIGTERM cannot abort the teardown and leave the stack, and with it
+    the operator's login bind, standing."""
+    signal.alarm(0)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+
 def run_probe(
     scratch: Path,
     create: Callable[[Path], Any],
@@ -387,7 +394,7 @@ def run_probe(
     probe = create(scratch)
     signal.signal(signal.SIGTERM, _raise_interrupt)
     exit_code = prove(probe)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    begin_teardown()
     try:
         probe.teardown()
     except (ProbeFailed, subprocess.TimeoutExpired) as failure:

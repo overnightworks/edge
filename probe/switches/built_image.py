@@ -14,8 +14,10 @@ reference nor the container's full image-id label stops the drive.
 
 It removes its containers, networks, volumes and tags. It never names the project `edge`.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 900 \\
         python3 probe/switches/built_image.py --scratch DIR
+
+Measured teardown: 11 s (K 30 s, CAP 900 s).
 
 Needs an existing, empty --scratch directory, `uv` (it runs `uv sync` in the copy) and the local
 images busybox:1.36 and busybox:1.37.0.

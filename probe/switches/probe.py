@@ -43,8 +43,11 @@ copy then runs the shown `git merge --ff-only <sha>` and is current again.
 Every transcript line names its item. It never touches the live stack
 or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 900 \\
         python3 probe/switches/probe.py --scratch DIR
+
+Measured teardown: not measured yet (K 30 s, CAP 900 s); the probe refuses while the live edge holds
+127.0.0.1:8081 (#592), so no cut run exists.
 
 Needs an existing, empty --scratch directory, and `uv`: it runs `uv sync` in the copy.
 """
