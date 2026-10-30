@@ -1,8 +1,0 @@
-claim_id = "6e847f0453d644e5b445e055c907156c"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "a1a0b7bfe76d82d77ef35c5a999c7b7e5f937c39"
-branch = "claude/issue-771-a5-2b-realm-skipped-row"
-scope = ["docs/design/hal-output.html", "docs/keycloak.md", "src/hal/stack/apply.py", "src/hal/stack/plan.py", "src/hal/stack/realm/reconcile.py", "src/hal/stack/result_rows.py", "tests/test_stack_apply_yes.py", "tests/test_stack_realm_reconcile.py", "tests/test_stack_result_rows.py"]
-opened_commit = "78f31ae4d7f95db5587971170d1c87456a1cab6b"
-whole_reason = "The typed skip removes the failure text E9 prints today, so the skipped row, the E9 decider, their tests and the doc and picture pins of that text land in one commit."
