@@ -1,7 +1,0 @@
-claim_id = "f821d79e00d0417891c2465a61f22cd7"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "225348b48639c643b58ca3fb4cad2a09fbb37606"
-branch = "claude/issue-744-run-sh-fleet-lock-cut-by-container"
-scope = ["docs/home.md", "scripts/system-proof/run.sh", "tests/old_names_baseline.toml"]
-opened_commit = "024eeb227ebccab8893d574325a43389ad012458"
