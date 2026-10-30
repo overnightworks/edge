@@ -573,10 +573,10 @@ def test_the_fake_records_every_method_the_read_only_test_judges(
 ) -> None:
     """Rule 1: a method the fake has no handler for still reaches its request log."""
     path = "/admin/realms/hallucinai/clients"
-    request = urllib.request.Request(keycloak.url + path, method=method)
+    request = urllib.request.Request(keycloak.url + path, method=method)  # noqa: S310 - the URL is that of the loopback test server
 
     with pytest.raises(urllib.error.HTTPError):
-        urllib.request.urlopen(request)
+        urllib.request.urlopen(request)  # noqa: S310 - the URL is that of the loopback test server
 
     assert keycloak.requests == [(method, path)]
 

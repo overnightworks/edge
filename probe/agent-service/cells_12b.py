@@ -8,10 +8,12 @@ run on the default model through the run client (run_client.py), whose call of `
 prints only verdicts, counts and role names. An agent runs it only with a dummy login made with
 `mktemp`.
 
-    python3 probe/agent-service/cells_12b.py --login-directory DIR
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
+        python3 probe/agent-service/cells_12b.py --login-directory DIR
 
-The command holds /tmp/probe-stack.lock itself, so it runs without an outer flock. Exit 0: every
-cell held, 1: a cell failed or was not driven, 2: the arguments were refused.
+Measured teardown: 11 s (K 50 s, CAP 1780 s).
+
+Exit 0: every cell held, 1: a cell failed or was not driven, 2: the arguments were refused.
 """
 
 from __future__ import annotations
@@ -62,7 +64,6 @@ from login_checks import (
     gating,
     guarded,
     mount_line,
-    probe_lock,
     read_client_output,
     read_login,
     run_login,
@@ -78,7 +79,8 @@ from service_log import BOOTSTRAP, classify_log
 from smoke import Tokens
 from unit import SERVICE, ServiceConditions, login_directory
 
-PROBE_LOCK = Path("/tmp/probe-stack.lock")  # NOSONAR(S5443) the lock every probe run shares  # noqa: S108 - the machine-wide lock every probe run shares
+from hal.output import write_line
+
 COMMAND_SECONDS = 1500  # the alarm: the drive stops here and the teardown still has time to run
 GATEWAY = "agent-egress"
 STARTED = (GATEWAY, ISSUER_SERVICE, APP_SERVICE, SERVICE)
@@ -190,15 +192,17 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             *SERVICE_COMMAND,
         ]
 
-    def run(self, command, *, stdin=None, check=True, timeout=300):
-        result = super().run(command, stdin=stdin, check=False, timeout=timeout)
+    def run(self, command, *, stdin=None, check=True, timeout=300, own_session=False):
+        result = super().run(
+            command, stdin=stdin, check=False, timeout=timeout, own_session=own_session
+        )
         self.texts.append(result.stdout + result.stderr)
         if check and result.returncode != 0:
             raise failed_command(command, result.returncode)
         return result
 
     def hold(self, cell: str, how: str) -> None:
-        print(f"{cell} held", flush=True)
+        write_line(f"{cell} held", flush=True)
         self.held.append(cell)
 
     def __enter__(self) -> LoginProbe:
@@ -217,7 +221,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
 
     def verdict(self, cell: str, evidence: str) -> None:
         """A cell of the command's own: its evidence is built from counts and role names."""
-        print(f"{cell} held: {evidence}", flush=True)
+        write_line(f"{cell} held: {evidence}", flush=True)
         self.held.append(cell)
 
     # --- the cells ----------------------------------------------------------------------------
@@ -259,7 +263,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         mounts = census.mounts()
         roles = {census.names.show_mount(census.working_root): "working root"}
         for shown, mount in sorted(mounts.items()):
-            print(mount_line(roles.get(shown, shown), mount), flush=True)
+            write_line(mount_line(roles.get(shown, shown), mount), flush=True)
         working_root = mounts.get(census.names.show_mount(census.working_root))
         self.working_root_entries = None if working_root is None else len(working_root.listings)
         for verdict in s00_verdicts(mounts):
@@ -271,7 +275,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             return
         failures = self.failed if verdict.outcome is Outcome.FAILED else self.not_driven
         failures.append(verdict.cell)
-        print(f"{verdict.cell} {verdict.outcome}: {verdict.evidence}", flush=True)
+        write_line(f"{verdict.cell} {verdict.outcome}: {verdict.evidence}", flush=True)
 
     def cell_b9(self) -> None:
         """R2: one run on the default model that calls `step` and is closed at t0. B9 (a)-(e) are
@@ -355,7 +359,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             self.working_root_entries,
         ))  # fmt: skip
         if result.timing:
-            print(result.timing, flush=True)
+            write_line(result.timing, flush=True)
         return result.verdicts
 
     def wait_for_start(self, client: ClientProcess) -> bool:
@@ -391,7 +395,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             f"group seen {watched.group_seen}, tree seen {watched.tree_seen}, "
             f"{watched.samples} samples"
         )  # fmt: skip
-        print(
+        write_line(
             f"R2 observed: the app logged {handshake} handshake lines and {listings} listings; "
             f"the client printed {len(report.events)} events, {report.unmatched} lines outside "
             f"its vocabulary; watch: {seen}",
@@ -413,33 +417,27 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
         )
         if self.gate.hits or in_log or in_texts:
             self.failed.append("S1")
-            print(f"S1 FAILED: {counts}", flush=True)
+            write_line(f"S1 FAILED: {counts}", flush=True)
         else:
             self.verdict("S1", counts)
 
 
-def run_command(
-    login: Login, lock: Path = PROBE_LOCK, environment: Mapping[str, str] = os.environ
-) -> int:
-    def announce() -> None:
-        print("waiting for the probe lock", flush=True)
-
+def run_command(login: Login, environment: Mapping[str, str] = os.environ) -> int:
     try:
-        parent = scratch_parent(login, lock, environment)
-        with probe_lock(lock, announce):
-            start_time_bound(COMMAND_SECONDS)
-            scratch = Path(tempfile.mkdtemp(prefix="login-probe-", dir=parent)).resolve()
-            try:
-                with gating([login.token]) as gate:
-                    return run_login(lambda: LoginProbe(scratch, login, gate))
-            finally:
-                shutil.rmtree(scratch, ignore_errors=True)  # throwaway material only
+        parent = scratch_parent(login, environment)
+        start_time_bound(COMMAND_SECONDS)
+        scratch = Path(tempfile.mkdtemp(prefix="login-probe-", dir=parent)).resolve()
+        try:
+            with gating([login.token]) as gate:
+                return run_login(lambda: LoginProbe(scratch, login, gate))
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)  # throwaway material only
     except KeyboardInterrupt:
-        print("interrupted", flush=True)
+        write_line("interrupted", flush=True)
         return 1
-    except Exception as problem:  # the lock, the scratch directory: nothing but the type is printed
-        print(describe("setup", problem), flush=True)
-        print("PROBE FAILED: setup", flush=True)
+    except Exception as problem:  # the scratch directory: nothing but the type is printed
+        write_line(describe("setup", problem), flush=True)
+        write_line("PROBE FAILED: setup", flush=True)
         return 1
 
 
@@ -451,7 +449,7 @@ def main(
     try:
         login = read_login(parser.parse_args(arguments).login_directory)
     except LoginFailed as refusal:
-        print(f"PROBE FAILED: {refusal}", flush=True)
+        write_line(f"PROBE FAILED: {refusal}", flush=True)
         return 1
     return start(login)
 

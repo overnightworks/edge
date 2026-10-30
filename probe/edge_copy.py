@@ -3,7 +3,7 @@ it, at a pty or without a terminal (#52 proof 10, #60 proof 11, #61 probe c).
 
 A probe works in the copy so that it flips `fleet.yaml` and lets `hal` write `dynamic/` and the
 state under its throwaway HOME without ever touching the checkout it runs from. The copy is the
-live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `hal apply`
+live checkout of that HOME, `<HOME>/srv/hal` with a `.git` directory, so that its `hal apply`
 runs there and never against the operator's HOME (#79 rule 3). It is a clean `main` with a bare
 remote `<scratch>/origin.git`, as `hal apply --local` requires (its ignored `.env` is written by
 that apply, #136); a probe publishes every edit it makes there (commit and push) before it
@@ -366,6 +366,13 @@ def _raise_interrupt(_signal: int, _frame: object) -> None:
     raise KeyboardInterrupt
 
 
+def begin_teardown() -> None:
+    """From here an alarm or a SIGTERM cannot abort the teardown and leave the stack, and with it
+    the operator's login bind, standing."""
+    signal.alarm(0)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+
+
 def run_probe(
     scratch: Path,
     create: Callable[[Path], Any],
@@ -387,7 +394,7 @@ def run_probe(
     probe = create(scratch)
     signal.signal(signal.SIGTERM, _raise_interrupt)
     exit_code = prove(probe)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    begin_teardown()
     try:
         probe.teardown()
     except (ProbeFailed, subprocess.TimeoutExpired) as failure:

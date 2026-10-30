@@ -10,7 +10,6 @@ a count, a role name, a docker verb with an exit code, or a fixed reason from `R
 
 from __future__ import annotations
 
-import fcntl
 import os
 import signal
 import stat
@@ -24,6 +23,7 @@ from pathlib import Path
 from typing import NamedTuple, Protocol, TextIO
 
 from census_client import Mount, Watched
+from edge_copy import begin_teardown
 from egress import ProbeFailed
 from fake_app import HELD_LINE, RELEASED_PREFIX
 from image import ProbeFailed as ImageProbeFailed
@@ -38,6 +38,8 @@ from run_client import (
 )
 from service_log import LogClasses
 from tree_census import Skip
+
+from hal.output import write_line
 
 TOKEN_LIMIT = 16 * 1024
 TOKEN_FILE = "token"  # noqa: S105 - a name or message text and no credential
@@ -69,7 +71,6 @@ class Refusal(StrEnum):
     WRITABLE_ROOT = "the service's root file system is not read-only"
     LOG_DRIVER = "a started service does not log through the local driver"
     SCRATCH_IN_LOGIN = "the scratch directory would lie inside the login directory"
-    LOCK_IN_LOGIN = "the probe lock would be created inside the login directory"
 
 
 class LoginFailed(ProbeFailed):
@@ -208,7 +209,7 @@ def guarded(stage: str, step: Callable[[], object], failed: list[str]) -> bool:
         step()
     # an exception's text may carry a secret, so only `describe` speaks of it
     except Exception as problem:
-        print(describe(stage, problem), flush=True)
+        write_line(describe(stage, problem), flush=True)
         failed.append(stage)
         return False
     return True
@@ -234,12 +235,12 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
         try:
             return guarded(name, step, stopped)
         except KeyboardInterrupt:
-            print("interrupted", flush=True)
+            write_line("interrupted", flush=True)
             stopped.append(name)
             return False
 
     if not stage("setup", lambda: probe.append(open_probe())):
-        print("PROBE FAILED: setup", flush=True)
+        write_line("PROBE FAILED: setup", flush=True)
         return 1
     run = probe[0]
     entered = stage("setup", run.__enter__)  # a failed enter tears itself down
@@ -254,28 +255,18 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
             *(f"failed {name}" for name in (*stopped, *run.failed)),
             *(f"not driven {name}" for name in run.not_driven),
         ]
-        print(f"PROBE FAILED: held {', '.join(run.held)}; {'; '.join(problems)}", flush=True)
+        write_line(f"PROBE FAILED: held {', '.join(run.held)}; {'; '.join(problems)}", flush=True)
         return 1
-    print(f"PROBE PASSED: held {', '.join(run.held)}", flush=True)
+    write_line(f"PROBE PASSED: held {', '.join(run.held)}", flush=True)
     return 0
 
 
-def begin_teardown() -> None:
-    """From here an alarm or a SIGTERM cannot abort the teardown and leave the stack, and with it
-    the operator's login bind, standing."""
-    signal.alarm(0)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
-
-
-def scratch_parent(login: Login, lock: Path, environment: Mapping[str, str]) -> Path:
-    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that, or the directory
-    the probe lock resolves to, lies in the login directory, because making either there would
-    write into it."""
+def scratch_parent(login: Login, environment: Mapping[str, str]) -> Path:
+    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that lies in the login
+    directory, because making the scratch directory there would write into it."""
     parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch  # noqa: S108 - the default scratch parent when TMPDIR is unset
     if login.directory in (parent, *parent.parents):
         raise LoginFailed(Refusal.SCRATCH_IN_LOGIN)
-    if login.directory in lock.resolve().parents:
-        raise LoginFailed(Refusal.LOCK_IN_LOGIN)
     return parent
 
 
@@ -288,19 +279,6 @@ def start_time_bound(seconds: int) -> None:
     signal.signal(signal.SIGALRM, stop_on_signal)
     signal.signal(signal.SIGTERM, stop_on_signal)
     signal.alarm(seconds)
-
-
-@contextmanager
-def probe_lock(path: Path, announce: Callable[[], None]) -> Iterator[None]:
-    """Holds the probe lock exclusively; `announce` runs once when another holder makes it wait.
-    The lock file is inherited by no child."""
-    with open(path, "a", encoding="utf-8") as handle:  # NOSONAR(S5443) the shared probe lock
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            announce()
-            fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
 
 
 def one_read_only_bind(volumes: Sequence[Mapping], target: str, source: Path) -> bool:

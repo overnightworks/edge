@@ -86,7 +86,7 @@ def test_structural_names_are_shown_as_they_are(names, name: str) -> None:
 
 
 def test_only_the_tmp_mount_is_shown_as_its_path(names) -> None:
-    assert names.show_mount("/tmp") == "/tmp" != names.show_mount("/tmp/inner")
+    assert names.show_mount("/tmp") == "/tmp" != names.show_mount("/tmp/inner")  # noqa: S108 - a mount point of the scenario and never a path this test creates
 
 
 def test_the_run_tree_is_shown_without_its_suffix(names) -> None:
@@ -155,19 +155,19 @@ MOUNTINFO = b"\n".join(
 
 def test_only_mounts_with_rw_in_their_own_options_are_writable(census: ModuleType) -> None:
     points = {mount.point for mount in census.writable_mounts(MOUNTINFO)}
-    assert points == {"/", "/tmp", "/tmp/inner", "/run/escaped space", "/dev/shm"}
+    assert points == {"/", "/tmp", "/tmp/inner", "/run/escaped space", "/dev/shm"}  # noqa: S108 - a mount point of the scenario and never a path this test creates
 
 
 def test_a_read_only_bind_over_rw_and_pseudo_filesystems_are_left_out(census: ModuleType) -> None:
     points = {mount.point for mount in census.writable_mounts(MOUNTINFO)}
-    assert not points & {"/tmp/ro dir", "/proc", "/sys/fs/cgroup"}
+    assert not points & {"/tmp/ro dir", "/proc", "/sys/fs/cgroup"}  # noqa: S108 - a mount point of the scenario and never a path this test creates
 
 
 def test_nested_mount_points_are_reported_relative_to_the_walked_mount(census: ModuleType) -> None:
     by_point = {mount.point: mount for mount in census.writable_mounts(MOUNTINFO)}
-    assert by_point["/tmp"].nested == {("ro dir",), ("inner",)}
+    assert by_point["/tmp"].nested == {("ro dir",), ("inner",)}  # noqa: S108 - a mount point of the scenario and never a path this test creates
     assert ("tmp", "inner") in by_point["/"].nested
-    assert by_point["/dev/shm"].nested == frozenset()
+    assert by_point["/dev/shm"].nested == frozenset()  # noqa: S108 - a mount point of the scenario and never a path this test creates
 
 
 def walk(census: ModuleType, names, root: Path, **rules):
@@ -765,7 +765,7 @@ def test_every_emitted_line_of_a_random_tree_is_in_the_closed_grammar(
 ) -> None:
     tree = tmp_path / "tree"
     tree.mkdir()
-    grow(random.Random(seed), tree, 0)
+    grow(random.Random(seed), tree, 0)  # noqa: S311 - a seeded generator of scenario trees and no secret
     serve_mountinfo(census, monkeypatch, tree)
     monkeypatch.setattr(census.os, "getuid", lambda: SOCKS_UID)
     census.emit(settings(tmp_path))

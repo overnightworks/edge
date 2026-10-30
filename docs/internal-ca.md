@@ -14,7 +14,7 @@ that the agent service calls over https only. It listens on `step-ca:9000` on th
 TLS-ALPN-01, and issues 24-hour certificates. `step-ca/ca.json` is its one configuration. `traefik-mcp`
 fetches its certificates from it.
 
-**Go live, once,** as the operator (uid 1000): pull `~/git/edge` and run `hal apply`
+**Go live, once,** as the operator (uid 1000): pull `~/srv/hal` and run `hal apply`
 (`services.step-ca.run.enabled: true` in `fleet.yaml`). `apply` makes no key material itself: while
 `step-ca/init --check` fails it asks separately and, on `yes`, runs `step-ca/init` in your terminal,
 re-checks, and shows a fresh plan.
@@ -65,8 +65,8 @@ name reaches the stand-in), no new host listener, renewal without restart, apply
 keeping both volumes, the emergency switch, setup asked by apply, the follower recreate rules). Its
 compose calls run from a copy of `compose.yaml` whose fixed `hal_*` network names are moved into the
 probe's project, and each checks first that it resolves no other network, so it never touches a live
-one. It takes about 13 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock`. Re-run it for every
-step-ca or Traefik upgrade.
+one. It takes about 13 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock` with a time cap (its
+docstring gives the command line). Re-run it for every step-ca or Traefik upgrade.
 
 ## agent-egress
 

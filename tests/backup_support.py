@@ -254,13 +254,13 @@ class Machine:
         if argv[-1] not in self.missing_images:
             return b"sha256:0"
         if not discard_stderr:
-            print(f"Error: No such image: {argv[-1]}", file=sys.stderr)
+            sys.stderr.write(f"Error: No such image: {argv[-1]}\n")
         return exit_with("docker image inspect", 1)
 
     def _pull(self, argv, *, discard_stderr, **_) -> bytes:
         if argv[-1] in self.unpullable_images:
             if not discard_stderr:
-                print("Error response from daemon: Get registry: dial tcp", file=sys.stderr)
+                sys.stderr.write("Error response from daemon: Get registry: dial tcp\n")
             return exit_with("docker pull", 1)
         self.missing_images.discard(argv[-1])
         return b"sha256:0\n"
@@ -317,7 +317,7 @@ class Machine:
 
     def _sqlite_failure(self, label: str, exit_code: int, discard_stderr: bool) -> bytes:
         if not discard_stderr:
-            print(self.sqlite_diagnostic, file=sys.stderr)
+            sys.stderr.write(f"{self.sqlite_diagnostic}\n")
         return exit_with(label, exit_code)
 
     def _scan(self, argv, **_) -> bytes:
@@ -459,7 +459,7 @@ class Machine:
         assert self.server_accepting, "pg_restore before pg_isready said the server accepts"
         if self.restore_diagnostic:
             if not discard_stderr:
-                print(self.restore_diagnostic, file=sys.stderr)
+                sys.stderr.write(f"{self.restore_diagnostic}\n")
             return exit_with("pg_restore", 1)
         if not stdin.read_bytes().startswith(b"PGDMP"):
             return exit_with("pg_restore", 1)
@@ -469,7 +469,7 @@ class Machine:
         assert self.server_accepting, "psql before pg_isready said the server accepts"
         sql = argv[argv.index("--command") + 1]
         answers = {
-            f'SELECT count(*) FROM "{table}"': f"{rows}\n".encode()
+            f'SELECT count(*) FROM "{table}"': f"{rows}\n".encode()  # noqa: S608 - the fake matches the SQL text its caller sends and runs none
             for table, rows in self.table_rows.items()
         } | {
             'SELECT "mp3_path" FROM "generations"'

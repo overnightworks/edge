@@ -34,7 +34,7 @@ x-isolated-bridge: &isolated-bridge
 
 services:
   socket-proxy:
-    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
+    image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848
     restart: unless-stopped
     user: "65534:${DOCKER_GID:?set DOCKER_GID to the host docker group id; `hal apply` writes .env with it}"
     read_only: true
@@ -259,7 +259,7 @@ services:
   realm-observer:
     # The probe's python pin (probe/keycloak/compose.probe.yaml); ci.yml checks the two are equal.
     # agent-probe below carries the same pin; Dependabot moves all of them in one pull.
-    image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    image: python:3.13.17-alpine@sha256:fa0bb0d0cd7c7d6cef30a69094d32ac2b71c7304c87c6107fec100e1ee4eda02
     profiles: [apply]
     logging: *one-off-logging
     user: "65534:65534"
@@ -460,7 +460,7 @@ services:
   # attachments, hardened like the service, listening on nothing.
   agent-probe:
     <<: *agent-attachments
-    image: python:3.13.16-alpine@sha256:2d9aefe2fef018a7eb2c13064c89c71929800fd2e5dccdbf52ea5da5bb8d929a
+    image: python:3.13.17-alpine@sha256:fa0bb0d0cd7c7d6cef30a69094d32ac2b71c7304c87c6107fec100e1ee4eda02
     profiles: [agent-probe]
     user: "65534:65534"
     read_only: true

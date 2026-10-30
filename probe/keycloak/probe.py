@@ -6,8 +6,8 @@ directory, stands in for Cloudflare by sending `Host: auth.<domain>` and
 the stack down, volumes included. Its Traefik entrypoints listen on free loopback ports it picks
 and its keycloak network takes a free /24, so it runs beside the live edge, which stays up.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
-        python3 probe/keycloak/probe.py --scratch DIR
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 540 \
+        python3 probe/keycloak/probe.py --scratch DIR  # teardown measured 11 s (K 50 s, CAP 540 s)
 
 `hold --scratch DIR` instead brings the same stack up without the proofs, prints one READY line
 and keeps it until SIGTERM, SIGINT or EOF on stdin (see probe/keycloak/README.md).
@@ -60,8 +60,8 @@ import device_grant_cell  # noqa: E402
 import logout_actions_cell  # noqa: E402
 from admin import AdminToken  # noqa: E402
 
-from hal.stack import compose as edge_compose  # noqa: E402
-from hal.stack import core, switches  # noqa: E402
+from hal.output import write_line  # noqa: E402
+from hal.stack import compose, core, switches  # noqa: E402
 from hal.stack.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
 from hal.stack.realm.observe import CLIENT, FLOW, GROUP, IMPORT_CHECKSUM, Inventory  # noqa: E402
 
@@ -652,7 +652,7 @@ class Stack:
             status = f"FAILED ({tail(result.stderr)})"
         else:
             status = f"FAILED (still there: {', '.join(left)})"
-        print(f"teardown: stack {PROJECT} {status}", flush=True)
+        write_line(f"teardown: stack {PROJECT} {status}", flush=True)
         return removed
 
     def see_env(self, container: str) -> None:
@@ -1027,8 +1027,8 @@ class RealmStepStand:
         )
 
     @property
-    def engine(self) -> edge_compose.Compose:
-        return edge_compose.Compose(self.run_compose, self.repository)
+    def engine(self) -> compose.Compose:
+        return compose.Compose(self.run_compose, self.repository)
 
     @property
     def configuration(self) -> dict[str, Any]:
@@ -1084,7 +1084,7 @@ class Probe:
     def say(self, line: str) -> None:
         """Prints a line of evidence and keeps it, so proof 7 can check it for secrets."""
         self.evidence.append(line)
-        print(line, flush=True)
+        write_line(line, flush=True)
 
     def held(self, proof: str, detail: str) -> None:
         self.say(f"PROOF {proof} held: {detail}")
@@ -2765,7 +2765,7 @@ def keep_stack_until_told_to_stop(ready_line: str) -> None:
     try:
         for stopping in STOP_SIGNALS:
             signal.signal(stopping, stop_holding)
-        print(ready_line, flush=True)
+        write_line(ready_line, flush=True)
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
     sys.stdin.read()
@@ -2818,9 +2818,9 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
         if stack is not None and not stack.down():
             failures.append(f"stack {PROJECT} is left behind; see probe/keycloak/README.md")
     if failures:
-        print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
+        write_line(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1
-    print(success_line, flush=True)
+    write_line(success_line, flush=True)
     return 0
 
 

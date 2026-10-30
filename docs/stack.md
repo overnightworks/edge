@@ -8,7 +8,7 @@ are German, the rest English.
 
 ## Running the stack
 
-`~/git/edge/bin/hal` runs `hal` of the checkout it lives in, from any directory: it syncs that
+`~/srv/hal/bin/hal` runs `hal` of the checkout it lives in, from any directory: it syncs that
 checkout's locked dependencies (`uv sync --locked`, never rewriting `uv.lock`) and then becomes
 `.venv/bin/hal`, from the same environment the systemd units call. A failed sync ends with exit 3
 and an `error:`/`next:` pair that names the checkout. It is not on PATH: the operator links it as
@@ -27,14 +27,15 @@ and `hal apply --local` writes it again.
   running. `hal apply` never starts one; it only names a stopped one. Keycloak and its database sit
   behind the compose profile `keycloak`, so a plain `up -d` starts neither; `hal apply` switches them
   by `services.keycloak.run.enabled` in `fleet.yaml`. `fleet.yaml` changes by pull request and reaches
-  the live checkout by `git -C ~/git/edge pull --ff-only` (until S2.4c); a local edit leaves the tree
+  the live checkout by `git -C ~/srv/hal pull --ff-only` (until S2.4c); a local edit leaves the tree
   dirty and the apply refuses it, naming the path.
 - **The legal unit.** `legal` (nginx, profile `legal`, switched by `services.legal.run.enabled`) serves
   the imprint, the privacy notice and the terms from `legal/built/` for `Host: <zone>` on `127.0.0.1:8081`; the stylesheet and appkit's
   tokens and fonts (`legal/assets/appkit-<version>/`, which `hal apply` writes from the installed appkit) answer under `/_rechtliches/`, every other path with 404. The catalog gives
   it the apex as its host, which the Cloudflare redirect leaves to it for the three pages, `/favicon.ico` (answered 404) and
   `/_rechtliches/` (`cloudflare.redirect.serve`). The pages are built by `hal apply` from `legal/frame` and `legal/sections` (the plan names each page that is
-  new or changes) and go live when it has written them; before the first build they answer 404. The stylesheet goes live once the live checkout is
+  new or changes) and go live when it has written them; every answer carries `Cache-Control: no-cache`, so a cache that
+  stored a page asks again before it shows it; before the first build they answer 404. The stylesheet goes live once the live checkout is
   pulled; a changed `legal/nginx/default.conf` needs the container restarted with `hal stop legal` and
   `hal start legal`.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host
@@ -136,7 +137,7 @@ die Container noch einmal und meldet nur, was er sieht. Ein zweiter Lauf meldet 
 "An" heisst: jeder Dienst der Einheit hat seinen Container laufen (oder ein Einmal-Dienst ist fertig),
 nicht, dass er gesund ist; die Gesundheit zeigt `docker compose ps`.
 
-**Wo und woraus er laeuft.** Nur aus dem Live-Checkout `~/git/edge` als Haupt-Worktree (sonst Exit 3
+**Wo und woraus er laeuft.** Nur aus dem Live-Checkout `~/srv/hal` als Haupt-Worktree (sonst Exit 3
 mit dem Grund), sonst haengte er das Live-Projekt an einen fremden Baum. Dann, jeweils mit nur der
 ersten verweigernden Zeile: kein anderes `hal apply --local` laeuft (Exit 3; `stop` und `start`
 warten nie darauf), HEAD steht auf `main` (Exit 3), der Baum ist sauber (Exit 3, jeder geaenderte oder
@@ -151,7 +152,7 @@ schreibt nur Objekte, `FETCH_HEAD` und `origin/main`; HEAD, Index und Baum bleib
 Netz, kein `origin`, Anmeldung, 120 s), oder hat der Checkout Commits, die `origin/main` fehlen, oder
 ist er daneben gewachsen, endet es mit Exit 3 und aendert nichts. Der Checkout steht danach als eine Zeile: `checkout current` oder `checkout N behind`
 mit dem Merge-Befehl darunter. Der Plan wendet HEAD an, nie die wartenden Commits; die bringt der Betreiber
-bis S2.4c mit `git -C ~/git/edge merge --ff-only <Hash>` selbst herein und ruft den Apply noch
+bis S2.4c mit `git -C ~/srv/hal merge --ff-only <Hash>` selbst herein und ruft den Apply noch
 einmal auf.
 
 **Der Kern und die Follower.** Welche Dienste `hal apply --local` neu erstellt, in welcher
@@ -194,6 +195,8 @@ Publish-Phase, deren 2 dort zu 1 wird. Dasselbe `3` kommt vom `uv sync` des Star
 Die Befehle sind `hal stop|start <Einheit>` und `hal offline|online`; hinter ihnen laufen
 `hal stop|start <Einheit>` und `hal offline|online`. Welche Zustaende es gibt und wer wann darf: Zustandstabelle in
 [architecture.md](architecture.md), Abschnitt 8. Hier steht, was die Befehle halten.
+`hal stop` und `hal start` laufen ueber den installierten Live-Starter (`~/.local/bin/hal`, der auf
+`~/srv/hal/bin/hal` zeigt).
 
 **Pro Einheit.** `hal stop <Einheit>` schreibt zuerst den Schalter, dann
 `docker compose --profile <Einheit> stop` fuer genau die Dienste der Einheit, liest die Container noch

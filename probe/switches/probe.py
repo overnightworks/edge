@@ -43,8 +43,11 @@ copy then runs the shown `git merge --ff-only <sha>` and is current again.
 Every transcript line names its item. It never touches the live stack
 or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=30 900 \\
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 900 \\
         python3 probe/switches/probe.py --scratch DIR
+
+Measured teardown: not measured yet (K 30 s, CAP 900 s); the probe refuses while the live edge holds
+127.0.0.1:8081 (#592), so no cut run exists.
 
 Needs an existing, empty --scratch directory, and `uv`: it runs `uv sync` in the copy.
 """
@@ -72,6 +75,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own facts; its modules need only
 import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
+from hal.output import write_line  # noqa: E402
 from hal.stack import checkout, compose, core, tunnel  # noqa: E402
 from hal.stack.plan_rows import PlanEvent  # noqa: E402
 
@@ -284,7 +288,9 @@ class Probe:
 
     def cell_p7_the_real_bind_shape(self) -> None:
         resolved = json.loads(self.compose("--profile", "*", "config", "--format", "json").stdout)
-        print(f"#85 P7 traefik volumes: {json.dumps(resolved['services']['traefik']['volumes'])}")
+        write_line(
+            f"#85 P7 traefik volumes: {json.dumps(resolved['services']['traefik']['volumes'])}"
+        )
         derived = {
             name: core.file_binds(resolved["services"][name], self.copy)
             for name in core.core_services(resolved)
@@ -293,7 +299,7 @@ class Probe:
             derived == {"socket-proxy": (), "traefik": (self.copy / TRAEFIK_FILE,)},
             f"the core's file binds are {derived}",
         )
-        print("#85 P7 held: the core's only file bind is the copy's traefik.yml, as derived")
+        write_line("#85 P7 held: the core's only file bind is the copy's traefik.yml, as derived")
 
     def cell_p1_first_apply(self) -> None:
         before = self.container_ids()["traefik"]
@@ -304,14 +310,14 @@ class Probe:
         )
         expect(self.container_ids()["traefik"] != before, TRAEFIK_KEPT)
         expect(TRAEFIK_FILE in self.record.read().entries.get("traefik", {}), "no applied record")
-        print("#85 P1 held: the first apply recreated traefik and wrote applied.json")
+        write_line("#85 P1 held: the first apply recreated traefik and wrote applied.json")
 
     def cell_p2_second_apply(self) -> None:
         before = self.container_ids()
         out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(NOTHING_TO_CHANGE in out, f"the second apply said: {out[-200:]}")
         expect(self.container_ids() == before, "the second apply replaced a container")
-        print("#85 P2 held: a second apply changes nothing and keeps every container id")
+        write_line("#85 P2 held: a second apply changes nothing and keeps every container id")
 
     def cell_95_p2_an_unpublished_edit(self) -> None:
         """#95 P2: an edit that was never published leaves the copy dirty; apply names it and
@@ -329,7 +335,9 @@ class Probe:
             f"apply with an unpublished edit said: {out[-200:]}",
         )
         expect(self.container_ids()["traefik"] == before, "an unpublished edit recreated traefik")
-        print(f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 3, traefik kept")
+        write_line(
+            f"#95 P2 held: an unpublished {TRAEFIK_FILE} edit is named, exit 3, traefik kept"
+        )
 
     def cell_98_p1_commits_waiting(self) -> None:
         """#98 P1: a commit pushed from a work clone waits on origin; the copy's apply shows it as
@@ -351,7 +359,7 @@ class Probe:
         edge_copy.git(self.copy, *merge[1:])
         current = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(f"✓ checkout current {waiting}" in current, f"after the merge: {current[-200:]}")
-        print(
+        write_line(
             f"#98 P1 held: {waiting} waiting shown as one behind row, HEAD {head} planned and kept"
         )
 
@@ -366,7 +374,7 @@ class Probe:
         )
         expect(self.container_ids()["traefik"] != before, TRAEFIK_KEPT)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print(f"#85 P3 held: the edit recreated traefik, and {HOST} answers through it")
+        write_line(f"#85 P3 held: the edit recreated traefik, and {HOST} answers through it")
 
     def cell_p4_barrier_proven_after_the_recreate(self) -> None:
         self.hal("stop", UNIT, terminal=False)
@@ -380,7 +388,9 @@ class Probe:
         )
         expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after the recreate")
         expect(self.hello_state() == "running", "hello stopped across the recreate")
-        print("#85 P4 held: after the recreate the barrier answered 404, before the success line")
+        write_line(
+            "#85 P4 held: after the recreate the barrier answered 404, before the success line"
+        )
 
     def cell_p5_stopped_traefik(self) -> None:
         self.compose("stop", "traefik")
@@ -394,7 +404,9 @@ class Probe:
         )
         expect(self.traefik_state() == "exited", f"traefik is {self.traefik_state()}")
         expect(self.record.read().entries == recorded, "the record changed")
-        print("#85 P5 held: a stopped traefik is named, stays exited, and the record stays old")
+        write_line(
+            "#85 P5 held: a stopped traefik is named, stays exited, and the record stays old"
+        )
 
     def cell_p6_what_survives(self) -> None:
         volumes = self.volumes()
@@ -404,7 +416,7 @@ class Probe:
         self.compose("up", "--detach", "traefik")
         self.wait_until("the barrier answering", self.answers_the_barrier)
         self.hal("start", UNIT, terminal=True)
-        print("#85 P6 held: the named volumes, the marker and the barrier survived P3-P5")
+        write_line("#85 P6 held: the named volumes, the marker and the barrier survived P3-P5")
 
     def cell_q1_the_definition_fact(self, after: str, must_match: tuple[str, ...]) -> None:
         listed = self.compose("ps", "--all", "--format", "json").stdout.decode()
@@ -412,22 +424,22 @@ class Probe:
             container = json.loads(line)
             if container["Service"] in CORE:
                 fields = {key: container[key] for key in ("Service", "Image", "Labels")}
-                print(f"#87 Q1 {after}, ps: {json.dumps(fields)}")
+                write_line(f"#87 Q1 {after}, ps: {json.dumps(fields)}")
         hashes = self.compose("--profile", "*", "config", "--hash", ",".join(CORE)).stdout
-        print(f"#87 Q1 {after}, config --hash: {hashes.decode().strip()!r}")
+        write_line(f"#87 Q1 {after}, config --hash: {hashes.decode().strip()!r}")
         engine = self.engine()
         read = engine.config_hashes(CORE)
         labels = {c.service: c.config_hash for c in engine.containers() if c.service in CORE}
         for service in CORE:
             same = labels[service] == read[service]
-            print(f"#87 Q1 {after}: {service} label == config --hash: {same}")
+            write_line(f"#87 Q1 {after}: {service} label == config --hash: {same}")
         for service in must_match:
             expect(
                 labels[service] == read[service],
                 f"#87 rule 8: {service}'s label differs from config --hash {after}; stop the lane",
             )
         required = ", ".join(must_match) or "none required"
-        print(f"#87 Q1 held {after}: printed; label == hash for {required}")
+        write_line(f"#87 Q1 held {after}: printed; label == hash for {required}")
 
     def recreate_socket_proxy_for_q1(self) -> None:
         """Edge's own recreate of socket-proxy, which also recreates traefik, so Q1 can compare
@@ -462,7 +474,9 @@ class Probe:
             "traefik was created before socket-proxy",
         )
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print(f"#87 Q2 held: socket-proxy, then traefik recreated; {HOST} answers through Traefik")
+        write_line(
+            f"#87 Q2 held: socket-proxy, then traefik recreated; {HOST} answers through Traefik"
+        )
 
     def cell_q3_traefik_definition(self) -> None:
         self.label_core_service("traefik", "q3")
@@ -476,14 +490,16 @@ class Probe:
         expect(after["socket-proxy"] == before["socket-proxy"], "socket-proxy was recreated")
         expect(after["traefik"] != before["traefik"], TRAEFIK_KEPT)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print("#87 Q3 held: a traefik label recreated traefik alone; socket-proxy's id unchanged")
+        write_line(
+            "#87 Q3 held: a traefik label recreated traefik alone; socket-proxy's id unchanged"
+        )
 
     def cell_q4_second_run(self) -> None:
         before = self.container_ids()
         out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         expect(NOTHING_TO_CHANGE in out, f"the second apply said: {out[-200:]}")
         expect(self.container_ids() == before, "the second apply replaced a container")
-        print("#87 Q4 held: a second apply changes nothing and keeps every container id")
+        write_line("#87 Q4 held: a second apply changes nothing and keeps every container id")
 
     def cell_q5_barrier_after_a_socket_proxy_recreate(self) -> None:
         self.hal("stop", UNIT, terminal=False)
@@ -499,7 +515,9 @@ class Probe:
         )
         expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after the recreate")
         expect(self.hello_state() == "running", "hello stopped across the recreate")
-        print("#87 Q5 held: the barrier answered 404 with X-Edge-Barrier before the success line")
+        write_line(
+            "#87 Q5 held: the barrier answered 404 with X-Edge-Barrier before the success line"
+        )
 
     def cell_q6_what_survives(self) -> None:
         volumes = self.volumes()
@@ -508,7 +526,7 @@ class Probe:
         expect(self.marker.is_file() and self.barrier.is_file(), "the marker or barrier is gone")
         self.hal("start", UNIT, terminal=True)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print(
+        write_line(
             "#87 Q6 held: socket-proxy-run, the named volumes, the marker and the barrier survived"
         )
 
@@ -521,12 +539,14 @@ class Probe:
 
     def cell_z1_the_image_fact(self) -> None:
         for service, (configured, running) in self.images_of_the_unit().items():
-            print(f"#91 Z1 {service}: config image {configured!r}, ps Image {running!r}")
+            write_line(f"#91 Z1 {service}: config image {configured!r}, ps Image {running!r}")
             expect(
                 configured is not None and configured == running,
                 f"#91 rule 5: {service}'s ps Image is not its resolved image; stop the lane",
             )
-        print("#91 Z1 held: after edge's own start, resolved image == ps Image of both services")
+        write_line(
+            "#91 Z1 held: after edge's own start, resolved image == ps Image of both services"
+        )
 
     def respell_hello_image(self) -> None:
         """Respell hello's image and name hello-mcp's as before, without their shared anchor."""
@@ -541,14 +561,14 @@ class Probe:
         out = self.hal("apply", "--local", terminal=True, typed=b"no\n")
         named = f"compose.yaml {RESPELLED_WHOAMI.split('@')[0]}@"
         lines = [line for line in out.splitlines() if OLD_IMAGE in line and "hello" in line]
-        print(f"#91 Z2 the line: {lines!r}")
+        write_line(f"#91 Z2 the line: {lines!r}")
         expect(
             len(lines) == 1 and named in lines[0] and NOTHING_TO_CHANGE in out,
             f"apply after the respelled image said: {out[-400:]}",
         )
         expect("Type" not in out, "the kept image asked a question")
         expect(self.container_ids() == before, "the kept image replaced a container")
-        print("#91 Z2 held: hello and both images named; nothing to change; the same ids")
+        write_line("#91 Z2 held: hello and both images named; nothing to change; the same ids")
 
     def cell_z3_reverted(self) -> None:
         (self.copy / COMPOSE_FILE).write_text(self.compose_before_z2)
@@ -560,11 +580,11 @@ class Probe:
             f"apply after the revert said: {out[-400:]}",
         )
         expect(self.container_ids() == before, "the revert replaced a container")
-        print("#91 Z3 held: reverted, no image is named; nothing to change; the same ids")
+        write_line("#91 Z3 held: reverted, no image is named; nothing to change; the same ids")
 
     def cell_1_control(self) -> None:
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print(f"#61 proof 1 held: {HOST} answers whoami without a switch")
+        write_line(f"#61 proof 1 held: {HOST} answers whoami without a switch")
 
     def cell_2_stop(self) -> None:
         self.hal("stop", UNIT, terminal=False)
@@ -572,20 +592,22 @@ class Probe:
         expect(self.marker.is_file(), "stop wrote no marker")
         expect(self.answers_the_barrier(), f"{HOST} answers {self.ask()} after stop")
         expect(self.hello_state() == "exited", f"hello is {self.hello_state()} after stop")
-        print("#61 proof 2 held: stop exits 0, wrote the barrier and the marker, 404, hello exited")
+        write_line(
+            "#61 proof 2 held: stop exits 0, wrote the barrier and the marker, 404, hello exited"
+        )
 
     def cell_3_up_behind_the_barrier(self) -> None:
         self.compose("--profile", UNIT, "up", "--detach", "hello")
         asked = self.stays_behind_the_barrier(3)
         expect(self.hello_state() == "running", "hello is not running")
-        print(f"#61 proof 3 held: hello up behind the barrier, {asked} requests answered 404")
+        write_line(f"#61 proof 3 held: hello up behind the barrier, {asked} requests answered 404")
 
     def cell_4_traefik_restart(self) -> None:
         expect(self.hello_state() == "running", "hello is not running before the restart")
         self.compose("restart", "traefik")
         asked = self.stays_behind_the_barrier(BEHIND_BARRIER_SECONDS, traefik_starting=True)
         expect(self.hello_state() == "running", "hello stopped across the restart")
-        print(
+        write_line(
             f"#61 proof 4 held: after restarting traefik {asked} requests in 10 s all answered 404"
         )
 
@@ -596,7 +618,7 @@ class Probe:
         )
         expect(self.hello_state() == "running", "apply stopped hello")
         expect(self.barrier.is_file() and self.answers_the_barrier(), "apply lifted the barrier")
-        print(
+        write_line(
             "#61 proof 5 held: apply says stays stopped / nothing to change; barrier and hello stay"
         )
 
@@ -605,7 +627,7 @@ class Probe:
         expect(not self.barrier.exists(), "start left the barrier")
         expect(not self.marker.exists(), "start left the marker")
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print(f"#61 proof 6 held: start removed barrier and marker; {HOST} answers whoami")
+        write_line(f"#61 proof 6 held: start removed barrier and marker; {HOST} answers whoami")
 
     def cell_8_global_stop(self) -> None:
         throwaway = ThrowawayTunnel(self.home)
@@ -637,7 +659,7 @@ class Probe:
             self.environment.pop("EDGE_TUNNEL_UNIT")
             self.environment.pop("EDGE_TUNNEL_MANAGER")
         self.hal("start", UNIT, terminal=True)
-        print(
+        write_line(
             "#70 proof 8 held: offline left the throwaway unit inactive with the marker, and "
             "its boot drop-in skipped a start; online proved the unit barrier, reopened it "
             "and cleared only the marker"
@@ -653,7 +675,7 @@ class Probe:
         self.wait_until("the barrier answering", self.answers_the_barrier)
         self.hal("start", UNIT, terminal=True)
         self.wait_until(HELLO_ANSWERING, self.serves_whoami)
-        print("#61 proof 7 held: traefik down: stop exits 3 partial, both kept; start reopens")
+        write_line("#61 proof 7 held: traefik down: stop exits 3 partial, both kept; start reopens")
 
 
 class ThrowawayTunnel:
@@ -742,10 +764,10 @@ def prove(probe: Probe) -> int:
         probe.cell_z2_a_respelled_image()
         probe.cell_z3_reverted()
     except (ProbeFailed, subprocess.TimeoutExpired, OSError) as failure:
-        print(f"PROBE FAILED: {failure}")
+        write_line(f"PROBE FAILED: {failure}")
         return 1
     except KeyboardInterrupt:
-        print("PROBE FAILED: interrupted")
+        write_line("PROBE FAILED: interrupted")
         return 1
     return 0
 

@@ -6,7 +6,10 @@ and answers an unauthenticated `POST /runs` with 401, the image holds no login, 
 packages are exactly the lock's, and a dropped configuration field stops the start. Run it from
 the repository root, in the probe-stack lock:
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 python3 probe/agent-service/image.py
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
+        python3 probe/agent-service/image.py
+
+Measured teardown: 1 s (K 50 s, CAP 1780 s).
 
 Every image and container it makes carries the probe-only name below and is removed at the end.
 Docker's transcripts go to `--output`, an existing directory (default: a new temporary one,
@@ -37,6 +40,8 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
 
 from egress import scratch_directory  # noqa: E402
+
+from hal.output import Stream, write_line  # noqa: E402
 
 NO_NETWORK = "--network=none"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
@@ -463,28 +468,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     signal.signal(signal.SIGTERM, interrupt)
     output = arguments.output or Path(tempfile.mkdtemp(prefix="agent-image-probe-"))
-    print(f"transcripts: {output}")
+    write_line(f"transcripts: {output}")
     with tempfile.TemporaryDirectory(prefix="agent-image-probe-") as scratch_name:
         scratch = Path(scratch_name)
         try:
             cell_i1(output)
-            print("I1 held: built without cache, every download checked, pip check passed")
+            write_line("I1 held: built without cache, every download checked, pip check passed")
             cell_i2(output, scratch)
-            print("I2 held: an altered CLI hash and an altered wheel hash both fail the build")
+            write_line("I2 held: an altered CLI hash and an altered wheel hash both fail the build")
             cell_i3(output)
-            print("I3 held: an absent CLI version fails at curl --fail")
+            write_line("I3 held: an absent CLI version fails at curl --fail")
             cell_i4()
-            print(f"I4 held: uid 1000, read-only root, {CLI_REPORT}, glibc on x86_64")
+            write_line(f"I4 held: uid 1000, read-only root, {CLI_REPORT}, glibc on x86_64")
             cell_i5(output, scratch)
-            print("I5 held: the entrypoint listened after its version probe; POST /runs was 401")
+            write_line(
+                "I5 held: the entrypoint listened after its version probe; POST /runs was 401"
+            )
             cell_i6()
-            print("I6 held: no managed settings, no ~/.claude, no token")
+            write_line("I6 held: no managed settings, no ~/.claude, no token")
             cell_i7()
-            print("I7 held: pip freeze is exactly the lock's names and versions")
+            write_line("I7 held: pip freeze is exactly the lock's names and versions")
             cell_i8(scratch)
-            print("I8 held: a leftover of the old configuration shape stops the start")
+            write_line("I8 held: a leftover of the old configuration shape stops the start")
         except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as failure:
-            print(f"FAILED {type(failure).__name__}: {failure}", file=sys.stderr)
+            write_line(f"FAILED {type(failure).__name__}: {failure}", stream=Stream.STDERR)
             return 1
         finally:
             remove_probe_artifacts()

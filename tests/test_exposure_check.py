@@ -122,6 +122,7 @@ def finding(
     }
 
 
+ALL_IPV4 = "0.0.0.0"  # noqa: S104 - the address of a publication or listener open to every IPv4 interface
 ROUTED = {"traefik.enable": "true"}
 
 
@@ -160,8 +161,8 @@ HOSTS = {
     "allow-listed mDNS port": Host(ss=SS_AVAHI, allow_list=ALLOW_AVAHI),
     "allow-listed owner on a random port": Host(ss=SS_CLOUDFLARED, allow_list=ALLOW_CLOUDFLARED),
     "publication on 0.0.0.0": Host(
-        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
-        findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
+        docker=inspect_json(container("grafana", {"3000/tcp": [(ALL_IPV4, "3000")]})),
+        findings=[finding("publication-beyond-loopback", "grafana", "tcp", ALL_IPV4, 3000)],
     ),
     "publication on ::": Host(
         docker=inspect_json(container("dns", {"53/udp": [("::", "53")]})),
@@ -171,8 +172,8 @@ HOSTS = {
         docker=inspect_json(container("ranged", {"80/tcp": [("127.0.0.1", "8000-8010")]})),
     ),
     "publication on a 0.0.0.0 port range counts the one port Docker picks": Host(
-        docker=inspect_json(container("ranged", {"80/tcp": [("0.0.0.0", "8000-8010")]})),
-        findings=[finding("publication-beyond-loopback", "ranged", "tcp", "0.0.0.0", "8000-8010")],
+        docker=inspect_json(container("ranged", {"80/tcp": [(ALL_IPV4, "8000-8010")]})),
+        findings=[finding("publication-beyond-loopback", "ranged", "tcp", ALL_IPV4, "8000-8010")],
     ),
     "publish-all publishes every exposed port not bound explicitly": Host(
         docker=inspect_json(
@@ -199,19 +200,19 @@ HOSTS = {
         ss=SS_USER_SCOPE_NAMED_AVAHI,
         allow_list=ALLOW_AVAHI_UNIT,
         findings=[
-            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", "0.0.0.0", 5353)
+            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", ALL_IPV4, 5353)
         ],
     ),
     "tcp listener on 0.0.0.0 names its process": Host(
         ss=SS_LOOPBACK_ONLY + SS_SSHD,
-        findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+        findings=[finding("listener-beyond-loopback", "sshd", "tcp", ALL_IPV4, 22)],
     ),
     "one process on all three protocols comes once": Host(
         ss=SS_ONE_PROCESS_ON_THREE_PROTOCOLS,
         findings=[
-            finding("listener-beyond-loopback", "diameterd", "sctp", "0.0.0.0", 3868),
-            finding("listener-beyond-loopback", "diameterd", "tcp", "0.0.0.0", 3868),
-            finding("listener-beyond-loopback", "diameterd", "udp", "0.0.0.0", 3868),
+            finding("listener-beyond-loopback", "diameterd", "sctp", ALL_IPV4, 3868),
+            finding("listener-beyond-loopback", "diameterd", "tcp", ALL_IPV4, 3868),
+            finding("listener-beyond-loopback", "diameterd", "udp", ALL_IPV4, 3868),
         ],
     ),
     "udp listener on * names its systemd unit": Host(
@@ -234,18 +235,18 @@ HOSTS = {
         ss=SS_AVAHI,
         allow_list=ALLOW_AVAHI.replace('"udp"', '"tcp"'),
         findings=[
-            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", "0.0.0.0", 5353)
+            finding("listener-beyond-loopback", "avahi-daemon.service", "udp", ALL_IPV4, 5353)
         ],
     ),
     "allow-list entry for another owner does not permit": Host(
         ss=SS_SSHD,
         allow_list=ALLOW_CLOUDFLARED.replace('"udp"', '"tcp"'),
-        findings=[finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22)],
+        findings=[finding("listener-beyond-loopback", "sshd", "tcp", ALL_IPV4, 22)],
     ),
     "a 0.0.0.0 publication and its docker-proxy listener are one finding": Host(
-        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        docker=inspect_json(container("grafana", {"3000/tcp": [(ALL_IPV4, "3000")]})),
         ss=SS_DOCKER_PROXY_3000,
-        findings=[finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000)],
+        findings=[finding("publication-beyond-loopback", "grafana", "tcp", ALL_IPV4, 3000)],
     ),
     "a publication without host IP and docker-proxy on both families are one finding": Host(
         docker=inspect_json(container("hello", {"80/tcp": [("", "8080")]})),
@@ -253,21 +254,21 @@ HOSTS = {
         findings=[finding("publication-without-host-ip", "hello", "tcp", "", 8080)],
     ),
     "another process on a published port is its own finding": Host(
-        docker=inspect_json(container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]})),
+        docker=inspect_json(container("grafana", {"3000/tcp": [(ALL_IPV4, "3000")]})),
         ss=SS_SSHD.replace(":22 ", ":3000 "),
         findings=[
-            finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 3000),
-            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+            finding("listener-beyond-loopback", "sshd", "tcp", ALL_IPV4, 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", ALL_IPV4, 3000),
         ],
     ),
     "a stopped container's publication does not hide a listener on its port": Host(
         docker=inspect_json(
-            container("grafana", {"3000/tcp": [("0.0.0.0", "3000")]}, running=False)
+            container("grafana", {"3000/tcp": [(ALL_IPV4, "3000")]}, running=False)
         ),
         ss=SS_DOCKER_PROXY_3000,
         findings=[
-            finding("listener-beyond-loopback", "docker.service", "tcp", "0.0.0.0", 3000),
-            finding("publication-beyond-loopback", "grafana", "tcp", "0.0.0.0", 3000),
+            finding("listener-beyond-loopback", "docker.service", "tcp", ALL_IPV4, 3000),
+            finding("publication-beyond-loopback", "grafana", "tcp", ALL_IPV4, 3000),
         ],
     ),
     "routed container with a valid, unique edge.name": Host(
@@ -325,14 +326,14 @@ HOSTS = {
     ),
     "repeated sockets and mixed findings come once, in a stable order": Host(
         docker=inspect_json(
-            container("web", {"8080/tcp": [("0.0.0.0", "8080"), ("::", "8080")]}),
+            container("web", {"8080/tcp": [(ALL_IPV4, "8080"), ("::", "8080")]}),
             container("api", {"9000/tcp": [("", "9000")]}),
         ),
         ss=SS_CHROME_MDNS_TWICE + SS_SSHD,
         findings=[
             finding("listener-beyond-loopback", "chrome", "udp", "224.0.0.251", 5353),
-            finding("listener-beyond-loopback", "sshd", "tcp", "0.0.0.0", 22),
-            finding("publication-beyond-loopback", "web", "tcp", "0.0.0.0", 8080),
+            finding("listener-beyond-loopback", "sshd", "tcp", ALL_IPV4, 22),
+            finding("publication-beyond-loopback", "web", "tcp", ALL_IPV4, 8080),
             finding("publication-beyond-loopback", "web", "tcp", "::", 8080),
             finding("publication-without-host-ip", "api", "tcp", "", 9000),
         ],
