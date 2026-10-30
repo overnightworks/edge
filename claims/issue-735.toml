@@ -1,0 +1,8 @@
+claim_id = "e83bc6fd09024859902190233a302f7e"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "13f932e818c37494cd0339d781cf676038d9fcb4"
+branch = "claude/issue-735-s7e-step-ca-apps-probe-prints"
+scope = ["probe/apps/probe.py", "probe/apps/switched_off.py", "probe/step-ca/probe.py", "probe/step-ca/step_ca_names.py", "probe/step-ca/traefik_mcp_follows.py", "quality/baseline.toml"]
+opened_commit = "9748806ff4d1d45112816a5dd42bc1a152f567ac"
+whole_reason = "One rule, one sink and one mapping in two probes whose conversion is red until each makes room first; the move and the conversion land together."
