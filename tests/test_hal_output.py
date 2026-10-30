@@ -2,8 +2,10 @@
 
 import io
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import partial
 
 import pytest
 from support.terminal_support import put_on_terminals
@@ -14,6 +16,7 @@ from hal.output import (
     Group,
     Noun,
     Row,
+    Stream,
     Tone,
     TrailingNoun,
     Verdict,
@@ -25,6 +28,7 @@ from hal.output import (
     write_detail,
     write_error,
     write_groups,
+    write_line,
     write_row,
     write_verdict,
 )
@@ -614,3 +618,32 @@ def test_a_ctrl_c_at_the_prompt_is_not_caught(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(KeyboardInterrupt):
         confirmed("start hopin")
+
+
+@pytest.mark.parametrize(
+    ("write", "expected_out", "expected_err"),
+    [
+        pytest.param(
+            partial(write_line, "a line"), "a line\n", "", id="stdout-is-the-default-stream"
+        ),
+        pytest.param(
+            partial(write_line, "a line", stream=Stream.STDERR),
+            "",
+            "a line\n",
+            id="stderr-on-request",
+        ),
+        pytest.param(
+            partial(write_line, "a line", end=""), "a line", "", id="end-replaces-the-line-end"
+        ),
+    ],
+)
+def test_a_raw_line_goes_to_the_chosen_stream_exactly_as_given(
+    capsys: pytest.CaptureFixture[str],
+    write: Callable[[], None],
+    expected_out: str,
+    expected_err: str,
+) -> None:
+    write()
+
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == (expected_out, expected_err)

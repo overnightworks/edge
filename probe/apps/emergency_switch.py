@@ -45,7 +45,7 @@ class EmergencySwitch:
         """`hal <arguments>` of the copy with stdin and stdout that are no terminal, which must
         exit 0; its whitespace-normalised output."""
         probe = self.probe
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv is the probe copy of hal and no shell runs
             [str(probe.copy / ".venv" / "bin" / "hal"), *arguments], stdin=subprocess.DEVNULL,
             capture_output=True, env=probe.environment, cwd=probe.copy, check=False,
             timeout=STOP_SECONDS,
@@ -61,8 +61,8 @@ class EmergencySwitch:
         """`hal apply --local` at a pty where the operator has typed `yes`."""
         probe = self.probe
         command = shlex.join([str(probe.copy / ".venv" / "bin" / "hal"), "apply", "--local"])
-        running = subprocess.Popen(
-            ["script", "-qec", command, "/dev/null"], stdin=subprocess.PIPE,
+        running = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["script", "-qec", command, "/dev/null"], stdin=subprocess.PIPE,  # noqa: S607 - script is found on PATH by design
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=probe.environment,
             cwd=probe.copy,
         )  # fmt: skip

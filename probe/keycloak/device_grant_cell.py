@@ -54,7 +54,7 @@ def prove(
         f"without {' and '.join(missing)}",
     )
     refused(ask(), "without its secret")
-    refused(ask(client_secret="not-the-secret"), "with a wrong secret")
+    refused(ask(client_secret="not-the-secret"), "with a wrong secret")  # noqa: S106 - a wrong secret on purpose to prove the refusal
     probe.held(
         "DG1",
         f"{client_id} starts a device sign-in only with its secret (code lives "

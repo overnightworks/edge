@@ -42,13 +42,13 @@ NO_NETWORK = "--network=none"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 PROBE_NAME = f"edge-probe-agent-image-{os.getpid()}"
 IMAGE = f"{PROBE_NAME}:probe"
-CLAUDE_CLI_PATH = "/tmp/claude"  # NOSONAR(S5443) where the build downloads the CLI inside the image
+CLAUDE_CLI_PATH = "/tmp/claude"  # NOSONAR(S5443) where the build downloads the CLI inside the image  # noqa: S108 - a path inside the image build and not on the host
 CLI_REPORT = "2.1.302 (Claude Code)"
 SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
 BUILD_SECONDS = 1500
 RUN_SECONDS = 120
-TOKEN_PATTERN = "sk-ant-[a-z]{3}[0-9]{2}-[A-Za-z0-9_-]{20,}"
+TOKEN_PATTERN = "sk-ant-[a-z]{3}[0-9]{2}-[A-Za-z0-9_-]{20,}"  # noqa: S105 - a pattern that finds tokens in output and holds none
 # grep exits 0 on a match and 1 on none; anything above is an error that must not pass.
 TOKEN_SEARCH = (
     "for path in /* /.[!.]* /..?*; do "
@@ -81,8 +81,8 @@ def expect(condition: bool, message: str) -> None:
 def docker(
     arguments: Sequence[str], *, timeout: int = RUN_SECONDS, check: bool = False
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["docker", *arguments],
+    result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+        ["docker", *arguments],  # noqa: S607 - docker is found on PATH by design
         capture_output=True,
         text=True,
         timeout=timeout,
@@ -324,7 +324,7 @@ def unauthenticated_run_status(port: int) -> int:
         headers={"Content-Type": "application/json"},
     )  # fmt: skip
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - an http URL on the loopback address
             return response.status
     except urllib.error.HTTPError as refusal:
         return refusal.code

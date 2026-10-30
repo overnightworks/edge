@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The capture verifier, songmaker-web's stand-in on the MCP network (docs/agent-service.md).
 
 It runs in the service image, started by `live_signer.py` (or by a probe), serves plain http on 8080
@@ -132,8 +131,8 @@ def main(argv: list[str]) -> int:
         urlsplit(origin).netloc,
         tool,
     )
-    server = CaptureServer(("0.0.0.0", PORT), expected)
-    print(LISTENING_LINE, flush=True)
+    server = CaptureServer(("0.0.0.0", PORT), expected)  # noqa: S104 - the stand-in must listen on every address of its container
+    print(LISTENING_LINE, flush=True)  # noqa: T201 - the listening line the probe waits for
     serve(server, sys.stdout)
     return 0
 

@@ -348,8 +348,8 @@ def services() -> dict:
 
 
 def test_agent_smoke_is_a_one_off_so_its_tokens_on_stdin_reach_no_journal(services):
-    """The one-offs are the services of the `apply` profile, which test_compose_one_offs.py shows
-    log to none."""
+    """The one-offs are the services of the `apply` profile, which test_stack_compose_one_offs.py
+    shows log to none."""
     assert services["agent-smoke"]["profiles"] == services["realm-observer"]["profiles"]
 
 

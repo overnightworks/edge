@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe of the ingress barrier of `hal stop` (#61 proofs 1-7), of the Traefik that follows its
 `traefik.yml` (#85 cells P1-P7), of the core that follows its compose definition (#87 cells
 Q1-Q6) and of a running unit whose image is named, never swapped (#91 cells Z1-Z3): a throwaway
@@ -139,8 +138,8 @@ class Probe:
     # --- the stack ---------------------------------------------------------------------------
 
     def docker(self, *arguments: str) -> subprocess.CompletedProcess[bytes]:
-        result = subprocess.run(
-            ["docker", *arguments], capture_output=True, env=self.environment,
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["docker", *arguments], capture_output=True, env=self.environment,  # noqa: S607 - docker is found on PATH by design
             cwd=self.copy if self.copy.exists() else REPO, check=False, timeout=COMPOSE_SECONDS,
         )  # fmt: skip
         if result.returncode != 0:
@@ -670,8 +669,8 @@ class ThrowawayTunnel:
         self.drop_in_text = BOOT_DROP_IN_SOURCE.read_text().replace("@HOME@", str(home))
 
     def systemctl(self, *arguments: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            ["systemctl", "--user", *arguments], capture_output=True, text=True, check=False,
+        return subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["systemctl", "--user", *arguments], capture_output=True, text=True, check=False,  # noqa: S607 - systemctl is found on PATH by design
             timeout=SYSTEMCTL_SECONDS,
         )  # fmt: skip
 

@@ -140,7 +140,7 @@ class Status:
 
     def attributed_to(self, app: str) -> "Status":
         """The one move of legacy evidence, called only once restic has confirmed it."""
-        assert self.unattributed is not None
+        assert self.unattributed is not None  # noqa: S101 - restic confirmed the move before this call
         return replace(self._with_history(app, self.unattributed), unattributed=None)
 
     def failed(

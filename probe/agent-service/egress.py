@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe of the agent service's egress (#189 cells E1-E10, E12, E13; #201 E11, E14 and the real
 service; #346 P26, P36): the gateway `agent-egress` and either the stand-in `agent-probe` or
 the real `agent-service` of compose.yaml, in a throwaway compose project of their own.
@@ -308,7 +307,7 @@ class Probe:
         self, command: list[str], *, stdin: str | None = None, check: bool = True,
         timeout: int = 300,
     ) -> subprocess.CompletedProcess:  # fmt: skip
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, input=stdin, capture_output=True, text=True, env=self.environment, cwd=REPO,
             check=False, timeout=timeout, close_fds=True,
         )  # fmt: skip
@@ -436,7 +435,7 @@ class Probe:
         command = self.compose_command(
             "run", "--rm", "--no-deps", "-T", "--label", LABEL, service, *arguments
         )
-        watcher = subprocess.Popen(
+        watcher = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=self.environment, cwd=REPO, close_fds=True,
         )  # fmt: skip
@@ -584,7 +583,7 @@ class Probe:
 
     def cell_e7(self) -> None:
         self.listener = socket.socket()
-        self.listener.bind(("0.0.0.0", 0))  # reachable on every host address: that is the point
+        self.listener.bind(("0.0.0.0", 0))  # reachable on every host address: that is the point  # noqa: S104 - the listener must be reachable on every host address
         self.listener.listen(8)
         port = str(self.listener.getsockname()[1])
         internet = self.network_gateway(f"{PROJECT}_internet")

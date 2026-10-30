@@ -37,8 +37,8 @@ def status(request):
 
 form = urllib.parse.urlencode(json.loads(form_json)).encode()
 headers = {"Forwarded": "for=" + forged}
-forged_request = urllib.request.Request(TOKEN_URL, data=form, headers=headers)
-print(
+forged_request = urllib.request.Request(TOKEN_URL, data=form, headers=headers)  # noqa: S310 - the URL is the probe Keycloak address
+print(  # noqa: T201 - this in-container client answers on standard output
     json.dumps(
         {
             "address": socket.gethostbyname(socket.gethostname()),
