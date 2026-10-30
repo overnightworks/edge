@@ -103,12 +103,11 @@ def read_events(returncode: int, event_lines: Sequence[str]) -> PlaybookRun:
     for line in event_lines:
         try:
             event = json.loads(line.removeprefix(EVENT_MARK))
-            match EventKind(event["event"]):
-                case EventKind.RESULT:
-                    TaskStatus(event["status"])
-                    message = str(event["msg"])
-                case EventKind.COUNTS:
-                    counts.append((_count(event, "changed"), _count(event, "failed"), _count(event, "unreachable")))
+            if EventKind(event["event"]) is EventKind.RESULT:
+                TaskStatus(event["status"])
+                message = str(event["msg"])
+            else:
+                counts.append((_count(event, "changed"), _count(event, "failed"), _count(event, "unreachable")))
         except (ValueError, KeyError, TypeError):
             return PlaybookUnfinished()
     if len(counts) != 1:
@@ -212,17 +211,17 @@ class SystemStep:
         if self.needs_first():
             return CheckState.NOT_CHECKED
         match self._run_playbook(check=True):
-            case PlaybookUnfinished(reason):
-                raise StepFailed(reason or "Ansible's check did not finish · its output above says why")
             case PlaybookFinished(changed):
                 return CheckState.WOULD_CHANGE if changed else CheckState.UNCHANGED
+            case unfinished:
+                raise StepFailed(unfinished.reason or "Ansible's check did not finish · its output above says why")
 
     def apply(self) -> Applied:
         match self._run_playbook(check=False):
-            case PlaybookUnfinished(reason):
-                raise StepFailed(reason or "Ansible did not finish · its output above says why")
             case PlaybookFinished(changed):
                 return Applied.CHANGED if changed else Applied.UNCHANGED
+            case unfinished:
+                raise StepFailed(unfinished.reason or "Ansible did not finish · its output above says why")
 
     def _run_playbook(self, check: bool) -> PlaybookRun:
         argv = [
