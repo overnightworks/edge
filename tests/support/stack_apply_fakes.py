@@ -431,7 +431,8 @@ SCRIPTED_SHA = b"5" * 40
 @dataclass
 class ScriptedGit:
     """Git as the guards and the fetch ask it: a clean `main` equal to origin's unless told
-    otherwise; the fetch raises `fetch_error` when one is set; `calls` records each."""
+    otherwise; the fetch raises `fetch_error` when one is set; `calls` records each. HEAD tracks
+    each path `ls-tree` is asked about as the tree holds it, a directory or else a file."""
 
     reference: bytes = b"refs/heads/main\n"
     status: bytes = b""
@@ -439,7 +440,7 @@ class ScriptedGit:
     calls: list[list[str]] = field(default_factory=list)
 
     def __call__(
-        self, _tree: Path, arguments: list[str], _profile: checkout.Profile
+        self, tree: Path, arguments: list[str], _profile: checkout.Profile
     ) -> subprocess.CompletedProcess[bytes]:
         self.calls.append(list(arguments))
         verb = next(argument for argument in arguments if not argument.startswith("-"))
@@ -451,5 +452,13 @@ class ScriptedGit:
             "status": self.status,
             "fetch": b"",
             "rev-list": b"0\t0\n",
-        }[verb]
+        }.get(verb)
+        if stdout is None:
+            stdout = self._listing(tree, arguments)
         return subprocess.CompletedProcess(arguments, 0, stdout, b"")
+
+    def _listing(self, tree: Path, arguments: list[str]) -> bytes:
+        return "".join(
+            f"{'040000 tree' if (tree / path).is_dir() else '100644 blob'} {'0' * 40}\t{path}\0"
+            for path in arguments[arguments.index("--") + 1 :]
+        ).encode()

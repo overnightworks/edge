@@ -255,9 +255,15 @@ def test_the_service_is_the_one_process_below_init(containment):
 
 
 def test_the_configuration_runs_the_wrapper_in_place_of_the_cli(containment):
-    """#438 transparent wrapper: B1/B2 run through it, in place of the CLI."""
-    text = '[cli.claude]\nbinary = "/opt/claude/claude"\nmcp_origin = "https://x"\n'
-    assert f'binary = "{containment.WRAPPER}"' in containment.with_containment(text)
+    """#438 transparent wrapper: B1/B2 run through it, in place of the anthropic CLI only."""
+    text = (
+        '[cli.anthropic]\nbinary = "/opt/claude/claude"\n\n'
+        '[cli.openai]\nbinary = "/opt/codex/codex"\n'
+    )
+
+    configured = containment.with_containment(text)
+
+    assert configured == text.replace('"/opt/claude/claude"', f'"{containment.WRAPPER}"')
 
 
 def wrapper(containment, tmp_path, *, cli_body):

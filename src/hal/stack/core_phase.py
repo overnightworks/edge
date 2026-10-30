@@ -53,7 +53,7 @@ class CorePhase:
             plan for plan in planned.followers if plan.action is core.FollowerAction.RECREATE
         ]
         return recreator.followers(
-            followers, self.record, lambda: self._followed(config, progress)
+            followers, self.record, lambda: self._followed(planned, progress)
         ) or recreator.unit_services([*planned.built, *planned.recreates])
 
     def _recreate_core(
@@ -71,10 +71,9 @@ class CorePhase:
         unfinished once its first recreate began, so the next run recreates it (#85 rule 5). One
         stopped since the plan is not started; where it is the set's first, no recreate began
         and no entry changes (C3, #93 rule 2)."""
-        config = planned.fleet.config
         recreates = [plan for plan in planned.core if plan.action is core.CoreAction.RECREATE]
         try:
-            followed = self._followed(config, progress) if recreates else frozenset()
+            followed = self._followed(planned, progress) if recreates else frozenset()
             for index, plan in enumerate(recreates):
                 progress.unit = plan.service
                 if stopped := self._stopped_meanwhile(engine, plan, progress):
@@ -150,15 +149,15 @@ class CorePhase:
         ]
         if not started:
             return
-        followed = self._followed(planned.fleet.config, progress)
+        followed = self._followed(planned, progress)
         for plan in started:
             progress.unit = plan.unit
             progress.step = f"record {plan.service} in {core.APPLIED_FILE}"
             self.record.write(plan.service, plan.digests, followed)
 
-    def _followed(self, config: Mapping[str, Any], progress: Progress) -> frozenset[str]:
+    def _followed(self, planned: Plan, progress: Progress) -> frozenset[str]:
         progress.step = "find the services edge follows"
-        return core.followed_services(config, self.repository)
+        return core.followed_services(planned.fleet.config, planned.checkout)
 
     def _unproven_barrier(
         self, planned: Plan, marks: switches.Switches, service: str

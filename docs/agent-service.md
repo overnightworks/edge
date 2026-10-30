@@ -89,7 +89,8 @@ token. A stop waits for a renewal in flight, so `stop_grace_period` in `compose.
 for the renewal plus at least 60 s beyond it; a kill sooner can leave `.auth.json.new` behind.
 `agent-service/setup --check` does not check it: a missing folder fails the start. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
-rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
+rotates it away. `hal setup` walks the operator through that browser login when the file is missing (a link at
+`auth.json` counts as missing) and
 leaves a present one untouched; that is also the way to sign in again, once the file is gone. Because the
 service can write the folder, `codex login` never runs in it: hal runs it with `CODEX_HOME` at a fresh
 private folder beside it, moves only a regular `auth.json` (0600) into the folder, replacing whatever

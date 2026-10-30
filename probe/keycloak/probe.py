@@ -35,7 +35,7 @@ import struct
 import subprocess
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from http.cookiejar import Cookie, CookieJar, DefaultCookiePolicy, parse_ns_headers
@@ -61,7 +61,7 @@ import logout_actions_cell  # noqa: E402
 from admin import AdminToken  # noqa: E402
 
 from hal.output import write_line  # noqa: E402
-from hal.stack import compose, core, switches  # noqa: E402
+from hal.stack import checkout, compose, core, switches  # noqa: E402
 from hal.stack.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
 from hal.stack.realm.observe import CLIENT, FLOW, GROUP, IMPORT_CHECKSUM, Inventory  # noqa: E402
 from hal.stack.result_rows import SNAPSHOT_SHORT_ID, result_rows  # noqa: E402
@@ -964,6 +964,7 @@ class RealmStepStand:
     stack: Stack
     root: Path
     backup_command: tuple[str, ...]
+    kinds: Mapping[str, checkout.EntryKind]  # what HEAD tracks of the files the stand copies
     asked: list[list[str]] = field(default_factory=list)
 
     @classmethod
@@ -987,7 +988,8 @@ class RealmStepStand:
             "hal", path=f"{REPO / '.venv' / 'bin'}{os.pathsep}{os.environ['PATH']}"
         )
         expect(executable is not None, "no hal in the checkout's .venv or on the PATH")
-        return cls(stack, root, (executable,))
+        kinds = checkout.Git(REPO).entry_kinds(("keycloak", f"keycloak/{ENTRYPOINT_FILE}"))
+        return cls(stack, root, (executable,), kinds)
 
     @property
     def repository(self) -> Path:
@@ -1033,8 +1035,7 @@ class RealmStepStand:
 
     @property
     def configuration(self) -> dict[str, Any]:
-        """As Compose resolves it, with config-cli's entrypoint bind on this stand's copy: the
-        stack mounts the checkout's own, which lies outside the stand's repository."""
+        """As Compose resolves it, but config-cli's entrypoint is the stand's copy, not REPO's."""
         config = self.engine.resolved_configuration()
         for mount in config["services"][reconcile.CONFIG_CLI]["volumes"]:
             if mount["target"] == "/opt/edge/entrypoint.sh":
@@ -1042,12 +1043,11 @@ class RealmStepStand:
         return config
 
     def plan(self) -> reconcile.RealmPlan:
-        record = core.Record(self.root / "state")
         return reconcile.plan_realm(
             reconcile.Observer(self.engine),
-            record,
+            core.Record(self.root / "state"),
             self.configuration,
-            self.repository,
+            core.Checkout(self.repository, self.kinds),
             core.Gate.ON,
             None,
         )
@@ -1061,7 +1061,7 @@ class RealmStepStand:
             reconcile.Backup(self.backup_command, self.run_backup),
             core.Record(state),
             self.configuration,
-            self.repository,
+            core.Checkout(self.repository, self.kinds),
             switches.Switches(state),
             None,
         )

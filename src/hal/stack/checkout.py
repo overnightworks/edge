@@ -25,9 +25,9 @@ import os
 import re
 import signal
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 
 from hal.output import printable
@@ -82,6 +82,25 @@ class Standing(Enum):
     BEHIND = "behind"
     AHEAD = "ahead"
     DIVERGED = "diverged"
+
+
+class EntryKind(StrEnum):
+    """What a tree entry at HEAD is: a blob (mode 100644 or 100755), a tree, a symlink or a
+    submodule."""
+
+    FILE = "file"
+    DIRECTORY = "directory"
+    SYMLINK = "symlink"
+    SUBMODULE = "submodule"
+
+
+_ENTRY_KINDS = {
+    "100644": EntryKind.FILE,
+    "100755": EntryKind.FILE,
+    "040000": EntryKind.DIRECTORY,
+    "120000": EntryKind.SYMLINK,
+    "160000": EntryKind.SUBMODULE,
+}
 
 
 class GitError(Exception):
@@ -193,6 +212,15 @@ class Git:
         status = ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"]
         return _porcelain_paths(self.call(status).stdout)
 
+    def entry_kinds(self, paths: Collection[str]) -> dict[str, EntryKind]:
+        """The tree entry at HEAD of each requested path; one HEAD does not track is absent. `-t`
+        keeps the entry of a tree the listing recurses into, so a path that is the parent of
+        another keeps its own."""
+        if not paths:
+            return {}
+        listing = ["ls-tree", "-r", "-t", "-z", "HEAD", "--", *paths]
+        return _entry_kinds(self.call(listing).stdout, set(paths))
+
     def fetch_main(self) -> str:
         """Fetch origin's `main` through the operator's credential helper and pin it: the full sha
         FETCH_HEAD now names (#98 rule 1). Writes only objects, FETCH_HEAD and `origin/main`."""
@@ -258,6 +286,26 @@ def _sha(answer: str, verb: str) -> str:
 
 def _text(output: bytes) -> str:
     return output.decode("utf-8", "backslashreplace")
+
+
+def _entry_kinds(output: bytes, wanted: set[str]) -> dict[str, EntryKind]:
+    """The kinds of the wanted paths in `ls-tree -z` output, `<mode> <type> <object>TAB<path>`."""
+    if not output:
+        return {}
+    if not output.endswith(b"\0"):
+        raise GitError("`git ls-tree` answered no listing")
+    kinds = {}
+    for entry in output[:-1].split(b"\0"):
+        meta, tab, name = entry.partition(b"\t")
+        fields = meta.split(b" ")
+        if not tab or len(fields) != 3:
+            raise GitError(f"`git ls-tree` answered '{printable(_text(entry))}'")
+        mode = _text(fields[0])
+        if (path := os.fsdecode(name)) in wanted:
+            if mode not in _ENTRY_KINDS:
+                raise GitError(f"`git ls-tree` answered mode '{printable(mode)}'")
+            kinds[path] = _ENTRY_KINDS[mode]
+    return kinds
 
 
 def _porcelain_paths(output: bytes) -> list[str]:
