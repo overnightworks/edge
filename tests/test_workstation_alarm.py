@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -39,6 +40,11 @@ def alarm(clean_home, runner, monkeypatch, capsys) -> Callable[[], int]:
 
     monkeypatch.setattr(alarm_commands, "build_layout_and_ports", build_ports)
     return lambda: hal_cli.main(["alarm"])
+
+
+class ForbiddenStdin:
+    def __getattr__(self, name: str) -> object:
+        raise AssertionError("stdin was touched")
 
 
 def bodies(mail_stub) -> list[str]:
@@ -277,3 +283,12 @@ def test_the_alarm_runs_only_the_services_and_the_backup(alarm, clean_home, runn
     [body] = bodies(mail_stub)
     assert "The last backup failed." in body
     assert not any(call[0] == "journalctl" for call in runner.calls)
+
+
+def test_the_alarm_never_reads_stdin(alarm, runner, mail_stub, monkeypatch) -> None:
+    """G-11 for `hal alarm`, on the fakes of the other cells: any touch of stdin raises."""
+    monkeypatch.setattr(sys, "stdin", ForbiddenStdin())
+    restarting_containers(runner, "presentator-live")
+
+    assert (alarm(), alarm()) == (ExitCode.OK, ExitCode.OK)
+    assert len(mail_stub.sent) == 1
