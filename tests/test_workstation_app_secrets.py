@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
 from workstation_secrets_support import never_run, FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
-from support.workstation_secrets_report import findings_of
+from support.workstation_secrets_report import findings_of, report_of
 
 from support.terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
@@ -93,7 +93,7 @@ def test_hopins_session_secret_is_loose_only_beyond_0644(
 
     run_hal_secrets(packaged_home.home, probe, now=NOW)
 
-    assert set(findings_of(capsys.readouterr().out, "loose-mode")) == loose_subjects
+    assert set(findings_of(report_of(packaged_home.home), "loose-mode")) == loose_subjects
 
 
 def test_the_packaged_manifest_holds_no_value_of_hopins_session_secret() -> None:
@@ -235,7 +235,7 @@ def test_an_interrupt_between_the_two_turn_values_keeps_the_first_and_the_rerun_
 def test_the_view_shows_the_stored_turn_values_as_not_verified(packaged_home: Sandbox, probe: FakeProbe, capsys: pytest.CaptureFixture[str]) -> None:
     run_hal_secrets(packaged_home.home, probe, now=NOW)
 
-    rows = {line for line in capsys.readouterr().out.splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
+    rows = {line for line in report_of(packaged_home.home).splitlines() if line.startswith(("| cloudflare/turn-hopin/", "cloudflare/turn-hopin/"))}
     assert len(rows) == 2
     assert all("token, unverified" in row and "not checked" in row for row in rows)
 
