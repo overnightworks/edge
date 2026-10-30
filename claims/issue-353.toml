@@ -3,5 +3,5 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "521269630dce09ed1addb3b90f1c305ff055f74f"
 branch = "claude/issue-353-step-ca-proof-10-timeout"
-scope = ["docs/internal-ca.md", "probe/step-ca/probe.py"]
+scope = ["docs/internal-ca.md", "probe/step-ca/probe.py", "probe/step-ca/traefik_mcp_follows.py"]
 opened_commit = "4d661ca61e78ce54e5dedd9e530bb03dab78c786"
