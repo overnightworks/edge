@@ -9,9 +9,7 @@ from __future__ import annotations
 import json
 import os
 import pwd
-import re
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +17,7 @@ from pathlib import Path
 
 from hal.workstation import secrets_setup
 from hal.workstation.layout import Layout
+from hal.output import write_line
 from hal.output.command import Verb, command
 
 PLAYBOOK = Path(__file__).parent / "system" / "playbook.yml"
@@ -33,11 +32,9 @@ DOCKER_LOG_DRIVER = "journald"
 JOURNAL_VACUUM_DAYS = LOG_RETENTION_DAYS - 2
 # The files rsyslog wrote: the play deletes them (and their rotations) once rsyslog is purged, and `hal check` reports them.
 RSYSLOG_FILE_NAMES = ("syslog", "auth.log", "kern.log", "mail.log", "mail.err", "ufw.log")
-# The last line of a play recap names the host and counts each outcome.
-RECAP = re.compile(
-    r"^\S+\s*:\s*ok=\d+\s+changed=(?P<changed>\d+)\s+unreachable=(?P<unreachable>\d+)\s+failed=(?P<failed>\d+)",
-    re.MULTILINE,
-)
+# The line prefix the packaged `hal_events` callback writes before each event; the callback runs in Ansible's own
+# interpreter, which cannot import hal, so `system/callback_plugins/hal_events.py` states the same mark.
+EVENT_MARK = "\x1ehal_events "
 
 
 class CheckState(Enum):
@@ -61,22 +58,64 @@ class StepFailed(Exception):
     """A step that did not finish; its message says why."""
 
 
+class EventKind(Enum):
+    RESULT = "result"
+    COUNTS = "counts"
+
+
+class TaskStatus(Enum):
+    FAILED = "failed"
+    UNREACHABLE = "unreachable"
+
+
 @dataclass(frozen=True)
-class PlaybookRun:
-    succeeded: bool
+class PlaybookFinished:
     changed: int
 
 
+@dataclass(frozen=True)
+class PlaybookUnfinished:
+    """A run that did not finish; `reason` is empty unless the play itself failed, then it is the message of its last failed result."""
+
+    reason: str = ""
+
+
+PlaybookRun = PlaybookFinished | PlaybookUnfinished
 PlaybookRunner = Callable[[Sequence[str]], PlaybookRun]
 
 
-def read_recap(returncode: int, output: str) -> PlaybookRun:
-    """A run succeeded when Ansible exited 0 and its recap counts no failed or unreachable host."""
-    recap = RECAP.search(output)
-    if recap is None:
-        return PlaybookRun(False, 0)
-    succeeded = returncode == 0 and recap["failed"] == "0" and recap["unreachable"] == "0"
-    return PlaybookRun(succeeded, int(recap["changed"]))
+def _count(event: dict[str, object], name: str) -> int:
+    count = event[name]
+    if type(count) is not int or count < 0:
+        raise ValueError(f"{name} is no count")
+    return count
+
+
+def read_events(returncode: int, event_lines: Sequence[str]) -> PlaybookRun:
+    """A run finished when Ansible exited 0 and the callback reported exactly one count without a failed or unreachable host.
+
+    The reason is the message of the last failed or unreachable result, given only when the counts name a failed or unreachable host:
+    inside a rescue it is the rescue's own failure that ended the play, and a rescued failure is no cause.
+    An event that is no known event, or a count that is no non-negative integer, is a run that did not finish.
+    """
+    message = ""
+    counts: list[tuple[int, int, int]] = []
+    for line in event_lines:
+        try:
+            event = json.loads(line.removeprefix(EVENT_MARK))
+            if EventKind(event["event"]) is EventKind.RESULT:
+                TaskStatus(event["status"])
+                message = str(event["msg"])
+            else:
+                counts.append((_count(event, "changed"), _count(event, "failed"), _count(event, "unreachable")))
+        except (ValueError, KeyError, TypeError):
+            return PlaybookUnfinished()
+    if len(counts) != 1:
+        return PlaybookUnfinished()
+    changed, failed, unreachable = counts[0]
+    if failed or unreachable:
+        return PlaybookUnfinished(message)
+    return PlaybookFinished(changed) if returncode == 0 else PlaybookUnfinished()
 
 
 def _forget_the_sudo_ticket() -> None:
@@ -89,23 +128,25 @@ def _forget_the_sudo_ticket() -> None:
 def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
     """Runs `argv` under one `sudo` in the packaged `system/` directory, then makes sudo forget its ticket.
 
-    The system asks for the password at the terminal, which stays stdin and stderr's; stdout is shown line by line and read for
-    the recap. No `ANSIBLE_*` variable reaches the play, so the packaged `ansible.cfg` there decides. `sudo -k` follows whatever
+    The system asks for the password at the terminal, which stays stdin and stderr's; Ansible's stderr joins its stdout inside
+    sudo, which is shown line by line, and the lines the callback marks are read as events and not shown.
+    No `ANSIBLE_*` variable reaches the play, so the packaged `ansible.cfg` there decides. `sudo -k` follows whatever
     the play did, and a failing `sudo -k` fails the step; it never follows a sudo that did not start.
     Root's Python writes no bytecode, which would leave root-owned files in the operator's tool environment.
     No timeout: a person types the password; the run asks its yes at a terminal first and `--dry-run` reaches here only when `needs_first` finds one.
     """
     environment = {name: value for name, value in os.environ.items() if not name.startswith("ANSIBLE_")}
-    shown: list[str] = []
-    with subprocess.Popen(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:  # noqa: S603, S607 - argv is the packaged playbook and sudo is found on PATH by design
+    event_lines: list[str] = []
+    with subprocess.Popen(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", "sh", "-c", 'exec "$@" 2>&1', "sh", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:  # noqa: S603, S607 - argv is the packaged playbook and sudo is found on PATH by design
         try:
             for line in playbook.stdout:
-                sys.stdout.write(line)
-                sys.stdout.flush()
-                shown.append(line)
+                if line.startswith(EVENT_MARK):
+                    event_lines.append(line)
+                else:
+                    write_line(line, end="", flush=True)
         finally:
             _forget_the_sudo_ticket()
-    return read_recap(playbook.returncode, "".join(shown))
+    return read_events(playbook.returncode, event_lines)
 
 
 class UnresolvableRunningUser(ValueError):
@@ -169,16 +210,18 @@ class SystemStep:
         """At a terminal, Ansible's check mode asks for sudo once and shows the diff; without what it needs nothing is read."""
         if self.needs_first():
             return CheckState.NOT_CHECKED
-        if not (run := self._run_playbook(check=True)).succeeded:
-            raise StepFailed("Ansible's check did not finish · its output above says why")
-        if run.changed:
-            return CheckState.WOULD_CHANGE
-        return CheckState.UNCHANGED
+        match self._run_playbook(check=True):
+            case PlaybookFinished(changed):
+                return CheckState.WOULD_CHANGE if changed else CheckState.UNCHANGED
+            case unfinished:
+                raise StepFailed(unfinished.reason or "Ansible's check did not finish · its output above says why")
 
     def apply(self) -> Applied:
-        if not (run := self._run_playbook(check=False)).succeeded:
-            raise StepFailed("Ansible did not finish · its output above says why")
-        return Applied.CHANGED if run.changed else Applied.UNCHANGED
+        match self._run_playbook(check=False):
+            case PlaybookFinished(changed):
+                return Applied.CHANGED if changed else Applied.UNCHANGED
+            case unfinished:
+                raise StepFailed(unfinished.reason or "Ansible did not finish · its output above says why")
 
     def _run_playbook(self, check: bool) -> PlaybookRun:
         argv = [
