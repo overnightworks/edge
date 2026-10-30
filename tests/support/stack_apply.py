@@ -38,6 +38,7 @@ from hal.stack import (
     apps,
     checkout,
     compose,
+    core,
     emergency,
     environment,
     setup,
@@ -385,19 +386,14 @@ def applied_core(core_files, switch, scripted):
 
 
 @pytest.fixture
-def unreadable_profile_bind(applied_core, scripted, repository, monkeypatch):
-    """`hello` binds a file under a directory that cannot be entered."""
-    locked = repository / "locked"
-    scripted.config["services"]["hello"]["volumes"] = [bind(locked / "hello.yml", "/hello.yml")]
-    is_dir = Path.is_dir
+def unreadable_profile_bind(applied_core, monkeypatch):
+    """Finding the services edge follows, which happens only after the yes, fails with a bind that
+    cannot be read."""
 
-    def is_dir_as_python_3_12(path: Path) -> bool:
-        # Python 3.14 answers False where 3.12 raises for a directory that cannot be entered.
-        if path.is_relative_to(locked):
-            raise PermissionError(13, "Permission denied")
-        return is_dir(path)
+    def refuse(*_: object) -> frozenset[str]:
+        raise core.CoreError("cannot read locked/hello.yml (Permission denied)")
 
-    monkeypatch.setattr(Path, "is_dir", is_dir_as_python_3_12)
+    monkeypatch.setattr(core, "followed_services", refuse)
 
 
 FOLLOWER_FILE = "traefik-mcp.yml"

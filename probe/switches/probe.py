@@ -291,8 +291,9 @@ class Probe:
         write_line(
             f"#85 P7 traefik volumes: {json.dumps(resolved['services']['traefik']['volumes'])}"
         )
+        tracked = core.Checkout.read(resolved, checkout.Git(self.copy))
         derived = {
-            name: core.file_binds(resolved["services"][name], self.copy)
+            name: core.file_binds(resolved["services"][name], tracked)
             for name in core.core_services(resolved)
         }
         expect(

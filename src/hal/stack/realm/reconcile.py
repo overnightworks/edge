@@ -97,11 +97,11 @@ class Inputs:
         return None
 
 
-def bound_files(config: Mapping[str, Any], repository: Path) -> tuple[Path, ...]:
+def bound_files(config: Mapping[str, Any], checkout: core.Checkout) -> tuple[Path, ...]:
     """The checkout files config-cli reads: the realm files and every file it binds (its
     entrypoint)."""
-    realm_files = tuple(repository / name for name in REALM_FILES)
-    return (*realm_files, *core.file_binds(config["services"].get(CONFIG_CLI, {}), repository))
+    realm_files = tuple(checkout.path / name for name in REALM_FILES)
+    return (*realm_files, *core.file_binds(config["services"].get(CONFIG_CLI, {}), checkout))
 
 
 def definition_digest(service: Mapping[str, Any], repository: Path) -> str:
@@ -118,9 +118,9 @@ def definition_digest(service: Mapping[str, Any], repository: Path) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def read_inputs(config: Mapping[str, Any], repository: Path) -> Inputs:
-    files = core.digests(bound_files(config, repository), repository)
-    return Inputs(files, definition_digest(config["services"][CONFIG_CLI], repository))
+def read_inputs(config: Mapping[str, Any], checkout: core.Checkout) -> Inputs:
+    files = core.digests(bound_files(config, checkout), checkout.path)
+    return Inputs(files, definition_digest(config["services"][CONFIG_CLI], checkout.path))
 
 
 def _flat(checksums: Checksums) -> dict[str, str]:
@@ -197,7 +197,7 @@ def plan_realm(
     observer: Observer,
     record: core.Record,
     config: Mapping[str, Any],
-    repository: Path,
+    checkout: core.Checkout,
     gate: core.Gate | None,
     restart: RealmRestart | None,
 ) -> RealmPlan:
@@ -207,7 +207,7 @@ def plan_realm(
         return RealmPlan()
     if restart:
         return RealmPlan(RealmAction.NOT_CHECKED, restart=restart)
-    inputs = read_inputs(config, repository)
+    inputs = read_inputs(config, checkout)
     reading = record.read()
     if gate is not core.Gate.ON:
         if why := _why(reading, inputs, None):
@@ -409,7 +409,7 @@ class Realm:
     backup: Backup
     record: core.Record
     config: Mapping[str, Any]
-    repository: Path
+    checkout: core.Checkout
     marks: switches.Switches
     mark: switches.Mark | None  # Keycloak's marker as the plan read it
     clock: Callable[[], float] = time.monotonic
@@ -430,7 +430,7 @@ class Realm:
 
     def _apply(self, plan: RealmPlan, progress: _Progress) -> StepResult:
         started = self.clock()
-        followed = core.followed_services(self.config, self.repository)
+        followed = core.followed_services(self.config, self.checkout)
         self._refuse_while_config_cli_runs()
         progress.snapshot = self.backup.pre_apply()
         self.backup.restore_test(progress.snapshot)
@@ -461,7 +461,7 @@ class Realm:
             if isinstance(coverage, Gap) and "." not in name
         )
         try:
-            files = [(self.repository / name).read_text() for name in REALM_FILES]
+            files = [(self.checkout.path / name).read_text() for name in REALM_FILES]
             declared = [declared_identities.declared_realm(text) for text in files]
         except (OSError, UnicodeDecodeError, declared_identities.DeclaredError):
             return Leftovers((), (), False, unread)

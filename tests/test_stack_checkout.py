@@ -398,6 +398,10 @@ def raising(error: Exception) -> checkout.Runner:
     return run
 
 
+def asking_kinds(git: checkout.Git):
+    return git.entry_kinds(["x"])
+
+
 @pytest.mark.parametrize(
     ("runner", "ask", "line"),
     [
@@ -417,6 +421,16 @@ def raising(error: Exception) -> checkout.Runner:
                      "`git status` exited 128: fatal: not a repo", id="git fails"),
         pytest.param(raising(subprocess.TimeoutExpired("git", 30)), checkout.not_on_main,
                      "`git symbolic-ref` took longer than 30s", id="timeout"),
+        pytest.param(answering(b"100644 blob abc\tx"), asking_kinds,
+                     "`git ls-tree` answered no listing", id="ls-tree without NUL"),
+        pytest.param(answering(b"garbage\0"), asking_kinds,
+                     "`git ls-tree` answered 'garbage'", id="ls-tree garbage"),
+        pytest.param(answering(b"100666 blob abc\tx\0"), asking_kinds,
+                     "`git ls-tree` answered mode '100666'", id="ls-tree unknown mode"),
+        pytest.param(answering(b"fatal: bad tree\n", 128), asking_kinds,
+                     "`git ls-tree` exited 128: fatal: bad tree", id="ls-tree fails"),
+        pytest.param(raising(subprocess.TimeoutExpired("git", 30)), asking_kinds,
+                     "`git ls-tree` took longer than 30s", id="ls-tree timeout"),
     ],
 )  # fmt: skip
 def test_a_git_that_answers_nonsense_or_hangs_is_one_line(
@@ -699,3 +713,44 @@ def test_global_attributes_do_not_reach_the_runner(main_tree, home):
     answer = checkout.run_git(main_tree, ask, checkout.Profile.LOCAL)
 
     assert answer.stdout == b"fleet.yaml: diff: unspecified\n"
+
+
+def test_the_kind_of_each_requested_path_is_its_tree_entry_at_head(main_tree):
+    """#791 cell G1 and decision 1: a source that is the parent of another keeps its own entry,
+    names with a space, a newline or a non-UTF-8 byte are read with -z, a path HEAD does not
+    track is absent, and what is not requested is not answered."""
+    odd = [" a b.yml", "new\nline.yml", os.fsdecode(b"bad\xffbyte.yml")]
+    (main_tree / "keycloak/themes").mkdir(parents=True)
+    (main_tree / "keycloak/entrypoint.sh").write_text("#!/bin/sh\n")
+    (main_tree / "keycloak/entrypoint.sh").chmod(0o755)
+    (main_tree / "keycloak/themes/x.css").write_text("a {}\n")
+    for name in odd:
+        (main_tree / name).write_text("x\n")
+    (main_tree / "link").symlink_to("traefik.yml")
+    plain_git(main_tree, "add", "--all")
+    plain_git(main_tree, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},sub")
+    plain_git(main_tree, "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "more")
+    (main_tree / "untracked.yml").write_text("x\n")
+    wanted = [
+        "keycloak", "keycloak/entrypoint.sh", "keycloak/themes", "traefik.yml", "link", "sub",
+        "untracked.yml", *odd,
+    ]  # fmt: skip
+
+    found = checkout.Git(main_tree).entry_kinds(wanted)
+
+    assert found == {
+        "keycloak": checkout.EntryKind.DIRECTORY,
+        "keycloak/entrypoint.sh": checkout.EntryKind.FILE,
+        "keycloak/themes": checkout.EntryKind.DIRECTORY,
+        "traefik.yml": checkout.EntryKind.FILE,
+        "link": checkout.EntryKind.SYMLINK,
+        "sub": checkout.EntryKind.SUBMODULE,
+        **dict.fromkeys(odd, checkout.EntryKind.FILE),
+    }
+
+
+def test_no_requested_path_asks_git_nothing(main_tree):
+    """Without a pathspec `git ls-tree` would list the whole tree."""
+    refusing = answering(b"", 128)
+
+    assert checkout.Git(main_tree, refusing).entry_kinds([]) == {}

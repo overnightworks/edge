@@ -7,17 +7,22 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 import support.stack_core as stack_core_support
+import yaml
 from support.stack_core import (
     TRAEFIK_FILE,
     bind,
     sha256,
+    tracked,
 )
 
+from hal.stack import checkout as git_checkout
 from hal.stack import compose, core
+from hal.stack.checkout import EntryKind
 
 (checkout, config) = (stack_core_support.checkout, stack_core_support.config)  # fmt: skip
 
@@ -50,10 +55,17 @@ def plan_of(
     record: core.Record,
     states: dict[str, str] | None = None,
     labels: dict[str, str | None] | None = None,
+    kinds: dict[str, EntryKind | None] | None = None,
 ) -> list[core.CorePlan]:
     """`plan_core` over these containers; by default only traefik runs, as created from now."""
     running = {"traefik": "running"} if states is None else states
-    return core.plan_core(config, containers(running, labels), HASHES, checkout, record)
+    return core.plan_core(
+        config,
+        containers(running, labels),
+        HASHES,
+        tracked(config, checkout, kinds),
+        record,
+    )
 
 
 DEFINITION = core.Cause(core.CauseKind.DEFINITION_CHANGED)
@@ -80,7 +92,7 @@ def test_the_core_is_every_service_without_a_profile(config):
 def test_only_the_traefik_yml_of_the_core_is_a_file_bind(config, checkout):
     """#85 rule 1, cell P7: a bind outside the checkout, a directory bind and a volume are none."""
     file_binds = {
-        service: core.file_binds(config["services"][service], checkout)
+        service: core.file_binds(config["services"][service], tracked(config, checkout))
         for service in core.core_services(config)
     }
 
@@ -416,7 +428,7 @@ def test_a_ghost_entry_is_ignored_and_dropped_at_the_next_write_while_a_followed
         record,
         json.dumps({"traefik": {TRAEFIK_FILE: digest}, "ghost": {}, "traefik-mcp": {"x.yml": "1"}}),
     )
-    followed = core.followed_services(config, checkout)
+    followed = core.followed_services(config, tracked(config, checkout))
 
     assert plan_of(config, checkout, record, BOTH_RUNNING) == []
     record.mark_unfinished(["traefik"], followed)
@@ -462,12 +474,15 @@ def followers_of(
     states: dict[str, str],
     gates: dict[str, core.Gate],
     labels: dict[str, str | None] | None = None,
+    kinds: dict[str, EntryKind | None] | None = None,
 ) -> list[core.FollowerPlan]:
     found = [
         compose.Container(service, state, (FOLLOWER_HASHES | (labels or {})).get(service), "i")
         for service, state in states.items()
     ]
-    return core.plan_followers(config, found, FOLLOWER_HASHES, checkout, record, gates)
+    return core.plan_followers(
+        config, found, FOLLOWER_HASHES, tracked(config, checkout, kinds), record, gates
+    )
 
 
 def test_the_followers_are_the_profile_services_binding_traefiks_static_config(
@@ -476,9 +491,9 @@ def test_the_followers_are_the_profile_services_binding_traefiks_static_config(
     """#89 head decision, cell F16: exactly traefik-mcp; traefik is core, step-ca binds ca.json
     elsewhere, and the `mcp/dynamic` directory bind is no file it follows."""
     assert core.followers(with_follower) == (FOLLOWER,)
-    assert core.file_binds(with_follower["services"][FOLLOWER], checkout) == (
-        checkout / FOLLOWER_FILE,
-    )
+    found = core.file_binds(with_follower["services"][FOLLOWER], tracked(with_follower, checkout))
+
+    assert found == (checkout / FOLLOWER_FILE,)
 
 
 @pytest.mark.parametrize(
@@ -549,3 +564,122 @@ def test_a_missing_follower_file_cannot_be_planned_and_names_its_path(
 
     with pytest.raises(core.CoreError, match=re.escape(str(checkout / FOLLOWER_FILE))):
         followers_of(with_follower, checkout, record, {FOLLOWER: "running"}, {"step-ca": gate})
+
+
+# --- #791: a bind source is classified by its entry at HEAD, never by the disk -----------------
+
+
+def test_a_tracked_file_replaced_by_a_directory_cannot_be_planned_and_names_its_path(
+    config, checkout, record
+):
+    """#791 cell C2: the disk shape does not turn a file bind into nothing to change."""
+    (checkout / TRAEFIK_FILE).unlink()
+    (checkout / TRAEFIK_FILE).mkdir()
+
+    with pytest.raises(core.CoreError, match=re.escape(str(checkout / TRAEFIK_FILE))):
+        plan_of(config, checkout, record, kinds={TRAEFIK_FILE: EntryKind.FILE})
+
+
+def test_a_follower_file_replaced_by_a_directory_cannot_be_planned(with_follower, checkout, record):
+    """#791 cell C2, followers: whether step-ca is on, off or switched off."""
+    (checkout / FOLLOWER_FILE).unlink()
+    (checkout / FOLLOWER_FILE).mkdir()
+
+    with pytest.raises(core.CoreError, match=re.escape(str(checkout / FOLLOWER_FILE))):
+        followers_of(
+            with_follower,
+            checkout,
+            record,
+            {FOLLOWER: "running"},
+            ON,
+            kinds={FOLLOWER_FILE: EntryKind.FILE},
+        )
+
+
+def test_a_service_whose_only_file_bind_became_a_directory_keeps_its_record_entry(
+    config, checkout, record
+):
+    """#791 cell K1, K2: the retention and the plan answer from one value, so the entry stays
+    and the plan refuses."""
+    (checkout / TRAEFIK_FILE).unlink()
+    (checkout / TRAEFIK_FILE).mkdir()
+    kinds = {TRAEFIK_FILE: EntryKind.FILE}
+    value = tracked(config, checkout, kinds)
+
+    assert "traefik" in core.followed_services(config, value)
+    with pytest.raises(core.CoreError):
+        plan_of(config, checkout, record, kinds=kinds)
+
+
+def test_a_source_head_does_not_track_cannot_be_planned_and_says_so(config, checkout, record):
+    """#791 cell C7."""
+    with pytest.raises(core.CoreError, match=r"traefik\.yml.*HEAD does not track it"):
+        plan_of(config, checkout, record, kinds={TRAEFIK_FILE: None})
+
+
+@pytest.mark.parametrize("kind", [EntryKind.SYMLINK, EntryKind.SUBMODULE])
+def test_a_tracked_symlink_or_submodule_cannot_be_a_bind_source(kind, config, checkout, record):
+    """#791 cell C8."""
+    with pytest.raises(core.CoreError, match=re.escape(f"{TRAEFIK_FILE} is a {kind.value}")):
+        plan_of(config, checkout, record, kinds={TRAEFIK_FILE: kind})
+
+
+def test_a_tracked_tree_is_a_directory_bind_whatever_the_disk_holds(config, checkout):
+    """#791 cells C5, C6: `dynamic` replaced by a file is still skipped, never digested."""
+    (checkout / "dynamic").rmdir()
+    (checkout / "dynamic").write_text("not a directory\n")
+    value = tracked(config, checkout, {"dynamic": EntryKind.DIRECTORY})
+
+    assert core.file_binds(config["services"]["traefik"], value) == (checkout / TRAEFIK_FILE,)
+
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+
+
+def declared_sources(compose_file: Path) -> list[Path]:
+    """Every `./` bind source of a compose file, short and long syntax."""
+    sources = []
+    for service in yaml.safe_load(compose_file.read_text())["services"].values():
+        for volume in service.get("volumes", []):
+            source = volume.get("source") if isinstance(volume, dict) else volume.split(":")[0]
+            if source and source.startswith("./"):
+                sources.append(compose_file.parent / source)
+    return sources
+
+
+def test_every_bind_source_of_this_repositorys_compose_file_is_classified_by_head():
+    """#791 cell G2: the overlapping parent `keycloak` is a tree beside its tracked file."""
+    sources = declared_sources(REPOSITORY / "compose.yaml")
+    config = {"services": {"all": {"volumes": [bind(source, "/x") for source in sources]}}}
+
+    found = core.Checkout.read(config, git_checkout.Git(REPOSITORY))
+
+    assert found.kind_of(REPOSITORY / "keycloak") is EntryKind.DIRECTORY
+    assert found.kind_of(REPOSITORY / "keycloak/entrypoint.sh") is EntryKind.FILE
+    assert {found.kind_of(source) for source in sources} <= {EntryKind.FILE, EntryKind.DIRECTORY}
+
+
+@pytest.mark.parametrize(
+    ("hello_entry", "named"),
+    [
+        (None, "HEAD does not track it"),
+        ("120000 blob", "is a symlink"),
+        ("160000 commit", "is a submodule"),
+    ],
+    ids=["untracked", "symlink", "submodule"],
+)
+def test_a_bind_source_of_any_service_that_head_cannot_classify_fails_the_read(
+    hello_entry, named, config, checkout
+):
+    """#791 cells C7, C8: the whole config is classified when it is read, before any plan, so the
+    source of a profile service counts as much as a core service's."""
+    entries = [f"100644 blob {'0' * 40}\t{TRAEFIK_FILE}", f"040000 tree {'0' * 40}\tdynamic"]
+    if hello_entry:
+        entries.append(f"{hello_entry} {'0' * 40}\tx.yml")
+    listing = "".join(f"{entry}\0" for entry in entries).encode()
+
+    def runner(_tree, arguments, _profile):
+        return subprocess.CompletedProcess(arguments, 0, listing, b"")
+
+    with pytest.raises(core.CoreError, match=named):
+        core.Checkout.read(config, git_checkout.Git(checkout, runner))
