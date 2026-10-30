@@ -132,12 +132,15 @@ def shipped_cli(provider: str) -> dict:
     return shipped["cli"][provider]
 
 
-def checked_download(provider: str) -> str:
-    """The file the Dockerfile's download step of `provider` writes and checks by sha256."""
+def download_step(prefix: str) -> str:
+    """The Dockerfile's RUN step that fetches the CLI whose ARG names start with `prefix`."""
     dockerfile = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
-    prefix = DOCKERFILE_PREFIXES[provider]
-    step = next(step for step in RUN_STEP.findall(dockerfile) if f"${{{prefix}_VERSION}}" in step)
-    return re.search(r"--output (\S+)", step).group(1)
+    return next(step for step in RUN_STEP.findall(dockerfile) if f"${{{prefix}_VERSION}}" in step)
+
+
+def checked_download(prefix: str) -> str:
+    """The file the download step of the CLI with ARG-name `prefix` writes and checks by sha256."""
+    return re.search(r"--output (\S+)", download_step(prefix)).group(1)
 
 
 def normalized_name(name: str) -> str:
@@ -160,9 +163,9 @@ def cell_i1(output: Path) -> None:
     result = build(IMAGE_DIRECTORY, output / "i1-build.txt")
     expect(result.returncode == 0, f"I1: the build failed (see {output / 'i1-build.txt'})")
     text = result.stdout + result.stderr
-    for provider in DOCKERFILE_PREFIXES:
+    for provider, prefix in DOCKERFILE_PREFIXES.items():
         expect(
-            f"{checked_download(provider)}: OK" in text,
+            f"{checked_download(prefix)}: OK" in text,
             f"I1: the build did not report the {provider} download's sha256 as OK",
         )
     expect("No broken requirements found." in text, "I1: pip check did not pass in the build")
@@ -180,7 +183,7 @@ def cell_i2(output: Path, scratch: Path) -> None:
         )
         expect(altered.returncode != 0, f"I2: a build with an altered {provider} hash succeeded")
         expect(
-            f"{checked_download(provider)}: FAILED" in altered.stdout + altered.stderr,
+            f"{checked_download(prefix)}: FAILED" in altered.stdout + altered.stderr,
             f"I2: sha256sum did not fail on the {provider} download",
         )
     context = scratch / "altered-wheel"
@@ -455,10 +458,16 @@ def cell_i6(image: str = IMAGE, options: Sequence[str] = ()) -> None:
     environment = json.loads(
         docker(["image", "inspect", image, "--format", "{{json .Config.Env}}"]).stdout
     )
+    offending = login_environment_names(environment)
     expect(
-        not any(LOGIN_ENVIRONMENT.match(entry) for entry in environment),
-        f"I6: the image sets a Claude, Anthropic, Codex or OpenAI variable: {environment}",
+        not offending,
+        f"I6: the image sets a Claude, Anthropic, Codex or OpenAI variable: {offending}",
     )
+
+
+def login_environment_names(environment: list[str]) -> list[str]:
+    """The names, never the values, of the entries that set a login variable."""
+    return [entry.split("=", 1)[0] for entry in environment if LOGIN_ENVIRONMENT.match(entry)]
 
 
 def package_versions(frozen: str) -> dict[str, str]:

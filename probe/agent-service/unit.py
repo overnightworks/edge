@@ -248,7 +248,7 @@ def ended_unsuccessfully(state: dict) -> bool:
 def refusal_is_complete(cell: str, logs: str, fields: list[str]) -> bool:
     """The logs of an attempt that ended unsuccessfully name every field; one that listened
     fails the cell."""
-    expect(LISTENING not in logs, f"{cell}: the service listened: {logs[-300:]!r}")
+    expect(LISTENING not in logs, f"{cell}: the service listened")
     return all(field in logs for field in fields)
 
 
@@ -524,7 +524,9 @@ class UnitProbe(ServiceConditions, Probe):
                 if refusal_is_complete(cell, logs, fields):
                     return logs
             time.sleep(1)
-        raise ProbeFailed(f"{cell}: no refused start naming {fields}: {logs[-300:]!r}")
+        raise ProbeFailed(
+            f"{cell}: no refused start naming {fields} in the log of a failed attempt"
+        )
 
     def cell_u6_refusal(self) -> None:
         overlay = self.compose_file.with_name("working-root-0750.yaml")
@@ -670,8 +672,9 @@ class UnitProbe(ServiceConditions, Probe):
     def cell_u15(self) -> None:
         """A login directory without its token: `up -d` exits 0 and the first look sees the
         service running, and `hal apply`'s own observation finds it not running."""
-        aside = self.token.with_name("token.aside")
-        self.token.rename(aside)
+        token = self.logins["anthropic"]
+        aside = token.with_name("token.aside")
+        token.rename(aside)
         try:
             started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
             expect(started.returncode == 0, f"U15: up exited {started.returncode}")
@@ -683,7 +686,7 @@ class UnitProbe(ServiceConditions, Probe):
             logs = self.service_logs()
             expect(LISTENING not in logs, "U15: the service listened without its token")
         finally:
-            aside.rename(self.token)
+            aside.rename(token)
             self.compose("down", "--timeout", "10")
         self.hold(
             "U15",

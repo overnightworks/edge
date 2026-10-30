@@ -23,8 +23,18 @@ AGENT_SERVICE_DOCUMENT = (REPOSITORY / "docs" / "agent-service.md").read_text(en
 
 RELEASE_WHEELS = ("agent-runtime", "agent-runtime-client", "agent-runtime-service")
 DIGEST_PINNED_IMAGE = re.compile(r"^FROM \S+@sha256:[0-9a-f]{64}\b", re.MULTILINE)
-CLI_ARGUMENT_PREFIXES = ("CLAUDE", "CODEX")  # the ARG names of each CLI's pins, not their values
-RUN_STEP = re.compile(r"^RUN .*?(?=^\S)", re.MULTILINE | re.DOTALL)
+
+
+def load_probe() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("agent_service_image_probe", PROBE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+PROBE_MODULE = load_probe()
 COPIED_CLI = re.compile(r"^COPY --from=\S+ --chown=0:0 --chmod=0555 \S+ \S+$", re.MULTILINE)
 
 
@@ -48,17 +58,14 @@ def test_every_base_image_is_pinned_by_digest():
     assert len(DIGEST_PINNED_IMAGE.findall(DOCKERFILE)) == len(base_images)
 
 
-def download_step(prefix: str) -> str:
-    return next(step for step in RUN_STEP.findall(DOCKERFILE) if f"${{{prefix}_VERSION}}" in step)
-
-
-@pytest.mark.parametrize("prefix", CLI_ARGUMENT_PREFIXES)
+@pytest.mark.parametrize("prefix", PROBE_MODULE.DOCKERFILE_PREFIXES.values())
 def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_on_its_output_file(prefix):
     assert re.fullmatch(r"\d+\.\d+\.\d+", dockerfile_argument(f"{prefix}_VERSION"))
     assert re.fullmatch(r"[0-9a-f]{64}", dockerfile_argument(f"{prefix}_SHA256"))
-    step = download_step(prefix)
-    output = re.search(r"--output (\S+)", step).group(1)
-    assert f'echo "${{{prefix}_SHA256}}  {output}" | sha256sum -c -' in step
+    output = PROBE_MODULE.checked_download(prefix)
+    assert f'echo "${{{prefix}_SHA256}}  {output}" | sha256sum -c -' in PROBE_MODULE.download_step(
+        prefix
+    )
 
 
 @pytest.mark.parametrize("moving_name", ["latest", "stable", "install.sh", "claude.ai/install"])
@@ -206,12 +213,7 @@ def test_the_agent_service_document_builds_the_name_compose_runs():
 
 @pytest.fixture(scope="module")
 def probe() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("agent_service_image_probe", PROBE)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return PROBE_MODULE
 
 
 PLANTED = "/usr/local/planted.bin"
@@ -236,3 +238,13 @@ def test_the_token_search_bite_check_fails_without_exit_zero_and_exactly_the_pla
 def test_the_token_search_bite_check_passes_on_exit_zero_with_exactly_the_planted_path(probe):
     bitten = subprocess.CompletedProcess([], 0, stdout=f"{PLANTED}\n", stderr="")
     assert probe.bite_check_failure(bitten, PLANTED) is None
+
+
+def test_the_login_variable_check_names_the_variables_and_never_their_values(probe):
+    secret_value = "synthetic-value-that-must-not-print"
+    environment = ["PATH=/usr/bin", f"OPENAI_API_KEY={secret_value}", f"CODEX_HOME={secret_value}"]
+
+    names = probe.login_environment_names(environment)
+
+    assert names == ["OPENAI_API_KEY", "CODEX_HOME"]
+    assert secret_value not in str(names)
