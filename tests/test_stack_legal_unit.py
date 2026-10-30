@@ -78,6 +78,24 @@ def test_the_security_headers_stand_at_server_level_and_no_location_overrides_th
     assert not any("add_header" in location for location in locations)
 
 
+def test_every_cache_asks_the_unit_again_before_it_shows_a_stored_page():
+    """A changed text is the one people get once it is written: no cache may answer from a stored
+    copy without asking first, and nothing grants a lifetime or a stale answer."""
+    config = (ROOT / "legal/nginx/default.conf").read_text()
+    value = re.search(r'add_header Cache-Control "([^"]*)" always;', config).group(1)
+    directives = {part.strip().lower().split("=")[0] for part in value.split(",")}
+
+    assert directives & {"no-cache", "no-store"}
+    assert not directives & {
+        "public",
+        "max-age",
+        "s-maxage",
+        "immutable",
+        "stale-while-revalidate",
+        "stale-if-error",
+    }
+
+
 VERSION = metadata.version(appkit_step.DISTRIBUTION)
 PAGES = ("impressum", "datenschutz", "nutzungsbedingungen")
 TEXT_PAGES = PAGES[1:]
