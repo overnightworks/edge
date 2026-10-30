@@ -2,7 +2,7 @@ name: edge
 
 # What all three Traefik instances share: one image digest and one hardening.
 x-traefik: &traefik
-  image: traefik:v3.7.15@sha256:0f6150202bc1fed72a7bd2107460eaa510e5b8a905f3fdb5b84f2c8619c33368
+  image: traefik:v3.7.16@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65
   user: "65534:65534"
   read_only: true
   cap_drop: [ALL]
@@ -77,7 +77,7 @@ services:
 
   keycloak-db:
     profiles: [keycloak]
-    image: postgres:17.11-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     restart: unless-stopped
     # The alpine image's postgres user; the named volume inherits the image's ownership of the data directory.
     user: "70:70"

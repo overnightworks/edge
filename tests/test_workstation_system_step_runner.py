@@ -1,64 +1,73 @@
-"""The system step's Ansible runner: recap reading and the one sudo call around the play."""
+"""The system step's Ansible runner: event reading and the one sudo call around the play."""
 
 from __future__ import annotations
 
-import os
+import json
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from hal.workstation import system_step
-from hal.workstation.system_step import PlaybookRun
+from hal.workstation.system_step import PlaybookFinished, PlaybookRun, PlaybookUnfinished
+from workstation_support import StubSudo
 
-RECAP_LINE = "localhost                  : ok=9    changed={changed}    unreachable={unreachable}    failed={failed}    skipped=2"
+COUNTS = system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 3, "failed": 0, "unreachable": 0})
+FAILED_COUNTS = system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 1, "failed": 1, "unreachable": 0})
+UNREACHABLE_COUNTS = system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 0, "failed": 0, "unreachable": 1})
+FAILED_RESULT = system_step.EVENT_MARK + json.dumps({"event": "result", "status": "failed", "msg": "names no `tunnel:`; nothing was written"})
+UNREACHABLE_RESULT = system_step.EVENT_MARK + json.dumps({"event": "result", "status": "unreachable", "msg": "no route"})
+
+
+def counts_event(**counts: object) -> str:
+    return system_step.EVENT_MARK + json.dumps({"event": "counts", **counts})
+
+
+MALFORMED_COUNTS = [
+    counts_event(changed=0, failed=0.5, unreachable=0),
+    counts_event(changed=0, failed=False, unreachable=0),
+    counts_event(changed=0, failed="0", unreachable=0),
+    counts_event(changed=-1, failed=0, unreachable=0),
+    system_step.EVENT_MARK + '{"event": "counts", "changed": 0, "failed": 1e309, "unreachable": 0}',
+    system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 0, "failed": 0}),
+]
 
 
 @pytest.mark.parametrize(
-    ("returncode", "output", "expected"),
+    ("returncode", "events", "expected"),
     [
-        (0, RECAP_LINE.format(changed=3, unreachable=0, failed=0), PlaybookRun(True, 3)),
-        (0, RECAP_LINE.format(changed=0, unreachable=0, failed=0), PlaybookRun(True, 0)),
-        (2, RECAP_LINE.format(changed=1, unreachable=0, failed=1), PlaybookRun(False, 1)),
-        (4, RECAP_LINE.format(changed=0, unreachable=1, failed=0), PlaybookRun(False, 0)),
-        (1, "ERROR! the playbook could not be read", PlaybookRun(False, 0)),
+        (0, [COUNTS], PlaybookFinished(3)),
+        (2, [FAILED_RESULT, FAILED_COUNTS], PlaybookUnfinished("names no `tunnel:`; nothing was written")),
+        (4, [UNREACHABLE_RESULT, UNREACHABLE_COUNTS], PlaybookUnfinished("no route")),
+        (0, [FAILED_RESULT, COUNTS, COUNTS], PlaybookUnfinished()),
+        (0, [], PlaybookUnfinished()),
+        (0, [system_step.EVENT_MARK + json.dumps({"event": "task"}), COUNTS], PlaybookUnfinished()),
+        (0, [system_step.EVENT_MARK + "not json", COUNTS], PlaybookUnfinished()),
+        (1, [COUNTS], PlaybookUnfinished()),
+        (0, [FAILED_RESULT, COUNTS], PlaybookFinished(3)),
     ],
-    ids=["changed", "converged", "failed task", "unreachable", "no recap"],
+    ids=[
+        "clean counts",
+        "failed task",
+        "unreachable",
+        "two counts events",
+        "no counts event",
+        "unknown event",
+        "unreadable event",
+        "nonzero exit",
+        "rescued failure",
+    ],
 )
-def test_a_run_succeeds_only_with_exit_0_and_a_recap_without_failures(returncode: int, output: str, expected: PlaybookRun) -> None:
-    """Rule 4 and rule 7: a run succeeds only when Ansible exits 0 and its recap counts no failed or unreachable host."""
-    assert system_step.read_recap(returncode, f"PLAY RECAP ***\n{output}\n") == expected
+def test_a_run_finishes_only_with_exit_0_and_one_counts_event_without_failures(returncode: int, events: list[str], expected: PlaybookRun) -> None:
+    """Rule 4 and rule 7: a root run that cannot be read as finished never counts as done, and a handled message is no cause."""
+    assert system_step.read_events(returncode, events) == expected
 
 
-def fake_ansible(tmp_path: Path, script: str) -> Path:
+def fake_ansible(tmp_path: Path, script: str, counts: str = COUNTS) -> Path:
     playbook = tmp_path / "ansible-playbook"
-    playbook.write_text(f"#!/bin/sh\n{script}\necho '{RECAP_LINE.format(changed=2, unreachable=0, failed=0)}'\n")
+    playbook.write_text(f"#!/bin/sh\n{script}\nprintf '%s\\n' '{counts}'\n")
     playbook.chmod(0o755)
     return playbook
-
-
-class StubSudo:
-    """A `sudo` first on PATH: it writes one line per call (its argv, working directory and every ANSIBLE_* it received), then runs the rest.
-
-    `-k` only forgets a ticket, so it is recorded and not executed.
-    """
-
-    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, forgetting_exit_code: int = 0) -> None:
-        self.log = tmp_path / "sudo.log"
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
-        sudo = bin_dir / "sudo"
-        sudo.write_text(
-            "#!/bin/sh\n"
-            f'echo "$* | $(pwd) | $(env | grep \'^ANSIBLE_\' | tr \'\\n\' \' \')" >> {self.log}\n'
-            f'[ "$1" = "-k" ] && exit {forgetting_exit_code}\n'
-            'exec "$@"\n'
-        )
-        sudo.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-
-    def calls(self) -> list[list[str]]:
-        return [[part.strip() for part in line.split(" | ")] for line in self.log.read_text().splitlines()]
 
 
 @pytest.fixture
@@ -66,14 +75,35 @@ def stub_sudo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StubSudo:
     return StubSudo(tmp_path, monkeypatch)
 
 
-def test_the_runner_shows_ansibles_output_and_reads_its_recap(tmp_path: Path, stub_sudo: StubSudo, capfd: pytest.CaptureFixture[str]) -> None:
-    """The output reaches the terminal as it comes, and the run is judged by its recap."""
+@pytest.mark.parametrize(
+    "counts",
+    MALFORMED_COUNTS,
+    ids=["float count", "bool count", "string count", "negative count", "count beyond float range", "missing count"],
+)
+def test_a_counts_line_that_is_not_three_non_negative_integers_leaves_the_run_unfinished(tmp_path: Path, stub_sudo: StubSudo, counts: str) -> None:
+    """Rule 4: the runner never counts a run as done on counts it cannot read, though the play exited 0."""
+    playbook = fake_ansible(tmp_path, "true", counts)
+
+    assert system_step.run_playbook_as_root([str(playbook)]) == PlaybookUnfinished()
+
+
+def test_the_runner_shows_ansibles_output_and_reads_its_events(tmp_path: Path, stub_sudo: StubSudo, capfd: pytest.CaptureFixture[str]) -> None:
+    """The output reaches the terminal as it comes, the run is judged by its events, and no event line is shown."""
     playbook = fake_ansible(tmp_path, "echo 'TASK [Write edge files]'")
 
     run = system_step.run_playbook_as_root([str(playbook)])
 
-    assert run == PlaybookRun(True, 2)
-    assert "TASK [Write edge files]" in capfd.readouterr().out
+    assert run == PlaybookFinished(3)
+    assert capfd.readouterr().out == "TASK [Write edge files]\n"
+
+
+def test_ansibles_stderr_arrives_on_stdout_and_not_on_stderr(tmp_path: Path, stub_sudo: StubSudo, capfd: pytest.CaptureFixture[str]) -> None:
+    playbook = fake_ansible(tmp_path, "echo '[WARNING]: a warning' >&2")
+
+    system_step.run_playbook_as_root([str(playbook)])
+
+    shown = capfd.readouterr()
+    assert (shown.out, shown.err) == ("[WARNING]: a warning\n", "")
 
 
 def test_the_play_runs_under_sudo_in_its_own_directory_and_sudo_forgets_the_ticket_after_it(tmp_path: Path, stub_sudo: StubSudo) -> None:
@@ -83,7 +113,7 @@ def test_the_play_runs_under_sudo_in_its_own_directory_and_sudo_forgets_the_tick
     system_step.run_playbook_as_root([str(playbook), "--diff"])
 
     play_call, forget_call = stub_sudo.calls()
-    assert play_call[0] == f"env PYTHONDONTWRITEBYTECODE=1 {playbook} --diff"
+    assert play_call[0] == f"env PYTHONDONTWRITEBYTECODE=1 sh -c exec \"$@\" 2>&1 sh {playbook} --diff"
     assert play_call[1] == str(system_step.PLAYBOOK.parent)
     assert forget_call[0] == "-k"
 
@@ -108,7 +138,7 @@ def test_sudo_forgets_the_ticket_after_a_failing_play(tmp_path: Path, stub_sudo:
 
     run = system_step.run_playbook_as_root([str(playbook)])
 
-    assert not run.succeeded
+    assert isinstance(run, PlaybookUnfinished)
     assert stub_sudo.calls()[-1][0] == "-k"
 
 

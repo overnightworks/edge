@@ -381,12 +381,40 @@ def write_executable(path: Path, text: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+class StubSudo:
+    """A `sudo` first on PATH: it writes one line per call (its argv, working directory and every ANSIBLE_* it received), then runs the rest.
+
+    `-k` only forgets a ticket, so it is recorded and not executed.
+    """
+
+    def __init__(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, forgetting_exit_code: int = 0) -> None:
+        self.log = tmp_path / "sudo.log"
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sudo = bin_dir / "sudo"
+        sudo.write_text(
+            "#!/bin/sh\n"
+            f'echo "$* | $(pwd) | $(env | grep \'^ANSIBLE_\' | tr \'\\n\' \' \')" >> {self.log}\n'
+            f'[ "$1" = "-k" ] && exit {forgetting_exit_code}\n'
+            'exec "$@"\n'
+        )
+        sudo.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+
+    def calls(self) -> list[list[str]]:
+        return [[part.strip() for part in line.split(" | ")] for line in self.log.read_text().splitlines()]
+
+
+TASK_MESSAGE = "/etc/cloudflared/config.yml names no `tunnel:`; nothing was written"
+
+
 class FakePlaybook:
     """Ansible as the system step sees it: a converging playbook, whose check finds a change until a run has applied it."""
 
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
         self.succeeds = True
+        self.failure = ""
         self.applied = False
 
     def __call__(self, argv: Sequence[str]) -> system_step.PlaybookRun:
@@ -394,7 +422,9 @@ class FakePlaybook:
         changed = 0 if self.applied else 1
         if self.succeeds and "--check" not in argv:
             self.applied = True
-        return system_step.PlaybookRun(self.succeeds, changed)
+        if not self.succeeds:
+            return system_step.PlaybookUnfinished(self.failure)
+        return system_step.PlaybookFinished(changed)
 
 
 @dataclass

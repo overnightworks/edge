@@ -700,11 +700,11 @@ Type <span class="w">yes</span> to set up 1 open row: yes
 <span class="w">✓ setup up to date</span> <span class="d">· 5 unchanged · 21s</span></pre>
       </figure>
       <figure>
-        <figcaption><span class="tag fail">neu S2, kaputt</span> gescheitert: Ansible lief und brach ab, sein Text steht darüber</figcaption>
+        <figcaption><span class="tag fail">neu S2, kaputt</span> gescheitert: Ansible lief und brach ab, die Meldung der gescheiterten Aufgabe ist der Grund der roten Zeile</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="n">… Plan, dann das yes</span>
 <span class="d">… Ansible: PLAY RECAP, fatal …</span>
-<span class="r">  ✗</span> system          failed         <span class="d">Ansible did not finish · its output above says why</span>
+<span class="r">  ✗</span> system          failed         <span class="d">/etc/cloudflared/config.yml names no `tunnel:`; nothing was written</span>
 <span class="d">  · secrets         not run</span>
 <span class="rw">error:</span> setup stopped at system · /etc may be partial
 <span class="c">next:</span> hal setup</pre>
