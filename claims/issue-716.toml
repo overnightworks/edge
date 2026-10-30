@@ -1,8 +1,0 @@
-claim_id = "cf2f17e9ae264d73bdf57d19b88414ec"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "ec12836abddec46e45f71527e3bd756790240b0c"
-branch = "claude/issue-716-s10-of-472-programs-markers-shebangs"
-scope = ["agent-service/device_sign_in.py", "agent-service/mcp_signer.py", "agent-service/signing_key.py", "agent-service/smoke.py", "keycloak/secret-check/secret_check.py", "scripts/agent_service_lock.py"]
-opened_commit = "ef4f5ae67bffb3b2abe7bf68c1ca65b2d75f253c"
-whole_reason = "Six unrelated programs whose findings share one rule set and one reasoned-marker form; each is a one-line edit per finding, and a split would pay six claims for them."
