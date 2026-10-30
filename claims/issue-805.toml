@@ -1,7 +1,0 @@
-claim_id = "aa0ce83b6d73483b9e53def3d0021f41"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "8bc1963e5265dd5a32ac95abe68c19d9d28a7ae5"
-branch = "claude/issue-805-sonar-scans-agent-service"
-scope = [".github/workflows/ci.yml", "sonar-project.properties"]
-opened_commit = "08ad2cf6b17b16aacc0ecfe23a6d37c78a0185b2"
