@@ -867,8 +867,15 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 - A call between apps carries a signed, short-lived token whose audience is the callee: an issuer token, or the agent-service capability (agent-runtime decision record 0001). Never a static secret shared between apps.
 
 **§10 rule 4: singleton by default; spreading and scaling are items.**
-- Today's state is allowed: in-process state, SQLite, local files.
-- An item that spreads or scales a service has the matching checklist as its done-when.
+- **Contracts and data handover are built scalable from the start; the mechanics follow when they are needed** (ruled 30.10.2026, [hal#755](https://github.com/overnightworks/hal/issues/755)). Every shared service (a service edge runs for several apps, as §10 rule 7 defines them; today the agent service):
+  - is reachable over the network;
+  - keeps no state that matters only in its process;
+  - hands files over through its API;
+  - uses the common door (§10 rule 7);
+  - reports its load numbers.
+- A load balancer and a second machine's setup come with the first rented GPU.
+- What stays allowed: an app keeps its own single-instance state (in-process state, SQLite, local files), as the goal "Scale" above lists. A shared service does not.
+- An item that spreads or scales a service has the matching checklist below as its done-when; the checklists are the mechanics that items build when a caller needs them.
 - **Any second machine** (spread or scale):
   - encrypted links between machines;
   - routing to a remote host, driven by the catalog (edge);
