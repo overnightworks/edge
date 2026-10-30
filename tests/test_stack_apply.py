@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import support.stack_apply as stack_apply_support
 import yaml
-from git_support import (
+from support.git_support import (
     advance,
     checkout_state,
     head_of,

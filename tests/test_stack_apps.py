@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 import support.stack_apps as stack_apps_support
-from app_support import (
+from support.app_support import (
     COMPOSE,
     FLEET,
     KEY,
@@ -18,7 +18,7 @@ from app_support import (
     Clock,
     ScriptedDocker,
 )
-from git_support import head_of, plain_git
+from support.git_support import head_of, plain_git
 from support.stack_apps import (
     FIRST,
     SECOND,

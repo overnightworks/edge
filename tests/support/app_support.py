@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
-from git_support import plain_git
+from support.git_support import plain_git
 
 from hal.stack import apps, compose, switches
 

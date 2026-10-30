@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from workstation_support import RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, write_backup_status
+from support.workstation_support import RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, write_backup_status
 
 from hal.workstation.layout import Layout
 

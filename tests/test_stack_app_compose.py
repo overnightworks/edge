@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from app_support import KEY, SENTINEL
+from support.app_support import KEY, SENTINEL
 
 from hal.stack import app_compose, compose
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from support.terminal_support import put_stdout_on_a_terminal
 from support.workstation_secrets_report import report_of
-from workstation_support import (
+from support.workstation_support import (
     FAKE_SECRET_VALUE,
     TEST_MANIFEST,
     FakeProbe,

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 import support.hal_stack_commands as hal_stack_commands_support
-from git_support import hal_program, run_hal
+from support.git_support import hal_program, run_hal
 from support.hal_stack_commands import (
     UNIT,
     Guard,

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import support.throwaway_home as throwaway_home
-from git_support import (
+from support.git_support import (
     SOURCE,
     assert_quiet_run,
     elsewhere,
