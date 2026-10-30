@@ -77,7 +77,7 @@ def post_form(
     if timeout <= 0:
         raise SignInFailed(f"the {path} endpoint gave no answer to read")
     body = urllib.parse.urlencode({**form, "client_id": CLIENT, "client_secret": client_secret})
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310 - the URL is the fixed https issuer address of the service
         f"{OIDC}/{path}", body.encode(), headers={"User-Agent": USER_AGENT}
     )
     try:
@@ -211,7 +211,7 @@ def sign_in(
     verifier, challenge = pkce_pair()
     authorization = device_authorization(client_secret, challenge, urlopen, clock)
     expiry = clock() + authorization.expires_in
-    print(
+    print(  # noqa: T201 - the sign-in prompt for the person at the terminal
         f"Open {authorization.link} and confirm the code {authorization.user_code}",
         file=sys.stderr,
     )
