@@ -232,8 +232,10 @@ The plan names the step in one line. After your yes it takes a Keycloak-only bac
 `pre-apply` (the last ten are kept) and restore-tests that snapshot, observes both realms, runs
 config-cli, observes again and prints one line per change, with the seconds the backup and the
 restore test took. A failed backup or restore test applies nothing and ends the run partial with
-exit 1, as does a Keycloak that should run and cannot be read ("realm: Keycloak could not be read;
-not checked"). `hal backup` runs in a process group of its own, so Ctrl-C does not reach it. A step
+exit 1. A Keycloak that should run and cannot be read is skipped: the step prints a `!` row,
+`keycloak  realm skipped` with the reason, and the run ends partial (`error: partial, keycloak realm
+skipped`, `next: hal apply`) with exit 1; when that is the only change, hal asks no yes.
+`hal backup` runs in a process group of its own, so Ctrl-C does not reach it. A step
 that outlives its time or is interrupted sends it SIGTERM, as a systemd stop does, and waits two
 minutes for its cleanup, which a further Ctrl-C does not shorten; only then it kills the group. A
 failure after config-cli started ends the run with exit 1 and names the snapshot; the way back is
