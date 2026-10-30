@@ -1,0 +1,7 @@
+claim_id = "6b7ef3b0569046188c6c3f6902754cd7"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "53b533174717f7b93cbee8d634051a61ea0363df"
+branch = "claude/issue-740-legal-cache-revalidate"
+scope = ["docs/stack.md", "legal/nginx/default.conf", "tests/test_stack_legal_unit.py"]
+opened_commit = "a834f09ae882fe7ef0a1dd032f436a7fbee4e7b1"
