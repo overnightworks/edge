@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 import sys
 from importlib.metadata import version
 from pathlib import Path
@@ -86,14 +85,16 @@ def test_the_callback_reports_counts_and_the_message_of_the_last_failed_task(
 
 
 def test_an_unreachable_host_is_an_unfinished_run_with_the_connection_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The callback's unreachable branch: a refused ssh connection carries ssh's own message as the reason."""
-    assert shutil.which("ssh"), "the unreachable case needs a local ssh binary"
-    refused_ssh = "localhost ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=9"
+    """The callback's unreachable branch: ssh's exit 255 is unreachable, and the reason carries what ssh printed."""
+    refusing_ssh = tmp_path / "refusing-ssh"
+    refusing_ssh.write_text("#!/bin/sh\necho 'hal-test: connection refused by fixture' >&2\nexit 255\n")
+    refusing_ssh.chmod(0o755)
+    host_line = f"localhost ansible_connection=ssh ansible_host=fixture ansible_ssh_executable={refusing_ssh}"
 
-    run = run_scratch_play(tmp_path, monkeypatch, CHANGED_SKIPPED_AND_HANDLED, host_line=refused_ssh)
+    run = run_scratch_play(tmp_path, monkeypatch, CHANGED_SKIPPED_AND_HANDLED, host_line=host_line)
 
     assert isinstance(run, PlaybookUnfinished)
-    assert "ssh" in run.reason
+    assert "hal-test: connection refused by fixture" in run.reason
 
 
 def test_ansibles_own_text_still_shows_and_no_event_line_does(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]) -> None:

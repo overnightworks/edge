@@ -45,7 +45,6 @@ MALFORMED_COUNTS = [
         (0, [system_step.EVENT_MARK + "not json", COUNTS], PlaybookUnfinished()),
         (1, [COUNTS], PlaybookUnfinished()),
         (0, [FAILED_RESULT, COUNTS], PlaybookFinished(3)),
-        *[(0, [event], PlaybookUnfinished()) for event in MALFORMED_COUNTS],
     ],
     ids=[
         "clean counts",
@@ -57,12 +56,6 @@ MALFORMED_COUNTS = [
         "unreadable event",
         "nonzero exit",
         "rescued failure",
-        "float count",
-        "bool count",
-        "string count",
-        "negative count",
-        "count beyond float range",
-        "missing count",
     ],
 )
 def test_a_run_finishes_only_with_exit_0_and_one_counts_event_without_failures(returncode: int, events: list[str], expected: PlaybookRun) -> None:
@@ -70,9 +63,9 @@ def test_a_run_finishes_only_with_exit_0_and_one_counts_event_without_failures(r
     assert system_step.read_events(returncode, events) == expected
 
 
-def fake_ansible(tmp_path: Path, script: str) -> Path:
+def fake_ansible(tmp_path: Path, script: str, counts: str = COUNTS) -> Path:
     playbook = tmp_path / "ansible-playbook"
-    playbook.write_text(f"#!/bin/sh\n{script}\nprintf '%s\\n' '{COUNTS}'\n")
+    playbook.write_text(f"#!/bin/sh\n{script}\nprintf '%s\\n' '{counts}'\n")
     playbook.chmod(0o755)
     return playbook
 
@@ -80,6 +73,18 @@ def fake_ansible(tmp_path: Path, script: str) -> Path:
 @pytest.fixture
 def stub_sudo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> StubSudo:
     return StubSudo(tmp_path, monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "counts",
+    MALFORMED_COUNTS,
+    ids=["float count", "bool count", "string count", "negative count", "count beyond float range", "missing count"],
+)
+def test_a_counts_line_that_is_not_three_non_negative_integers_leaves_the_run_unfinished(tmp_path: Path, stub_sudo: StubSudo, counts: str) -> None:
+    """Rule 4: the runner never counts a run as done on counts it cannot read, though the play exited 0."""
+    playbook = fake_ansible(tmp_path, "true", counts)
+
+    assert system_step.run_playbook_as_root([str(playbook)]) == PlaybookUnfinished()
 
 
 def test_the_runner_shows_ansibles_output_and_reads_its_events(tmp_path: Path, stub_sudo: StubSudo, capfd: pytest.CaptureFixture[str]) -> None:
