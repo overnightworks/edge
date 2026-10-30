@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe of the image swap of a built service (#482 D1a-D1d, #91): a throwaway compose project,
 HOME and copy of the repository, and a unit `built-probe` with `run.build` whose one service has
 `pull_policy: never`. Its tags are made with `docker tag` from busybox images that are already
@@ -22,6 +21,7 @@ Needs an existing, empty --scratch directory, `uv` (it runs `uv sync` in the cop
 images busybox:1.36 and busybox:1.37.0.
 """
 
+# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse
@@ -30,6 +30,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -91,8 +92,8 @@ class Drive:
     # --- Docker -----------------------------------------------------------------------------
 
     def docker(self, *arguments: str) -> str:
-        result = subprocess.run(
-            ["docker", *arguments], capture_output=True, text=True, env=self.environment,
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["docker", *arguments], capture_output=True, text=True, env=self.environment,  # noqa: S607 - docker is found on PATH by design
             cwd=self.copy if self.copy.exists() else REPO, check=False, timeout=COMPOSE_SECONDS,
         )  # fmt: skip
         if result.returncode != 0:
@@ -156,7 +157,7 @@ class Drive:
         )
         path.write_text(text)
         edge_copy.publish(self.copy, f"probe: {UNIT} names {reference}")
-        assert self.guard
+        assert self.guard  # noqa: S101 - narrows the type of the guard that the setup sets
         self.guard.expect(edge_copy.copy_compose_command(self.copy), once=False)
 
     def hal(self, typed: bytes = b"yes\n", exit_code: int = 0) -> str:
@@ -227,7 +228,7 @@ class Drive:
         for _ in range(100):
             if self.container()["state"] in {"restarting", "exited"}:
                 return
-            subprocess.run(["sleep", "0.2"], check=True)
+            time.sleep(0.2)
         raise ProbeFailed("the container that exits at once never restarted")
 
     def d1c_a_removed_tag(self) -> None:
@@ -280,7 +281,7 @@ class Drive:
         if self.guard is not None:
             self.compose("down", "--volumes", "--remove-orphans")
         for reference in self.tags:
-            subprocess.run(["docker", "rmi", reference], capture_output=True, check=False)
+            subprocess.run(["docker", "rmi", reference], capture_output=True, check=False)  # noqa: S603, S607 - argv is built by the program itself and docker is found on PATH by design
         if self.guard is not None:
             self.guard.expect_clean_teardown()
 

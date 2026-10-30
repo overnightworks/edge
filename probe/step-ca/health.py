@@ -17,4 +17,4 @@ def proof_2_health(probe) -> None:
         HEALTHY_SECONDS,
         lambda: health_of(probe, "step-ca") == "healthy",
     )
-    print(f"proof 2 health held: the healthcheck of step-ca reports {health_of(probe, 'step-ca')}")
+    print(f"proof 2 health held: the healthcheck of step-ca reports {health_of(probe, 'step-ca')}")  # noqa: T201 - this in-container check answers on standard output
