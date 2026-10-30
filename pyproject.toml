@@ -70,7 +70,7 @@ name = "the door sits above stack, backup and workstation, which sit above expos
 type = "layers"
 containers = ["hal"]
 layers = [
-    "backup_commands : check_commands : cli : config : exposure_rows : grammar : legal_commands : rename_commands : rename_rows : secrets_commands : setup_commands : stack_commands : version",
+    "backup_commands : check_commands : cli : config : exposure_rows : grammar : legal_commands : rename_commands : rename_rows : secrets_commands : secrets_rows : setup_commands : stack_commands : version",
     "stack | backup | workstation",
     "exposure",
     "output",
