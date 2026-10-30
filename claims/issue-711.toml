@@ -1,8 +1,0 @@
-claim_id = "cea26e825f74495a8b4eea0847f82606"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "ec12836abddec46e45f71527e3bd756790240b0c"
-branch = "claude/issue-711-s5-of-472-agent-service-probe-markers"
-scope = ["docs/agent-service.md", "probe/agent-service/app_tools.py", "probe/agent-service/capture.py", "probe/agent-service/cells_12b.py", "probe/agent-service/containment.py", "probe/agent-service/egress.py", "probe/agent-service/image.py", "probe/agent-service/issuer.py", "probe/agent-service/login_checks.py", "probe/agent-service/refusals.py", "probe/agent-service/unit.py"]
-opened_commit = "608c46a5ffea9cde0db4a5a4599f7ec10dd12797"
-whole_reason = "One program family: ten probe files whose findings share one rule set and one reasoned-marker form; each file is a one-line edit per finding, and a split would pay ten claims for them."
