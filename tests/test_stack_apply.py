@@ -1,10 +1,8 @@
 """`hal apply --local`, `hal stop` and `hal start` against a scripted Compose and a scripted
 setup check: no containers, and a `tmp_path` HOME so that no test touches the real switches."""
 
-import dataclasses
 import errno
 import fcntl
-import hashlib
 import io
 import json
 import os
@@ -13,39 +11,78 @@ import signal
 import stat
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager, nullcontext
-from dataclasses import dataclass, field
-from datetime import datetime
-from functools import partial
+from contextlib import nullcontext
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+import support.stack_apply as stack_apply_support
 import yaml
 from git_support import (
     advance,
     checkout_state,
-    committed_main,
     head_of,
     local_commit,
     plain_git,
     subjects,
-    with_origin,
 )
-from test_stack_core import bind, bind_core_files, sha256
-from test_stack_plan_rows import detail_lines, find_row, plain, row_at
+from support.stack_apply import (
+    APP_EXITED,
+    DISABLED,
+    DOCKER_GID,
+    ENABLED,
+    FOLLOWER_FILE,
+    KEYCLOAK_ENABLED,
+    NOT_SET_UP_LINE,
+    NOW,
+    OLD_IMAGE,
+    PROBE_ENABLED,
+    RECREATE_FOLLOWER,
+    RECREATE_TRAEFIK,
+    REPOSITORY,
+    STEP_CA_BUMP,
+    STEP_CA_ON,
+    STEP_CA_SERVICES,
+    SWITCHED_OFF_AT,
+    TWO_SETUPS,
+    ZONE,
+    applied,
+    apply_lock,
+    apply_lock_held,
+    bind_traefik_mcp_files,
+    edge_tree,
+    edit_traefik_yml,
+    follower_digest,
+    interrupted_at_the_prompt,
+    marker,
+    put_probe_in_b,
+    put_unit_in,
+    short,
+    switch_off,
+    up_calls,
+    write_fleet,
+    writing_environment,
+)
+from support.stack_apply_fakes import (
+    IMAGE,
+    LABELLED_IMAGE_ID,
+    NOT_FOUND,
+    OTHER_LABELS,
+    STEP_CA_IMAGE,
+    InterruptedWaitForLock,
+    ScriptedGit,
+    definition_hash,
+    resolved_configuration,
+)
+from support.stack_core import bind, sha256
+from support.stack_plan_rows import detail_lines, find_row, plain, row_at
 
 from hal.stack import (
     apply,
-    apps,
-    barrier,
     catalog,
     checkout,
     compose,
     core,
     emergency,
-    environment,
     setup,
     switches,
     tunnel,
@@ -54,587 +91,61 @@ from hal.stack.plan_rows import PlanEvent
 from hal.stack.realm import reconcile
 from hal.stack.unit_plans import ImageReference, KeptImage, plan_kept_images
 
-REPOSITORY = Path(__file__).resolve().parents[1]
-PROJECT_PREFIX = 6  # docker compose --project-directory D --file F
-STEP_CA_SERVICES = ("step-ca", "traefik-mcp-acme-owner", "traefik-mcp")
-ENABLED = "services:\n  step-ca:\n    run: {enabled: true, setup: step-ca/init}\n"
-DISABLED = "services:\n  step-ca:\n    run: {enabled: false, setup: step-ca/init}\n"
-SWITCHED_OFF_AT = "2026-10-17T22:10:04+02:00"
+(
+    agent_service_unit,
+    applied_core,
+    at_terminal,
+    core_files,
+    home,
+    ingress,
+    missing_setup,
+    origin,
+    real_main,
+    realm_backup,
+    realm_unit,
+    repository,
+    scripted,
+    scripted_git,
+    setup_check,
+    setup_run,
+    start,
+    state,
+    step_ca_applied,
+    switch,
+    unreadable_profile_bind,
+) = (
+    stack_apply_support.agent_service_unit,
+    stack_apply_support.applied_core,
+    stack_apply_support.at_terminal,
+    stack_apply_support.core_files,
+    stack_apply_support.home,
+    stack_apply_support.ingress,
+    stack_apply_support.missing_setup,
+    stack_apply_support.origin,
+    stack_apply_support.real_main,
+    stack_apply_support.realm_backup,
+    stack_apply_support.realm_unit,
+    stack_apply_support.repository,
+    stack_apply_support.scripted,
+    stack_apply_support.scripted_git,
+    stack_apply_support.setup_check,
+    stack_apply_support.setup_run,
+    stack_apply_support.start,
+    stack_apply_support.state,
+    stack_apply_support.step_ca_applied,
+    stack_apply_support.switch,
+    stack_apply_support.unreadable_profile_bind,
+)  # fmt: skip
+
 LATER_SWITCH_AT = "2026-10-17T23:30:00+02:00"
-PROBE_ENABLED = ENABLED + "  probe:\n    run: {enabled: true}\n"
 PROBE_DISABLED = ENABLED + "  probe:\n    run: {enabled: false}\n"
-NOT_FOUND = barrier.Answer(404, b"404 page not found\n", "probe")  # the barrier of unit `probe`
-PLAIN_NOT_FOUND = barrier.Answer(404, b"404 page not found\n")  # Traefik's no-route answer
-WHOAMI = barrier.Answer(200, b"Hostname: abc\n")
-ZONE = "edge-fixture.invalid"
-DOCKER_GID = 998
-NOW = datetime.fromisoformat("2026-10-18T08:00:00+02:00")
-NEVER_RUN = {"down", "-v", "--volumes", "-V", "--renew-anon-volumes"}
 # The labels beside the definition hash in a real `ps --format json` line (frozen from #87 Q1,
 # Compose 2.40.3): another label's value may hold commas and an `=`.
-LABELLED_IMAGE_ID = "sha256:cd370f99dbfb63a9541c3787c576352d0d22e78fa33ef9d831f97cbeee9667e9"
-OTHER_LABELS = (
-    f"com.docker.compose.image={LABELLED_IMAGE_ID},"
-    "com.docker.compose.oneoff=False,edge.note=x,y=z,com.docker.compose.depends_on="
-)
 # The `Image` of a real `ps --format json` line is the reference the container was created from,
 # spelled as its resolved `image` was then (frozen from #91 Z1, Compose 2.40.3).
-IMAGE = (
-    "traefik/whoami:v1.12.0@sha256:c4717a8d1f0134a7444e24f881160e033991f23027c6c5a9a3f8fd22e70d1d44"
-)
 # compose.yaml's pins, `name:tag@sha256:<64>`, and a bump of each as a pull would bring it.
-TRAEFIK_IMAGE = (
-    "traefik:v3.7.14@sha256:575fa15b135078fe5e50aa847987d96dbddd7b093c172429618404df73f3fa7c"
-)
-SOCKET_PROXY_IMAGE = (
-    "wollomatic/socket-proxy:1.13.1"
-    "@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002"
-)
-KEYCLOAK_IMAGE = (
-    "quay.io/keycloak/keycloak:26.8.1"
-    "@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244"
-)
-STEP_CA_IMAGE = (
-    "smallstep/step-ca:0.30.2"
-    "@sha256:a2b17872915c193259b75a5474c398326f41bd199f0842093e52cf4182bc8270"
-)
-STEP_CA_BUMP = f"smallstep/step-ca:0.30.3@sha256:{'1' * 64}"
 TRAEFIK_BUMP = f"traefik:v3.7.15@sha256:{'2' * 64}"
 SOCKET_PROXY_BUMP = f"wollomatic/socket-proxy:1.13.2@sha256:{'3' * 64}"
-
-
-def definition_hash(service: str, version: int = 1) -> str:
-    """A `docker compose config --hash` value: 64 hex digits per service definition."""
-    return hashlib.sha256(f"{service} v{version}".encode()).hexdigest()
-
-
-def resolved_configuration() -> dict:
-    def volume(name: str) -> list[dict]:
-        return [{"type": "volume", "source": name, "target": "/data"}]
-
-    return {
-        "services": {
-            "socket-proxy": {"image": SOCKET_PROXY_IMAGE, "restart": "unless-stopped"},
-            "traefik": {
-                "image": TRAEFIK_IMAGE,
-                "restart": "unless-stopped",
-                "environment": {"EDGE_DOMAIN": "probe.test"},
-                "depends_on": {"socket-proxy": {"condition": "service_started", "required": True}},
-            },
-            "hello": {
-                "image": IMAGE,
-                "profiles": ["probe"],
-                "labels": {"traefik.enable": "true", "edge.name": "hello"},
-            },
-            "keycloak": {
-                "image": KEYCLOAK_IMAGE,
-                "restart": "unless-stopped",
-                "profiles": ["keycloak"],
-            },
-            "step-ca": {
-                "image": STEP_CA_IMAGE,
-                "restart": "unless-stopped",
-                "profiles": ["step-ca"],
-                "volumes": volume("step-ca"),
-            },
-            "traefik-mcp-acme-owner": {
-                "image": TRAEFIK_IMAGE,
-                "restart": "no",
-                "profiles": ["step-ca"],
-                "volumes": volume("traefik-mcp-acme"),
-            },
-            "traefik-mcp": {
-                "image": TRAEFIK_IMAGE,
-                "restart": "unless-stopped",
-                "profiles": ["step-ca"],
-                "volumes": volume("traefik-mcp-acme"),
-                "depends_on": {
-                    "traefik-mcp-acme-owner": {"condition": "service_completed_successfully"}
-                },
-            },
-        }
-    }
-
-
-@dataclass
-class ScriptedCompose:
-    """Compose over a table of service -> container state; records every call.
-
-    Each service has a definition hash, as `config --hash` answers it, and each container the
-    hash it was created from as its config-hash label and the image it was created from as its
-    `Image`; a container put in directly carries the current ones. Like Compose, `up` recreates a
-    container whose label differs from its service's hash (it gets a new id) unless
-    `--no-recreate` is given, and always with `--force-recreate`. Edge never takes a project down
-    or renews its volumes, so `down`, `-v` and `--renew-anon-volumes` fail the test that runs them
-    (#85 P13, cell U14, #87 D15)."""
-
-    containers: dict[str, str] = field(default_factory=dict)
-    container_ids: dict[str, int] = field(default_factory=dict)
-    definitions: dict[str, str] = field(default_factory=dict)  # service -> hash, if not v1
-    labels: dict[str, str | None] = field(default_factory=dict)  # service -> its container's
-    # service -> the image its container was created from; None: its ps line names no `Image`
-    images: dict[str, str | None] = field(default_factory=dict)
-    # reference -> the id Docker gives it now, if not the one of OTHER_LABELS' image label; "" is a
-    # tag that is not built (`image ls` answers nothing), None a lookup that exits 1
-    image_ids: dict[str, str | None] = field(default_factory=dict)
-    hash_answer: str | None = None  # what `config --hash` answers instead of the hashes
-    containers_created: int = 0
-    volumes: dict[str, str] = field(default_factory=dict)  # volume key -> what it holds
-    failing_verb: str | None = None
-    failure_line: str = "last line"  # the last line a failing verb writes
-    # `up` creates a new container of these but cannot start it: it stays created, `up` exits 1
-    unstartable: set[str] = field(default_factory=set)
-    starts_nothing: bool = False
-    after_up: Callable[[], None] | None = None  # what changes in the world once `up` returned
-    # a container of these dies right after `up` starts it and Docker restarts it: the first `ps`
-    # after the `up` still sees it running, every later one restarting
-    crash_loops: set[str] = field(default_factory=set)
-    just_started: set[str] = field(default_factory=set)
-    calls: list[list[str]] = field(default_factory=list)
-    config: dict = field(default_factory=lambda: {"name": "edge", **resolved_configuration()})
-    realm_checksums: dict = field(default_factory=lambda: {"master": {}, "hallucinai": {}})
-    realm_applies: int = 0  # how often config-cli ran
-    config_cli_fails: bool = False
-
-    def run(
-        self, command: list[str], _timeout: int, _stdin: str | None = None
-    ) -> subprocess.CompletedProcess[str]:
-        if command[:2] == ["docker", "image"]:
-            image_id = self.image_ids.get(command[-1].removeprefix("reference="), LABELLED_IMAGE_ID)
-            return subprocess.CompletedProcess(command, int(image_id is None), image_id or "", "")
-        self.calls.append(command[PROJECT_PREFIX:])
-        _, profile, verb, *arguments = command[PROJECT_PREFIX:]
-        refused = NEVER_RUN & {verb, *arguments}
-        assert not refused, f"edge ran docker compose {verb} {' '.join(arguments)}"
-        if verb == self.failing_verb:
-            return subprocess.CompletedProcess(
-                command, 1, "", f"{verb} broke\n{self.failure_line}\n\n"
-            )
-        if verb == "run" and self.config_cli_fails and "realm-observer" not in arguments:
-            return subprocess.CompletedProcess(command, 1, "", "config-cli broke\n")
-        output = getattr(self, f"verb_{verb}")(profile, arguments)
-        if verb == "up" and self.unstartable & set(arguments):
-            return subprocess.CompletedProcess(command, 1, output, "up broke\ncannot start")
-        return subprocess.CompletedProcess(command, 0, output, "")
-
-    def verb_config(self, _profile: str, arguments: list[str]) -> str:
-        if arguments[0] != "--hash":
-            return json.dumps(self.config)
-        if self.hash_answer is not None:
-            return self.hash_answer
-        return "".join(
-            f"{service} {self.definition(service)}\n" for service in arguments[1].split(",")
-        )
-
-    def verb_ps(self, _profile: str, _arguments: list[str]) -> str:
-        output = "\n".join(
-            json.dumps(self.ps_line(service, state)) for service, state in self.containers.items()
-        )
-        for service in self.just_started & self.crash_loops:
-            self.containers[service] = "restarting"
-        self.just_started.clear()
-        return output
-
-    def verb_run(self, _profile: str, arguments: list[str]) -> str:
-        """The realm's one-off containers: the observer's two answers and config-cli's run."""
-        if "realm-observer" not in arguments:
-            self.realm_applies += 1
-            return ""
-        if "--import-checksums" in arguments:
-            return json.dumps(self.realm_checksums)
-        return json.dumps({"hallucinai": {}})
-
-    def verb_up(self, _profile: str, arguments: list[str]) -> str:
-        if self.starts_nothing:
-            return ""
-        one_shots = compose.one_shot_services(self.config)
-        flags = {argument for argument in arguments if argument.startswith("-")}
-        for service in (argument for argument in arguments if argument not in flags):
-            if self.needs_a_new_container(service, flags):
-                self.create_container(service)
-            if service in self.unstartable:
-                self.containers[service] = "created"
-                continue
-            self.containers[service] = "exited" if service in one_shots else "running"
-            self.just_started.add(service)
-            for volume in compose.named_volumes(self.config["services"][service]):
-                self.volumes.setdefault(volume, "created by up")
-        if self.after_up:
-            self.after_up()
-        return ""
-
-    def ps_line(self, service: str, state: str) -> dict:
-        line = {"Service": service, "State": state, "ExitCode": 0}
-        if (image := self.image_of(service)) is not None:
-            line["Image"] = image
-        return line | {"Labels": self.labels_of(service)}
-
-    def definition(self, service: str) -> str:
-        return self.definitions.get(service, definition_hash(service))
-
-    def configured_image(self, service: str) -> str | None:
-        return self.config["services"][service].get("image")
-
-    def image_of(self, service: str) -> str | None:
-        return self.images.get(service, self.configured_image(service))
-
-    def change_image(self, service: str, reference: str) -> None:
-        """compose.yaml now names another image for the service, which changes its definition as
-        in Compose; its container keeps the image it was created from."""
-        if service in self.containers:
-            self.images[service] = self.image_of(service)
-        self.config["services"][service]["image"] = reference
-        self.definitions[service] = hashlib.sha256(f"{service} {reference}".encode()).hexdigest()
-
-    def change_definition(self, service: str) -> None:
-        """The checkout now defines the service otherwise than its container was created."""
-        self.definitions[service] = definition_hash(service, version=2)
-
-    def labels_of(self, service: str) -> str:
-        config_hash = self.labels.get(service, self.definition(service))
-        if config_hash is None:
-            return OTHER_LABELS
-        return f"{OTHER_LABELS},com.docker.compose.config-hash={config_hash}"
-
-    def create_container(self, service: str) -> None:
-        self.containers_created += 1
-        self.container_ids[service] = self.containers_created
-        self.labels[service] = self.definition(service)
-        self.images[service] = self.configured_image(service)
-
-    def put_containers(self, states: dict[str, str]) -> None:
-        """Containers that exist before the command, each with its own id."""
-        for service, container_state in states.items():
-            self.create_container(service)
-            self.containers[service] = container_state
-
-    def needs_a_new_container(self, service: str, flags: set[str]) -> bool:
-        if service not in self.containers or "--force-recreate" in flags:
-            return True
-        changed = self.labels.get(service, self.definition(service)) != self.definition(service)
-        return changed and "--no-recreate" not in flags
-
-    def verb_stop(self, _profile: str, arguments: list[str]) -> str:
-        for service in arguments:
-            if self.containers.get(service) == "running":
-                self.containers[service] = "exited"
-        return ""
-
-    def verb_rm(self, _profile: str, arguments: list[str]) -> str:
-        for service in arguments[1:]:
-            self.containers.pop(service, None)
-            self.container_ids.pop(service, None)
-            self.labels.pop(service, None)
-            self.images.pop(service, None)
-        return ""
-
-    def changing_verbs(self) -> list[str]:
-        return [call[2] for call in self.calls if call[2] not in {"config", "ps"}]
-
-
-@dataclass
-class RealmBackup:
-    """hal as the realm step calls it: what it was asked, and the part that fails."""
-
-    asked: list[str] = field(default_factory=list)
-    failing: str | None = None
-
-    def pre_apply(self) -> str:
-        return self._ask("backup")
-
-    def restore_test(self, snapshot: str) -> None:
-        assert snapshot == "ab12cd34"
-        self._ask("restore test")
-
-    def _ask(self, part: str) -> str:
-        self.asked.append(part)
-        if part == self.failing:
-            raise reconcile.RealmError(f"{part} broke")
-        return "ab12cd34"
-
-
-@dataclass
-class Setup:
-    """The scripted `<setup> --check`: its exit code and line."""
-
-    exit_code: int = 0
-    line: str = "step-ca/init --check: set up"
-    commands: list[list[str]] = field(default_factory=list)
-    failing_command: str | None = None  # this command's check exits 1, whatever `exit_code` says
-
-    def __call__(self, command: list[str]) -> subprocess.CompletedProcess[str]:
-        self.commands.append(command)
-        if self.failing_command and command[0].endswith(self.failing_command):
-            return subprocess.CompletedProcess(
-                command, 1, f"{self.failing_command}: not set up", ""
-            )
-        return subprocess.CompletedProcess(command, self.exit_code, self.line, "")
-
-
-@dataclass
-class SetupRun:
-    """The scripted run of a setup in the terminal: a successful run makes `--check` pass."""
-
-    checks: Setup
-    exit_code: int = 0
-    interrupted: bool = False
-    cannot_start: bool = False
-    check_afterwards: tuple[int, str] = (0, "step-ca/init --check: set up")
-    commands: list[tuple[Path, Path]] = field(default_factory=list)
-    meanwhile: Callable[[], None] | None = None  # what changes while the setup runs
-
-    def __call__(self, command: Path, working_directory: Path) -> setup.SetupRun:
-        self.commands.append((command, working_directory))
-        if self.meanwhile:
-            self.meanwhile()
-        if self.cannot_start:
-            raise PermissionError("not executable")
-        if self.exit_code == 0 and not self.interrupted:
-            self.checks.exit_code, self.checks.line = self.check_afterwards
-        return setup.SetupRun(self.exit_code, self.interrupted)
-
-
-class Terminal(io.StringIO):
-    """A terminal; `while_prompt_waits` runs when the operator's answer is read, which it echoes."""
-
-    while_prompt_waits: Callable[[], None] | None = None
-
-    def isatty(self) -> bool:
-        return True
-
-    def readline(self, *arguments) -> str:
-        if self.while_prompt_waits:
-            self.while_prompt_waits()
-        answer = super().readline(*arguments)
-        sys.stdout.write(answer)  # the terminal echoes what the operator typed
-        return answer
-
-
-class InterruptedWaitForLock(switches.Switches):
-    """Switches whose lock is taken by a Ctrl-C while it waits."""
-
-    def lock(self):
-        raise KeyboardInterrupt
-
-
-@pytest.fixture(autouse=True)
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A stray real marker would keep a live unit down: every test gets its own HOME, and git its
-    own global config there."""
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "home" / ".config"))
-    monkeypatch.setenv("LC_ALL", "C")  # git's own lines in English, whatever the machine speaks
-    return tmp_path / "home"
-
-
-@pytest.fixture
-def state(home: Path) -> Path:
-    return switches.default_state_directory()
-
-
-def marker(state: Path, unit: str = "step-ca") -> str | None:
-    return switches.Switches(state).since(unit)
-
-
-def switch_off(state: Path, since: str = SWITCHED_OFF_AT, unit: str = "step-ca") -> None:
-    switches.Switches(state).record(unit, datetime.fromisoformat(since))
-
-
-def edge_tree(tree: Path) -> Path:
-    """A tree of this repository's shape at `tree`, a main worktree (its `.git` is a directory)."""
-    (tree / ".git").mkdir(parents=True)
-    for directory, name in (("step-ca", "init"), ("keycloak", "init"), ("agent-service", "setup")):
-        (tree / directory).mkdir(exist_ok=True)
-        setup = tree / directory / name
-        setup.write_text("#!/bin/sh\n")
-        setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
-    (tree / "fleet.yaml").write_text(f"cloudflare:\n  zone: {ZONE}\n" + ENABLED)
-    (tree / "dynamic").mkdir()
-    (tree / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
-    (tree / ".env").write_text(f"EDGE_DOMAIN={ZONE}\nDOCKER_GID={DOCKER_GID}\n")
-    return tree
-
-
-def docker_group(name: str) -> SimpleNamespace:
-    """The group lookup of a PC whose `docker` group has `DOCKER_GID`."""
-    if name != environment.DOCKER_GROUP:
-        raise KeyError(name)
-    return SimpleNamespace(gr_gid=DOCKER_GID)
-
-
-def writing_environment(group_lookup=docker_group) -> apply.EnsureEnvironment:
-    """The real `.env` step on a PC with that group lookup."""
-    return partial(environment.ensure, group_lookup=group_lookup)
-
-
-def trusted_environment(_tree: Path) -> None:
-    """The `.env` step of the tests that are about something else: it is happy."""
-
-
-@pytest.fixture
-def repository(home: Path, seed_appkit) -> Path:
-    """The live checkout `$HOME/srv/hal` of the test's own HOME (#79 cell 1)."""
-    return seed_appkit(edge_tree(checkout.live_checkout(home)))
-
-
-@dataclass
-class Ingress:
-    """Traefik as the barrier tests see it: it answers a marked 404 for `hello` while the unit's
-    barrier file is in `dynamic/`; a file it is `rejecting` leaves its plain no-route 404; `down`
-    refuses the connection. Time is a counter."""
-
-    repository: Path
-    rejecting: bool = False
-    down: bool = False
-    asked: list[str] = field(default_factory=list)  # what the world looked like at each request
-    on_fetch: Callable[[], None] | None = None  # a look at the world as each request arrives
-    now: float = 0.0
-
-    def barrier_file(self) -> Path:
-        return self.repository / "dynamic" / "switch-probe.yml"
-
-    def fetch(
-        self, _address: str, _host: str, _seconds: float, _clock: Callable[[], float]
-    ) -> barrier.Answer:
-        self.asked.append("barrier" if self.barrier_file().exists() else "no barrier")
-        if self.on_fetch:
-            self.on_fetch()
-        if self.down:
-            raise ConnectionRefusedError
-        if not self.barrier_file().exists():
-            return WHOAMI
-        return PLAIN_NOT_FOUND if self.rejecting else NOT_FOUND
-
-    def sleep(self, seconds: float) -> None:
-        self.now += seconds
-
-    @property
-    def verifier(self) -> barrier.Verifier:
-        return barrier.Verifier(self.fetch, lambda: self.now, self.sleep)
-
-    @property
-    def watch(self) -> compose.Watch:
-        """How a recreated Traefik is watched, on the same counter."""
-        return compose.Watch(lambda: self.now, self.sleep)
-
-
-SCRIPTED_SHA = b"5" * 40
-
-
-@dataclass
-class ScriptedGit:
-    """Git as the guards and the fetch ask it: a clean `main` equal to origin's unless told
-    otherwise; the fetch raises `fetch_error` when one is set; `calls` records each."""
-
-    reference: bytes = b"refs/heads/main\n"
-    status: bytes = b""
-    fetch_error: Exception | None = None
-    calls: list[list[str]] = field(default_factory=list)
-
-    def __call__(
-        self, _tree: Path, arguments: list[str], _profile: checkout.Profile
-    ) -> subprocess.CompletedProcess[bytes]:
-        self.calls.append(list(arguments))
-        verb = next(argument for argument in arguments if not argument.startswith("-"))
-        if verb == "fetch" and self.fetch_error:
-            raise self.fetch_error
-        stdout = {
-            "symbolic-ref": self.reference,
-            "rev-parse": SCRIPTED_SHA,
-            "status": self.status,
-            "fetch": b"",
-            "rev-list": b"0\t0\n",
-        }[verb]
-        return subprocess.CompletedProcess(arguments, 0, stdout, b"")
-
-
-@pytest.fixture
-def scripted_git() -> ScriptedGit:
-    return ScriptedGit()
-
-
-@pytest.fixture
-def ingress(repository: Path) -> Ingress:
-    return Ingress(repository)
-
-
-@pytest.fixture
-def scripted() -> ScriptedCompose:
-    return ScriptedCompose()
-
-
-@pytest.fixture
-def realm_backup() -> RealmBackup:
-    return RealmBackup()
-
-
-@pytest.fixture
-def setup_check() -> Setup:
-    return Setup()
-
-
-@pytest.fixture
-def setup_run(setup_check: Setup) -> SetupRun:
-    return SetupRun(setup_check)
-
-
-@pytest.fixture
-def at_terminal(monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
-    """Stdin and stdout are a terminal; the operator will type `answer`."""
-
-    def operator_types(answer: str, while_prompt_waits: Callable[[], None] | None = None) -> None:
-        keyboard = Terminal(f"{answer}\n")
-        keyboard.while_prompt_waits = while_prompt_waits
-        monkeypatch.setattr(sys, "stdin", keyboard)
-        monkeypatch.setattr(sys, "stdout", Terminal())
-
-    return operator_types
-
-
-@pytest.fixture
-def switch(
-    repository, scripted, setup_check, setup_run, at_terminal, capsys, state, home, ingress,
-    scripted_git, monkeypatch, realm_backup,
-):  # fmt: skip
-    """Run `hal apply --local` from the live checkout (or `tree`); `yes` at a terminal."""
-
-    def run(
-        answer: str = "yes",
-        while_prompt_waits=None,
-        *,
-        tree: Path | None = None,
-        from_home: Path | None = None,
-        git: checkout.Runner | None = None,
-        run_setup: setup.SetupRunner | None = None,
-        at_a_terminal: bool = True,
-        ensure_environment: apply.EnsureEnvironment = trusted_environment,
-        installed_backup: bool = False,
-        app_runtime: apps.AppRuntime | None = None,
-        rename=os.rename,
-        clock=None,
-    ) -> tuple[int, str, str]:
-        at_terminal(answer, while_prompt_waits)
-        if not at_a_terminal:
-            monkeypatch.setattr(sys, "stdin", io.StringIO(f"{answer}\n"))
-        tree = tree or repository
-        exit_code = apply.apply_local(
-            state,
-            compose.Compose(scripted.run, tree),
-            tree,
-            setup_check,
-            run_setup or setup_run,
-            from_home or home,
-            dataclasses.replace(ingress.verifier, clock=clock) if clock else ingress.verifier,
-            ingress.watch,
-            git or scripted_git,
-            ensure_environment,
-            None if installed_backup else realm_backup,
-            app_runtime,
-            rename,
-        )
-        return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
-
-    return run
 
 
 @pytest.fixture
@@ -654,32 +165,6 @@ def stop(repository, scripted, capsys, state, ingress):
         return exit_code, captured.out, captured.err
 
     return run
-
-
-@pytest.fixture
-def start(repository, scripted, at_terminal, capsys, state, ingress, setup_check):
-    """Run `hal start <unit>`; the operator types `yes` unless told otherwise."""
-
-    def run(
-        answer: str = "yes", unit: str = "step-ca", while_prompt_waits=None
-    ) -> tuple[int, str, str]:
-        at_terminal(answer, while_prompt_waits)
-        exit_code = emergency.start_unit(
-            switches.Switches(state),
-            unit,
-            compose.Compose(scripted.run, repository),
-            repository,
-            ingress.verifier,
-            setup_check,
-            ingress.watch,
-        )
-        return exit_code, sys.stdout.getvalue(), capsys.readouterr().err
-
-    return run
-
-
-def write_fleet(repository: Path, text: str) -> None:
-    (repository / "fleet.yaml").write_text(text)
 
 
 def test_switching_on_starts_exactly_the_profiles_services(switch, scripted):
@@ -866,8 +351,6 @@ def test_a_start_that_leaves_the_unit_down_is_partial(switch, scripted):
 
 # --- #75: switching on starts existing containers as they are, never recreates them -------------
 
-STEP_CA_ON = {"step-ca": "running", "traefik-mcp-acme-owner": "exited", "traefik-mcp": "running"}
-APP_EXITED = STEP_CA_ON | {"traefik-mcp": "exited"}
 SWITCH_ON_CELLS = {
     # cell: (containers before, services whose definition changed, the line apply prints)
     "cell 1, all running, nothing changed": (STEP_CA_ON, set(), "nothing to change"),
@@ -917,31 +400,6 @@ def test_a_switch_on_whose_start_fails_is_partial_as_before(switch, scripted):
     assert exit_code == 1
     assert "partial, step-ca: could not start, `docker compose up` exited 1: last line" in err
     assert "is on" not in out
-
-
-@pytest.fixture
-def agent_service_unit(repository, scripted) -> set[str]:
-    """The repository's `agent-service` unit and compose.yaml, the other units off; its services."""
-    real = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())["services"]["agent-service"]
-    fleet = {"cloudflare": {"zone": ZONE}, "services": {"agent-service": real}}
-    write_fleet(repository, yaml.safe_dump(fleet))
-    shutil.copytree(REPOSITORY / "agent-service" / "image", repository / "agent-service" / "image")
-    services = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]
-    profile = {n: d for n, d in services.items() if "agent-service" in d.get("profiles", ())}
-    for name, definition in profile.items():
-        scripted.config["services"][name] = definition | {
-            "volumes": [_resolved_mount(mount) for mount in definition.get("volumes", [])]
-        }
-    return set(profile)
-
-
-def _resolved_mount(mount: str | dict) -> dict:
-    """A volume as `docker compose config` spells it: the short form `source:target[:ro]` of
-    compose.yaml becomes the long form."""
-    if isinstance(mount, dict):
-        return mount
-    source, target, *mode = mount.split(":")
-    return {"type": "bind", "source": source, "target": target, "read_only": mode == ["ro"]}
 
 
 def test_the_repositorys_agent_service_unit_starts_both_services_and_then_changes_nothing(
@@ -1046,14 +504,7 @@ def test_an_interrupt_names_the_unit_and_says_its_state_may_be_partial(switch, s
     assert "may be partial" in err
 
 
-NOT_SET_UP_LINE = "password is not done"
 QUESTION = "Type yes to run `step-ca/init` now"
-
-
-@pytest.fixture
-def missing_setup(setup_check: Setup) -> Setup:
-    setup_check.exit_code, setup_check.line = 1, NOT_SET_UP_LINE
-    return setup_check
 
 
 def test_a_missing_setup_is_asked_separately_before_the_plan(
@@ -1207,11 +658,6 @@ def test_a_recheck_that_cannot_tell_after_the_setup_is_exit_2(
     assert scripted.changing_verbs() == []
 
 
-TWO_SETUPS = (
-    ENABLED + "  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
-)  # catalog order: step-ca, keycloak
-
-
 def test_several_missing_setups_are_all_asked_first_and_a_no_stops_the_rest(
     switch, repository, missing_setup, setup_run
 ):
@@ -1331,19 +777,6 @@ def test_a_setup_that_is_set_up_is_only_ever_checked_never_run(switch, setup_che
 @pytest.fixture(params=["live checkout", "another copy"])
 def any_tree(request, repository: Path, tmp_path: Path) -> Path:
     return repository if request.param == "live checkout" else edge_tree(tmp_path / "x" / "edge")
-
-
-def apply_lock(state: Path) -> Path:
-    return state / apply.APPLY_LOCK
-
-
-@contextmanager
-def apply_lock_held(state: Path) -> Iterator[None]:
-    """`apply.lock` held as another apply holds it: its own open file, flocked."""
-    state.mkdir(parents=True, exist_ok=True)
-    with apply_lock(state).open("w") as held:
-        fcntl.flock(held, fcntl.LOCK_EX)
-        yield
 
 
 def apply_lock_is_free(state: Path) -> bool:
@@ -1536,10 +969,6 @@ def test_the_state_directory_and_the_lock_are_created_private(switch, state):
     assert stat.S_IMODE(apply_lock(state).stat().st_mode) == 0o600
 
 
-def interrupted_at_the_prompt() -> None:
-    raise KeyboardInterrupt
-
-
 def git_that_is_missing(_tree, _arguments, _profile):
     raise FileNotFoundError(2, "No such file or directory")
 
@@ -1672,24 +1101,6 @@ def test_off_main_or_with_changes_it_refuses_naming_why(
     assert exit_code == 2
     assert err.splitlines() == lines
     assert scripted.calls == []
-
-
-@pytest.fixture
-def real_main(repository: Path, tmp_path: Path) -> Path:
-    """The live checkout as a real git repository: its files committed on a fresh `main`, pushed
-    to its bare remote `origin` (`tmp_path/origin.git`)."""
-    (repository / ".git").rmdir()
-    with_origin(committed_main(repository), tmp_path / "origin.git")
-    return repository
-
-
-@pytest.fixture
-def origin(real_main: Path, tmp_path: Path) -> Path:
-    return tmp_path / "origin.git"
-
-
-def short(tree: Path, revision: str = "HEAD") -> str:
-    return plain_git(tree, "rev-parse", "--short", revision).stdout.strip()
 
 
 @pytest.mark.parametrize("waiting", [0, 2], ids=["B3 ahead", "B4 diverged"])
@@ -1956,21 +1367,6 @@ def test_a_catalog_key_without_a_compose_profile_fails_the_drift_check():
 
 
 # --- the emergency switch (#60): marker, hal stop, hal start, apply's precedence ----------------
-
-
-def put_unit_in(situation: str, scripted, repository, state) -> None:
-    """A: on, no marker. B: switched off, stopped. E: disabled in the catalog, gone."""
-    if situation == "A":
-        scripted.containers = {
-            "step-ca": "running",
-            "traefik-mcp-acme-owner": "exited",
-            "traefik-mcp": "running",
-        }
-    if situation == "B":
-        scripted.containers = dict.fromkeys(STEP_CA_SERVICES, "exited")
-        switch_off(state)
-    if situation == "E":
-        write_fleet(repository, DISABLED)
 
 
 # (exit, marker afterwards, changing verbs, asked for `yes`)
@@ -2488,11 +1884,6 @@ def probe_unit(repository, scripted, state, ingress):
     scripted.containers = {"hello": "running"}
 
 
-def put_probe_in_b(scripted, state, ingress) -> None:
-    scripted.containers = {"hello": "exited"}
-    switch_off(state, unit="probe")
-
-
 def test_stop_writes_the_barrier_before_the_stop_and_reports_only_what_was_verified(
     probe_unit, stop, scripted, ingress, state
 ):
@@ -2790,27 +2181,12 @@ def test_start_from_a_runs_no_setup_check(start, scripted, repository, state, se
     assert setup_check.commands == []
 
 
-RECREATE_TRAEFIK = ["--profile", "*", "up", "-d", "--no-deps", "--force-recreate", "traefik"]
 PROBE_STOPPED = DISABLED + "  probe:\n    run: {enabled: true}\n"
 RECREATE_SOCKET_PROXY = [*RECREATE_TRAEFIK[:-1], "socket-proxy"]
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
 SOCKET_PROXY_RECREATED = "\nsocket-proxy is recreated\n"  # the line, not the plan row
 CORE_CURRENT = "the core is current"
 UNFINISHED = {"traefik": {}}
-
-
-@pytest.fixture
-def core_files(scripted, repository):
-    """The core as compose.yaml resolves it, with traefik's bind of `traefik.yml`, both running;
-    no unit has anything to change."""
-    bind_core_files(scripted.config, repository)
-    scripted.put_containers({"socket-proxy": "running", "traefik": "running"})
-    write_fleet(repository, DISABLED)
-
-
-def applied(state: Path) -> dict | None:
-    record = state / "applied.json"
-    return json.loads(record.read_text()) if record.exists() else None
 
 
 def record_traefik(state: Path, digest: str) -> None:
@@ -2823,11 +2199,6 @@ def probe_switched_off(scripted, repository, state) -> None:
     write_fleet(repository, PROBE_STOPPED)
     scripted.containers["hello"] = "exited"
     switch_off(state, unit="probe")
-
-
-def edit_traefik_yml(repository: Path) -> None:
-    with (repository / "traefik.yml").open("a") as file:
-        file.write("# a harmless edit\n")
 
 
 def unit_calls(scripted, unit: str = "step-ca") -> list[list[str]]:
@@ -3189,18 +2560,6 @@ def test_the_scripted_compose_fails_a_test_that_takes_volumes_or_the_project_dow
 # --- #87: the core follows its compose definition, socket-proxy first ------------------------
 
 
-def up_calls(scripted) -> list[list[str]]:
-    return [call for call in scripted.calls if call[2] == "up"]
-
-
-@pytest.fixture
-def applied_core(core_files, switch, scripted):
-    """The core as last applied: traefik.yml recorded, both containers from the current
-    definitions; the calls of that first run are forgotten."""
-    assert switch()[0] == 0
-    scripted.calls.clear()
-
-
 def test_a_changed_socket_proxy_definition_recreates_socket_proxy_then_traefik(
     applied_core, switch, scripted, state, repository
 ):
@@ -3489,22 +2848,6 @@ def test_apply_drops_a_ghost_entry_and_keeps_the_entry_of_a_switched_off_file_bi
     }
 
 
-@pytest.fixture
-def unreadable_profile_bind(applied_core, scripted, repository, monkeypatch):
-    """`hello` binds a file under a directory that cannot be entered."""
-    locked = repository / "locked"
-    scripted.config["services"]["hello"]["volumes"] = [bind(locked / "hello.yml", "/hello.yml")]
-    is_dir = Path.is_dir
-
-    def is_dir_as_python_3_12(path: Path) -> bool:
-        # Python 3.14 answers False where 3.12 raises for a directory that cannot be entered.
-        if path.is_relative_to(locked):
-            raise PermissionError(13, "Permission denied")
-        return is_dir(path)
-
-    monkeypatch.setattr(Path, "is_dir", is_dir_as_python_3_12)
-
-
 def test_a_profile_bind_that_cannot_be_read_is_partial_naming_the_step_and_touches_nothing(
     unreadable_profile_bind, switch, scripted, repository
 ):
@@ -3730,22 +3073,9 @@ def test_a_traefik_stopped_before_its_own_recreate_keeps_an_emptied_entry_for_th
 
 # --- #89: traefik-mcp follows traefik-mcp.yml and its definition while step-ca is on ----------
 
-FOLLOWER_FILE = "traefik-mcp.yml"
-RECREATE_FOLLOWER = [*RECREATE_TRAEFIK[:-1], "traefik-mcp"]
 FOLLOWER_RECREATED = f"traefik-mcp is recreated and runs the checked-out {FOLLOWER_FILE}"
 HELD_OFF = "traefik-mcp.yml changed · step-ca is off"
 HELD_SWITCHED_OFF = "traefik-mcp.yml changed · step-ca is switched off"
-
-
-def bind_traefik_mcp_files(config: dict, repository: Path) -> None:
-    """compose.yaml's binds of traefik-mcp, resolved for `repository`: its static config at
-    Traefik's path and `mcp/dynamic` as a directory."""
-    (repository / FOLLOWER_FILE).write_text("entryPoints: {}\n")
-    (repository / "mcp" / "dynamic").mkdir(parents=True)
-    config["services"]["traefik-mcp"]["volumes"] += [
-        bind(repository / FOLLOWER_FILE, "/etc/traefik/traefik.yml"),
-        bind(repository / "mcp" / "dynamic", "/mcp/dynamic"),
-    ]
 
 
 def edit_traefik_mcp_yml(repository: Path) -> None:
@@ -3755,23 +3085,6 @@ def edit_traefik_mcp_yml(repository: Path) -> None:
 
 def follower_entry(state: Path) -> dict | None:
     return (applied(state) or {}).get("traefik-mcp")
-
-
-def follower_digest(repository: Path) -> dict:
-    return {FOLLOWER_FILE: sha256(repository / FOLLOWER_FILE)}
-
-
-@pytest.fixture
-def step_ca_applied(applied_core, scripted, repository, state):
-    """step-ca on and applied: traefik.yml and traefik-mcp.yml recorded, every container created
-    from the current definitions; the calls so far are forgotten."""
-    bind_traefik_mcp_files(scripted.config, repository)
-    write_fleet(repository, ENABLED)
-    scripted.put_containers(STEP_CA_ON)
-    (state / "applied.json").write_text(
-        json.dumps(applied(state) | {"traefik-mcp": follower_digest(repository)})
-    )
-    scripted.calls.clear()
 
 
 def test_a_changed_traefik_mcp_yml_recreates_exactly_traefik_mcp_and_records_the_plan_time_file(
@@ -4080,9 +3393,6 @@ def test_a_missing_traefik_mcp_yml_cannot_be_planned_whatever_step_cas_state(
     assert scripted.changing_verbs() == []
 
 
-OLD_IMAGE = str(PlanEvent.OLD_IMAGE)
-
-
 def test_a_running_unit_whose_image_changed_is_named_and_nothing_changes(
     step_ca_applied, switch, scripted
 ):
@@ -4302,23 +3612,7 @@ def test_the_repositorys_agent_service_unit_that_is_not_set_up_runs_its_setup_wi
     assert "agent-service is on" in out
 
 
-KEYCLOAK_ENABLED = "services:\n  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
 KEYCLOAK_DISABLED = "services:\n  keycloak:\n    run: {enabled: false, setup: keycloak/init}\n"
-
-
-@pytest.fixture
-def realm_unit(repository, scripted) -> None:
-    """Keycloak enabled, set up and running; its realm files, and config-cli as compose.yaml
-    resolves it: it binds `entrypoint.sh` from the checkout, so edge follows it (#242)."""
-    write_fleet(repository, KEYCLOAK_ENABLED)
-    (repository / "keycloak/realm.yaml").write_text("realm: one\n")
-    (repository / "keycloak/master.yaml").write_text("master: one\n")
-    (repository / "keycloak/entrypoint.sh").write_text("#!/bin/sh\n")
-    scripted.config["services"]["keycloak-config-cli"] = {
-        "profiles": ["apply"],
-        "volumes": [bind(repository / "keycloak/entrypoint.sh", "/opt/edge/entrypoint.sh")],
-    }
-    scripted.put_containers({"keycloak": "running"})
 
 
 @pytest.mark.usefixtures("realm_unit")
