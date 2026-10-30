@@ -21,6 +21,7 @@ import hal.workstation
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
 from hal.workstation import ports, system_step
+from hal.workstation.layout import Layout
 from hal.workstation.secrets_setup import Boundaries, Terminal
 from hal.workstation.setup import ANSIBLE_SOURCE, HOOK_NAMES, MISE_URL, QUALITY_SOURCE, RERUN, ExecutionRole
 from hal.workstation.system_step import AGENT_USER, CheckState, SystemStep
@@ -390,7 +391,7 @@ def test_the_playbook_gets_home_and_the_tunnel_files_from_layout_and_the_running
     assert {key: extra_vars[key] for key in ("home", "operator_user", "edge_tunnel_dir")} == {
         "home": str(sandbox.home),
         "operator_user": "operator",
-        "edge_tunnel_dir": str(sandbox.home / "git" / "edge" / "tunnel"),
+        "edge_tunnel_dir": str(Layout(sandbox.home).live_checkout / "tunnel"),
     }
 
 
