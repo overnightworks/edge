@@ -333,12 +333,8 @@ class Probe:
             self.guard.expect(prefix)
         return [*prefix, *arguments]
 
-    def compose(
-        self, *arguments: str, check: bool = True, timeout: int = 300, own_session: bool = False
-    ):
-        return self.run(
-            self.compose_command(*arguments), check=check, timeout=timeout, own_session=own_session
-        )
+    def compose(self, *arguments: str, check: bool = True, timeout: int = 300):
+        return self.run(self.compose_command(*arguments), check=check, timeout=timeout)
 
     def container(self, service: str) -> str:
         found = self.compose("ps", "-q", service).stdout.strip()
@@ -434,16 +430,8 @@ class Probe:
         ).stdout.split()
         if stray:
             self.run(["docker", "rm", "-f", *stray], check=False)
-        # its own session: the group signal of `timeout` would otherwise stop the `compose down`
-        self.compose(
-            "down",
-            "--volumes",
-            "--remove-orphans",
-            "--timeout",
-            "10",
-            check=False,
-            own_session=True,
-        )
+        down = self.compose_command("down", "--volumes", "--remove-orphans", "--timeout", "10")
+        self.run(down, check=False, own_session=True)  # `timeout`'s group signal must not stop it
 
     # --- the packet windows -------------------------------------------------------------------
 

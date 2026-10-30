@@ -495,6 +495,7 @@ def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
     run.listener, run.windows = None, []
     run.compose_file = run.static_file = tmp_path / "unused"
     run.compose = compose
+    run.compose_command = lambda *arguments: list(arguments)
     run.write_on_probe_subnet = lambda *_: None
     run.guard = SimpleNamespace(expect_clean_teardown=lambda: None)
 
