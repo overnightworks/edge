@@ -43,9 +43,6 @@ write_dummy_token = [["probe/agent-service/image.py", "write_dummy_token"]]
 [clones."probe/apps/probe.py"]
 "Probe.wait_until" = [["probe/switches/probe.py", "Probe.wait_until"]]
 
-[clones."probe/keycloak/probe.py"]
-claims = [["probe/keycloak/test_rp.py", "token_claims"]]
-
 [clones."tests/test_hal_cli.py"]
 home = [["tests/test_hal_version.py", "home"], ["tests/test_stack_apps.py", "home"], ["tests/test_stack_checkout.py", "home"], ["tests/test_stack_deploy_checkout.py", "home"]]
 
