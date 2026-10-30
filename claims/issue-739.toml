@@ -1,0 +1,8 @@
+claim_id = "00dc6f1e1c574f2fa5bcc800a7a3ee12"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "8ec14b390091dfc111057973158efffc5dd90412"
+branch = "claude/issue-739-s2-of-710-codex-in-the-agent-service-ima"
+scope = ["agent-service/image/Dockerfile", "agent-service/service.toml", "compose.yaml", "docs/agent-service.md", "docs/architecture.md", "probe/agent-service/egress.py", "probe/agent-service/image.py", "probe/agent-service/issuer.py", "probe/agent-service/scratch_secrets.py", "probe/agent-service/unit.py", "quality/baseline.toml", "tests/test_agent_service_image.py", "tests/test_agent_service_unit.py"]
+opened_commit = "d6ecd96a2135b1e5082ac5308a2ea998ee6d3acc"
+whole_reason = "The Codex binary, its service.toml table, the login bind, the tag that names both pins and the docs that count the binds land together with the probes that start the shipped service.toml, which break the moment it names [cli.openai]."
