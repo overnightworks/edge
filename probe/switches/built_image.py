@@ -21,7 +21,6 @@ Needs an existing, empty --scratch directory, `uv` (it runs `uv sync` in the cop
 images busybox:1.36 and busybox:1.37.0.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse

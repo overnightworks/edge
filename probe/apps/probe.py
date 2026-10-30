@@ -26,7 +26,6 @@ Needs an empty or new --scratch directory, `uv` (it runs `uv sync` in the copy) 
 may pull busybox and Traefik.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse

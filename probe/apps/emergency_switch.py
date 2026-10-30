@@ -5,7 +5,6 @@ stays stopped, D7 `hal start` and its refusal while disabled, D4 a stop during t
 D10, a stop while apply holds the switch lock, is a unit test.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import shlex

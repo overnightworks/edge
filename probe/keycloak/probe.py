@@ -652,7 +652,7 @@ class Stack:
             status = f"FAILED ({tail(result.stderr)})"
         else:
             status = f"FAILED (still there: {', '.join(left)})"
-        print(f"teardown: stack {PROJECT} {status}", flush=True)  # noqa: T201 - this probe reports its progress on standard output
+        print(f"teardown: stack {PROJECT} {status}", flush=True)
         return removed
 
     def see_env(self, container: str) -> None:
@@ -1084,7 +1084,7 @@ class Probe:
     def say(self, line: str) -> None:
         """Prints a line of evidence and keeps it, so proof 7 can check it for secrets."""
         self.evidence.append(line)
-        print(line, flush=True)  # noqa: T201 - this probe reports its progress on standard output
+        print(line, flush=True)
 
     def held(self, proof: str, detail: str) -> None:
         self.say(f"PROOF {proof} held: {detail}")
@@ -2765,7 +2765,7 @@ def keep_stack_until_told_to_stop(ready_line: str) -> None:
     try:
         for stopping in STOP_SIGNALS:
             signal.signal(stopping, stop_holding)
-        print(ready_line, flush=True)  # noqa: T201 - this probe reports its progress on standard output
+        print(ready_line, flush=True)
     finally:
         signal.pthread_sigmask(signal.SIG_UNBLOCK, STOP_SIGNALS)
     sys.stdin.read()
@@ -2818,9 +2818,9 @@ def main(make_stack: Callable[[Path], Stack] = Stack) -> int:
         if stack is not None and not stack.down():
             failures.append(f"stack {PROJECT} is left behind; see probe/keycloak/README.md")
     if failures:
-        print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)  # noqa: T201 - this probe reports its progress on standard output
+        print(f"PROBE FAILED: {'; '.join(failures)}", flush=True)
         return 1
-    print(success_line, flush=True)  # noqa: T201 - this probe reports its progress on standard output
+    print(success_line, flush=True)
     return 0
 
 

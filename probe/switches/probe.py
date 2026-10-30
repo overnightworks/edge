@@ -49,7 +49,6 @@ or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down whi
 Needs an existing, empty --scratch directory, and `uv`: it runs `uv sync` in the copy.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse

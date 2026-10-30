@@ -3,7 +3,6 @@ stand-in for songmaker's web service (compose.probe.yaml) on `hal_mcp_songmaker`
 probe's project. A mixin of the step-ca probe (probe.py): it uses the probe's compose, client and
 container helpers."""
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import json

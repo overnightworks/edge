@@ -22,7 +22,6 @@ The copy is a clean `main` with a bare remote under the scratch directory, and e
 makes there is published (committed and pushed) before the apply that follows it (#95 P3).
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse
