@@ -227,4 +227,5 @@ def test_a_credential_with_app_keys_beside_the_shared_key_still_passes_the_share
 
 def test_a_refusal_names_a_reason_that_holds_no_key(gate, credential_file, key):
     verdict = request(gate, credential_file, key, authorization=f"Bearer {key}x")
-    assert verdict.reason and key not in verdict.reason
+    assert verdict.reason
+    assert key not in verdict.reason

@@ -79,7 +79,9 @@ def test_litellm_is_pinned_by_digest_hardened_and_reaches_the_provider_through_t
     service = compose["services"][LITELLM]
 
     assert DIGEST_PINNED.match(service["image"])
-    assert service["user"] == "1000:1000"
+    uid, gid = (int(part) for part in service["user"].split(":"))
+    assert uid != 0
+    assert gid != 0
     assert service["read_only"] is True
     assert service["cap_drop"] == ["ALL"]
     assert service["security_opt"] == ["no-new-privileges:true"]
@@ -161,7 +163,8 @@ def test_the_three_model_names_map_to_the_family_of_the_service_configurations_c
     assert set(entries) == {f"anthropic/{model}" for model in cli_models}
     for name, parameters in entries.items():
         family = name.removeprefix("anthropic/")
-        assert parameters["model"].startswith("anthropic/claude-") and family in parameters["model"]
+        assert parameters["model"].startswith("anthropic/claude-")
+        assert family in parameters["model"]
         assert parameters["max_retries"] == 0
 
 

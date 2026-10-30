@@ -50,7 +50,7 @@ GUARDED_COMPOSE_VERBS = {"up", "run", "down"}  # what creates or removes network
 # The networks of compose.yaml that pin a /24 so agent-egress has one address on each; a probe
 # moves each to a free /24 of its own, so it never collides with the live stack's.
 GATEWAY_NETWORKS = ("egress", "litellm-egress")
-GATEWAY_SUBNET = re.compile(r"^  (?P<network>[\w-]+):\n(?P<block>(?:    .*\n)+)", re.MULTILINE)
+GATEWAY_SUBNET = re.compile(r"^ {2}(?P<network>[\w-]+):\n(?P<block>(?: {4}.*\n)+)", re.MULTILINE)
 PINNED_PREFIX = re.compile(r"subnet:\s+(\d+\.\d+\.\d+\.)0/24")
 
 

@@ -9,7 +9,7 @@ scratch service credential, the scratch identity strings and the answer marker; 
 throwaway values). The `issuer` role answers `{}` to anything. The `provider` role answers an
 Anthropic message with the marker and prints one JSON line per request on standard output: the
 model, whether the key matched, and counts of what must not arrive here. It prints a verdict and
-never a value of the request.
+never a value of the request, and its answer holds only values it builds itself.
 """
 
 import http.server
@@ -21,6 +21,7 @@ import sys
 PORT = 443
 JWT = re.compile(rb"eyJ[\w-]+\.[\w-]+\.[\w-]+")
 UUID = re.compile(rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+ANSWER_MODEL = "claude-probe"
 
 
 def provider_record(expect: dict, request: http.server.BaseHTTPRequestHandler, body: bytes) -> dict:
@@ -41,9 +42,9 @@ def provider_record(expect: dict, request: http.server.BaseHTTPRequestHandler, b
     }
 
 
-def message(expect: dict, model: str | None) -> bytes:
+def message(expect: dict) -> bytes:
     return json.dumps({
-        "id": "msg_probe", "type": "message", "role": "assistant", "model": model,
+        "id": "msg_probe", "type": "message", "role": "assistant", "model": ANSWER_MODEL,
         "content": [{"type": "text", "text": expect["marker"]}],
         "stop_reason": "end_turn", "stop_sequence": None,
         "usage": {"input_tokens": 1, "output_tokens": 1},
@@ -58,7 +59,7 @@ def handler(role: str, expect: dict) -> type[http.server.BaseHTTPRequestHandler]
             if role == "provider":
                 record = provider_record(expect, self, body)
                 print(json.dumps(record), flush=True)  # noqa: T201 - this in-container program prints its own request log
-                reply = message(expect, record["model"])
+                reply = message(expect)
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(reply)))
@@ -77,7 +78,7 @@ def main(role: str) -> None:
     with open("/fake/expect.json", encoding="utf-8") as file:
         expect = json.load(file)
     server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), handler(role, expect))  # noqa: S104 - a container-internal listener on an internal network
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain("/fake/cert.pem", "/fake/key.pem")
     server.socket = context.wrap_socket(server.socket, server_side=True)
     server.serve_forever()

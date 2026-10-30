@@ -52,10 +52,10 @@ DEFAULT_APP, REMAPPED_APP, REMAPPED_MODEL = "songmaker", "hopin", "nonesuch"
 ACCESS_LINE = re.compile(r'"(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) \S+ HTTP/\d(?:\.\d)?"')
 ADMITTED_LINE = re.compile(r'"POST /v1/chat/completions HTTP/\d(?:\.\d)?" 200')
 ROUTE = "/v1/chat/completions"
+LISTENING = "Uvicorn running"
 FRONT_STATIC = "/etc/traefik/traefik.yml"
 ENTRYPOINT_ADDRESS = re.compile(r'address:\s*"([^"]+)"')
 START_LISTENER = re.compile(r"--host (\S+) --port (\d+)")
-WILDCARD_HOSTS = ("", "0.0.0.0")
 WILDCARD_SOCKETS = ("0.0.0.0", "[::]")
 HTTP_PROGRAM = """\
 import json, socket, sys
@@ -93,9 +93,9 @@ def mounted_file(service: dict, target: str) -> Path:
 
 def bound_names(declared: str) -> list[list[str]]:
     """The TCP listener lists that bind the declared `host:port`, as `listeners_of` names them: the
-    declared address alone, or for an empty or any-address host one IPv4 or IPv6 wildcard."""
+    declared address exactly, or for an unspecified host (`:port`) one IPv4 or IPv6 wildcard."""
     host, port = declared.rsplit(":", 1)
-    if host not in WILDCARD_HOSTS:
+    if host:
         return [[declared]]
     return [[f"{wildcard}:{port}"] for wildcard in WILDCARD_SOCKETS]
 
@@ -299,7 +299,11 @@ class LitellmProbe(IssuerProbe):
                                  "--marker", self.marker),
             stdin=f"{person}\n{workload}\n", check=False, timeout=CANARY_SECONDS,
         )  # fmt: skip
-        verdicts = dict(line.split(" ", 1) for line in result.stdout.splitlines() if " " in line)
+        verdicts = {
+            name: value
+            for name, space, value in (line.partition(" ") for line in result.stdout.splitlines())
+            if space
+        }
         return {**verdicts, "exit": str(result.returncode)}
 
     def http(self, method: str, path: str, bearer: str | None = None, body: dict | None = None):
@@ -314,8 +318,8 @@ class LitellmProbe(IssuerProbe):
     # --- the cells ----------------------------------------------------------------------------
 
     def drive(self) -> None:
-        self.wait_until(SERVICE, "Uvicorn running")
-        self.wait_until(LITELLM, "Uvicorn running")
+        self.wait_until(SERVICE, LISTENING)
+        self.wait_until(LITELLM, LISTENING)
         self.cell_n1()
         self.cells_listeners()
         self.cells_r1_r2()
@@ -394,7 +398,7 @@ class LitellmProbe(IssuerProbe):
         self.compose(
             "up", "--detach", "--wait", "--force-recreate", "--no-deps", LITELLM, timeout=300
         )
-        self.wait_until(LITELLM, "Uvicorn running")
+        self.wait_until(LITELLM, LISTENING)
         before = len(self.provider_requests())
         run = self.canary(DEFAULT_APP)
         sent = self.provider_requests()[before:]
