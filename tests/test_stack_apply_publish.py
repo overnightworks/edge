@@ -102,7 +102,7 @@ class World:
 
 @pytest.fixture
 def repository(live_checkout, monkeypatch, seed_appkit) -> Path:  # noqa: F811
-    """`~/git/edge`: one real checkout that both parts read, the catalog committed, the appkit
+    """`~/srv/hal`: one real checkout that both parts read, the catalog committed, the appkit
     files the last apply left in it (ignored by git, as in this repository)."""
     step_ca_setup = live_checkout / "step-ca" / "init"
     step_ca_setup.parent.mkdir()

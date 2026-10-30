@@ -473,8 +473,8 @@ def trusted_environment(_tree: Path) -> None:
 
 @pytest.fixture
 def repository(home: Path, seed_appkit) -> Path:
-    """The live checkout `$HOME/git/edge` of the test's own HOME (#79 cell 1)."""
-    return seed_appkit(edge_tree(home / "git" / "edge"))
+    """The live checkout `$HOME/srv/hal` of the test's own HOME (#79 cell 1)."""
+    return seed_appkit(edge_tree(checkout.live_checkout(home)))
 
 
 @dataclass
@@ -1389,7 +1389,7 @@ def test_from_another_copy_it_refuses_naming_the_tree_and_runs_nothing(
 
     assert exit_code == 2
     assert err.splitlines() == [
-        f"error: runs only from the live checkout ~/git/edge (this is {copy})"
+        f"error: runs only from the live checkout {checkout.LIVE_CHECKOUT} (this is {copy})"
     ]
     assert scripted.calls == []
     assert scripted_git.calls == []
@@ -1657,7 +1657,7 @@ def test_a_stop_never_waits_for_a_running_apply(switch, stop, state, ingress):
                      id="G12 another branch"),
         pytest.param(b"refs/heads/main\n", b" M fleet.yaml\0?? dynamic/x.yml\0", [
             "error: the live checkout has local changes, nothing changed",
-            "next: git -C ~/git/edge status",
+            f"next: git -C {checkout.LIVE_CHECKOUT} status",
         ], id="G15 G17 changed paths"),
     ],
 )  # fmt: skip

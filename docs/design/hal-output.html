@@ -403,11 +403,11 @@
 …
 Aktivierung: unchanged
 User units: changed
-  hal-backup-restore-test.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/hal restore --test
+  hal-backup-restore-test.service: ExecStart=&lt;live-checkout&gt;/.venv/bin/hal restore --test
   hal-backup-restore-test.service: Result=success
-  hal-backup.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/hal backup
+  hal-backup.service: ExecStart=&lt;live-checkout&gt;/.venv/bin/hal backup
   hal-backup.service: Result=success
-  home-check.service: ExecStart=/home/felix-hummert/git/edge/.venv/bin/home check
+  home-check.service: ExecStart=&lt;live-checkout&gt;/.venv/bin/home check
   home-check.service: Result=success
 Ansible: unchanged
 BECOME password:
@@ -418,7 +418,7 @@ TASK [Read cloudflared's config for the tunnel id] *****************************
 [ERROR]: Task failed: Timed out waiting for become success or become password prompt.
 >>> Standard Error
 [sudo: [sudo via ansible, key=…] password:] Passwort:
-Origin: /home/felix-hummert/git/edge/src/home_tools/system/playbook.yml:76:7
+Origin: &lt;live-checkout&gt;/src/home_tools/system/playbook.yml:76:7
 
 fatal: [localhost]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Timed out waiting for become success or become password prompt. ..."}
 
@@ -552,7 +552,7 @@ Type <span class="w">yes</span> to set up 2 open rows: no
         <figcaption><span class="tag new">neu path</span> der Link fehlt oder zeigt in einen anderen hal-Ordner: Plan, yes, Lauf</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal setup</span>
 <span class="d">  · commit hook     unchanged</span>
-<span class="b">  ~</span> path            will change    <span class="d">~/.local/bin/hal → ~/git/hal/bin/hal</span>
+<span class="b">  ~</span> path            will change    <span class="d">~/.local/bin/hal → ~/srv/hal/bin/hal</span>
 <span class="d">  · timers          unchanged</span>
 <span class="y">  !</span> system          not checked    <span class="d">sudo checks it after your yes</span>
 <span class="d">  · secrets         complete</span>
@@ -608,7 +608,7 @@ Type <span class="w">yes</span> to set up 2 open rows: yes
 <span class="g">  ✓</span> timers          changed        <span class="d">3 timers · systemd reloaded</span>
 <span class="d">…</span>
 <span class="w">✓ setup done</span> <span class="d">· 1 changed, 4 unchanged · 47s</span></pre>
-        <p class="was">Der Fakt <code>replaces 6 links with 3 timers</code> steht nur im Plan des einen Laufs, solange noch ein Link in <code>git/edge/systemd</code> liegt; die Zeile nach dem Lauf ist wie bisher. Fehlt nur eine Datei, hat der Plan keinen Fakt. Danach <code>unchanged</code>.</p>
+        <p class="was">Der Fakt <code>replaces 6 links with 3 timers</code> steht nur im Plan des einen Laufs, solange noch ein Link in <code>&lt;live-checkout&gt;/systemd</code> liegt; die Zeile nach dem Lauf ist wie bisher. Fehlt nur eine Datei, hat der Plan keinen Fakt. Danach <code>unchanged</code>.</p>
       </figure>
       <figure id="f-setup-timers-refused">
         <figcaption><span class="tag fail">neu H5o1-3a, kaputt</span> eine Unit, die hal nicht geschrieben hat</figcaption>
@@ -973,7 +973,7 @@ Type <span class="w">yes</span> to apply 8 changes: yes
         <figcaption><span class="tag new">neu</span> drei Commits warten auf origin</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
 <span class="y">  !</span> checkout        3 behind       <span class="d">plan applies c280a80 without them</span>
-<span class="d">    git -C ~/git/edge merge --ff-only 4f0e7b1c2d9a8e6b5c3d1f0a9b8c7d6e5f4a3b2c</span>
+<span class="d">    git -C ~/srv/hal merge --ff-only 4f0e7b1c2d9a8e6b5c3d1f0a9b8c7d6e5f4a3b2c</span>
 <span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
       </figure>
       <figure>
@@ -997,7 +997,7 @@ Type <span class="w">yes</span> to apply 8 changes: yes
     <li><b>Was der Plan schon weiß, steht im Plan.</b> Keycloak antwortet nicht: heute erfährst du das erst nach dem yes als „partial“, neu steht es gelb vor dem yes; ist es die einzige Änderung, fragt hal gar nicht und endet mit <code>error:</code> und <code>next: hal apply</code>.</li>
     <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
     <li><b>Rechtsseiten:</b> eine Zeile je Art; die Abschnitte geänderter Seiten stehen eingerückt darunter, die einer neuen zeigt <code>-v</code>.</li>
-    <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/git/edge merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>; die Zeile wird einmal gleich nach dem Abruf gedruckt, auch wenn der Plan danach scheitert.</li>
+    <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/srv/hal merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>; die Zeile wird einmal gleich nach dem Abruf gedruckt, auch wenn der Plan danach scheitert.</li>
     <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; „the plan“ und die Ergebniszeilen bleiben Text.</li>
     <li><b>Das yes zählt die gedruckten <code>+ ~ -</code>-Zeilen</b> (gebaut mit #620): <code>Type yes to apply 8 changes:</code>; nur das genaue <code>yes</code> gilt, bei Setup, start, online und extern fragt derselbe Besitzer. Jede Weigerung endet in einer <code>error:</code>-Zeile mit <code>next:</code>, wo ein Befehl hilft; „nothing to change“ endet im ✓-Urteil mit der Laufzeit, ohne cloudflare, bis A5-3 es dazunimmt. Die Zeilen nach dem yes behalten ihre Worte, ohne Absender, bis A5-2 und A5-3.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>

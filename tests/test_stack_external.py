@@ -210,8 +210,8 @@ def plain_git(tree: Path, *arguments: str) -> None:
 
 @pytest.fixture
 def live_checkout(home) -> Path:
-    """`~/git/edge` as the operator has it: the main worktree, a clean `main` with one commit."""
-    tree = home / "git" / "edge"
+    """`~/srv/hal` as the operator has it: the main worktree, a clean `main` with one commit."""
+    tree = checkout.live_checkout(home)
     (tree / "external").mkdir(parents=True)
     (tree / "external" / "main.tf").write_text("# catalog\n")
     (tree / ".gitignore").write_text((PROJECT_ROOT / ".gitignore").read_text())
@@ -748,7 +748,7 @@ def with_a_stray_tfvars(live_checkout, _tmp_path) -> Path:
 
 
 REFUSAL = "cloudflare: "
-LIVE_ONLY = f"{REFUSAL}runs only from the live checkout ~/git/edge ("
+LIVE_ONLY = f"{REFUSAL}runs only from the live checkout {checkout.LIVE_CHECKOUT} ("
 MAIN_ONLY = f"{REFUSAL}runs only on main ("
 APPLY_INTERRUPTED = f"{REFUSAL}interrupted during tofu apply, live services may be partly changed"
 
