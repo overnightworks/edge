@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from support.terminal_support import put_stdout_on_a_terminal
-from support.workstation_secrets_report import report_of
+from support.workstation_secrets_report import findings_of, report_of
 from support.workstation_support import (
     FAKE_SECRET_VALUE,
     TEST_MANIFEST,
@@ -123,7 +123,20 @@ def test_a_link_at_a_declared_file_is_missing_and_a_finding(clean_home: Path, ru
         "  ✓ 2 entries | present | gh checked: valid; the rest not checked",
         f"! 2 findings · {HINT}",
     ]
+    assert list(findings_of(report_of(clean_home), "symlinked-file")) == ["~/.secrets/gitlab"]
     assert target.read_text() == FAKE_SECRET_VALUE
+
+
+def test_a_link_on_the_way_to_a_declared_file_shows_the_same_symlink_event(
+    clean_home: Path, run
+) -> None:
+    target = clean_home / "elsewhere"
+    (clean_home / ".secrets" / "cloudflared").rename(target)
+    (clean_home / ".secrets" / "cloudflared").symlink_to(target)
+
+    _code, lines = run()
+
+    assert "  ! cloudflared | symlink | is a symlink" in lines
 
 
 @pytest.mark.parametrize(
