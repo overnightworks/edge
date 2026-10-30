@@ -242,7 +242,7 @@ The apex and `www` are hosts only as the catalog's `cloudflare.redirect` (the ap
 - it runs only when an input changed, and does nothing otherwise (R3, ruled 21.10.2026): the entry of `keycloak-config-cli` in `applied.json` is missing, unfinished or differs from the digests of `realm.yaml`, `master.yaml` and hal's digest of config-cli's resolved service (binds inside the checkout relative, so moving the checkout is no realm change), or Keycloak's own import-checksum attributes differ from the ones recorded after the last apply (a restored database, a go-live import). A rotated client secret alone does not trigger it. Once it runs, config-cli reconciles for real (`IMPORT_CACHE_ENABLED=false`);
 - every `IMPORT_MANAGED_*` type is `no-delete`, and a listed user keeps the realm roles and groups the console gave it (client roles are reset), so the tool deletes no undeclared group, client, role or top-level flow and no person, and the reset below is the only loss;
 - a Keycloak-only backup (`hal backup keycloak --pre-apply --json`, the last ten pre-apply snapshots kept) and its restore test come before it, as a step inside `hal apply` (R2); a failure of either applies nothing;
-- one line per change comes after it, and a reset-class removal is printed as „reset to the file“ with the snapshot ID, exit 0 (R4); the list of what exists only in Keycloak follows the change lines, only when the step runs, without changing its outcome (`src/hal/stack/realm/declared.py` reads the declared identities, `reconcile.py` compares them with the observer's);
+- one row `realm applied` comes after it, one detail line per change under it, and a reset-class removal is printed as „reset to the file“ with the snapshot's short ID, exit 0 (R4); the list of what exists only in Keycloak follows the change lines, only when the step runs, without changing its outcome (`src/hal/stack/realm/declared.py` reads the declared identities, `reconcile.py` compares them with the observer's);
 - deleting anything in Keycloak waits for the operator's yes.
 
 What the file declares belongs to the file: a console change to a declared object is reset by the next apply that runs the realm step, together with what hangs off it (a step or subflow in a declared flow, a mapper on a declared scope or client, a default or optional scope on a declared client that lists its scopes, a client role on a listed service account, a console-enabled service account on a declared client, a flow binding override on a declared client). What the console creates on its own stays: people, their memberships, and the groups, clients, roles and top-level flows the file does not declare. No person is ever deleted (a service-account user that a console-enabled service account on a declared client created goes with that reset). A change to a declared object goes into the file; the blockquote in docs/keycloak.md after „Theme and language“ lists the measured examples, and the Keycloak probe's proofs 3c and 3d pin them.
@@ -872,6 +872,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
   - keeps no state that matters only in its process;
   - hands files over through its API;
   - uses the common door (§10 rule 7);
+  - bounds its admission (§10 rule 9);
   - reports its load numbers.
 - A load balancer and a second machine's setup come with the first rented GPU.
 - What stays allowed: an app keeps its own single-instance state (in-process state, SQLite, local files), such as agent-presentator's SQLite and files or hopin's rooms in the goal "Scale" above. That list is about instance count: one instance stays allowed for everyone, and scaling is an item. A shared service may run one replica but keeps no state that matters only in its process.
@@ -916,6 +917,16 @@ Health: `run.health` (section 3).
 - Priority between services is their budget size or their card, ruled by the operator; nothing arbitrates at runtime.
 - **What can be checked:** once two GPU services are compose services edge sees, edge's compose contract check sums the declared budgets per card. Until then each service's own item holds its budget.
 - Moving a GPU service to another card or machine follows §10 rule 4.
+
+**§10 rule 9: a shared service admits a bounded number of jobs** (ruled 30.10.2026, [speech-runtime#69](https://github.com/overnightworks/speech-runtime/issues/69)). It binds every service edge runs for several apps (today agent-runtime and speech-runtime; songmaker once it is a GPU service, [songmaker#2084](https://github.com/overnightworks/songmaker/issues/2084)). Apps only handle 429, inside each service's client package.
+- A service accepts at most as many concurrent jobs as its configuration says (speech: 1 per instance; agent: N).
+- A few jobs may wait briefly; their number and the wait are configured.
+- Anyone beyond that gets 429 at once, with `Retry-After`, before any work starts. A request that is too large gets 413.
+- The numbers come from configuration the platform sets. A service knows nothing about the PC's GPU or the operator's subscription. More instances add capacity (§10 rule 4, [hal#755](https://github.com/overnightworks/hal/issues/755)).
+- Recommended, not required: 503 with `Retry-After` while the service is not ready; passing the wait up to a surface.
+- No shared library or queue service: each service builds its wait where its resource lives.
+- Adoption has no deadline: each covered service has its own item and builds this when there is room.
+- **What can be checked:** each service's own CI sends one request too many and expects 429 with `Retry-After`. There is no static quality rule, because a static check cannot see behaviour. A later compose check may read the declared capacities, as it does for GPU budgets (§10 rule 8).
 
 **Cited, not restated:**
 - backup and the restore test: section 2, L5, and `backup/apps.toml`;

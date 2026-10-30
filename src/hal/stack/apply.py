@@ -88,6 +88,7 @@ from hal.stack.plan_rows import (
     still_runs_row,
 )
 from hal.stack.realm import reconcile
+from hal.stack.result_rows import result_rows
 from hal.stack.service_recreate import ServiceRecreator
 from hal.stack.terminal import NEEDS_TERMINAL, at_terminal
 from hal.stack.unit_plans import (
@@ -667,6 +668,7 @@ def _realm_step(
         core_phase.repository,
         marks,
         planned.read.get(reconcile.REALM_UNIT),
+        clock=core_phase.verifier.clock,
     )
 
 
@@ -679,8 +681,8 @@ def _apply_realm(
 ) -> bool:
     """The realm step after the unit switches; says its lines and whether it ended partial."""
     result = _realm_step(engine, planned, marks, core_phase, backup).run(planned.realm)
-    for line in result.lines:
-        print(line)
+    for row in result_rows(result):
+        write_row(row)
     if result.failure:
         write_error(f"partial, {result.failure}", command(Verb.APPLY))
     return bool(result.failure)

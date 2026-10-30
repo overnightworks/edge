@@ -1055,6 +1055,17 @@ Type <span class="w">yes</span> to apply 8 changes: yes
 <span class="c">next:</span> docker logs --tail 50 edge-agent-service-1</pre>
       </figure>
       <figure>
+        <figcaption><span class="tag new">neu A5-2a</span> nach dem yes: der Realm als eine Zeile, seine Änderungen und was nur in Keycloak liegt darunter</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="d">…</span>
+Type <span class="w">yes</span> to apply 1 change: yes
+<span class="g">  ✓</span> keycloak        realm applied  <span class="d">1 change · snapshot 37c2a560 proven · 11s</span>
+<span class="d">    hallucinai: addition group /ops (0 members)</span>
+<span class="d">    only in Keycloak: hallucinai group /console-made</span>
+<span class="d">    only in Keycloak: 1 found · 12 kinds not read</span>
+<span class="d">…</span></pre>
+      </figure>
+      <figure>
         <figcaption><span class="tag new">neu</span> der häufigste Fall: nichts zu tun</figcaption>
 <pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
 <span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
@@ -1077,7 +1088,7 @@ Type <span class="w">yes</span> to apply 8 changes: yes
     <li><b>Alte Images:</b> eine Zeile mit beiden Versionen, ohne „block 6“ und „K11b“. Wie man hochzieht, steht in der Doku, nicht in jeder Ausgabe.</li>
     <li><b>Rechtsseiten:</b> eine Zeile je Art; die Abschnitte geänderter Seiten stehen eingerückt darunter, die einer neuen zeigt <code>-v</code>.</li>
     <li><b>Wartende Commits</b> werden eine gelbe Zeile, der Befehl eingerückt darunter: <code>! checkout  3 behind  plan applies c280a80 without them</code>, dann <code>git -C ~/srv/hal merge --ff-only …</code>. Welche Commits und Dateien, zeigt <code>-v</code>; die Zeile wird einmal gleich nach dem Abruf gedruckt, auch wenn der Plan danach scheitert.</li>
-    <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; „the plan“ und die Ergebniszeilen bleiben Text.</li>
+    <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; „the plan“ und die Ergebniszeilen bleiben Text, bis auf das Ergebnis des Realms: eine Zeile, darunter seine Änderungen, die Objekte nur in Keycloak und die Zahl der Arten, die hal nicht liest (ihre Namen stehen in <code>docs/keycloak.md</code>).</li>
     <li><b>Das yes zählt die gedruckten <code>+ ~ -</code>-Zeilen</b> (gebaut mit #620): <code>Type yes to apply 8 changes:</code>; nur das genaue <code>yes</code> gilt, bei Setup, start, online und extern fragt derselbe Besitzer. Jede Weigerung endet in einer <code>error:</code>-Zeile mit <code>next:</code>, wo ein Befehl hilft; „nothing to change“ endet im ✓-Urteil mit der Laufzeit, ohne cloudflare, bis A5-3 es dazunimmt. Die Zeilen nach dem yes behalten ihre Worte, ohne Absender, bis A5-2 und A5-3.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
   </ul>

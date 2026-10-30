@@ -4304,7 +4304,6 @@ def test_the_repositorys_agent_service_unit_that_is_not_set_up_runs_its_setup_wi
 
 KEYCLOAK_ENABLED = "services:\n  keycloak:\n    run: {enabled: true, setup: keycloak/init}\n"
 KEYCLOAK_DISABLED = "services:\n  keycloak:\n    run: {enabled: false, setup: keycloak/init}\n"
-REALM_APPLIED = "realm: applied keycloak/*.yaml; pre-apply snapshot ab12cd34"
 
 
 @pytest.fixture
@@ -4343,8 +4342,8 @@ def test_a_yes_backs_up_proves_applies_and_lists_the_changes_then_the_next_apply
     exit_code, out, _ = switch()
 
     assert exit_code == 0
-    assert REALM_APPLIED in out
-    assert "realm: no changes" in out
+    assert "no changes · snapshot ab12cd34 proven · <1s" in out  # the dim fact of the row
+    assert "only in Keycloak: not listed, the realm files could not be read" in out
     assert (realm_backup.asked, scripted.realm_applies) == (["backup", "restore test"], 1)
 
     exit_code, out, _ = switch()

@@ -17,7 +17,7 @@ name could be anyone's on a public one (`pull_policy: never`), so it is built on
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.10.0-2.1.302 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.11.0-2.1.302 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
@@ -255,7 +255,7 @@ source. Every probe that starts the real service writes a throwaway CA and signi
 (`scratch_secrets.py`).
 U12 is `egress.py --target service`; U13 is the static facts in `tests/test_agent_service_unit.py`.
 `--cell smoke` drives U14, the `agent-smoke` against the service with a stand-in issuer, U17, the
-refusals before any run (wire v2: 400 `unsupported_version`, outside the app: 403 `forbidden`,
+refusals before any run (the previous protocol: 400 `unsupported_version`, outside the app: 403 `forbidden`,
 and the api group only: 403 `not_enabled`; there is no offer), and U16 runs
 the cells of `live_smoke.py` there, past its sign-in: all hold except L2, which must fail with the
 dummy login. L4 is proven only live, with the real login; the probe has no L4 cell.
