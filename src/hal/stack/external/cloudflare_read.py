@@ -265,7 +265,7 @@ class CloudflareClient:
         return items
 
     def _get(self, path: str, query: Mapping[str, str | int]) -> dict:
-        request = urllib.request.Request(
+        request = urllib.request.Request(  # noqa: S310 - the base URL is checked to be the Cloudflare API or http on loopback
             f"{self._base_url}{path}?{urllib.parse.urlencode(query)}", method="GET"
         )
         request.add_unredirected_header("Authorization", f"Bearer {self._token}")

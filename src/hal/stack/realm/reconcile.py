@@ -258,7 +258,7 @@ def run_edge_backup(
     systemd unit is (`KillMode=control-group` default): SIGTERM to its whole group, then
     `STOP_GRACE_SECONDS` to remove its staging and restore container."""
     try:
-        with subprocess.Popen(
+        with subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
