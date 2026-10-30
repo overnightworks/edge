@@ -16,21 +16,18 @@ CREATE_KEYS = frozenset({"run", "home", "label"})
 
 @dataclass(frozen=True)
 class CreateCommand:
-    """The CLI that makes a secret itself: its argv, the variables hal points at the entry's folder, and how the operator knows the account."""
+    """The CLI that makes a secret itself: its argv, the variables hal points at a fresh private home of the CLI's own, and how
+    the operator knows the account. hal moves only the login file from that home into the entry's folder."""
 
     run: tuple[str, ...]
     home: tuple[str, ...]
     label: str
 
-    def renewal(self, folder: str) -> str:
-        """The command that makes the login again, as the operator types it, its variables pointing at `folder`."""
-        variables = (f"{name}={folder}" for name in self.home)
-        return " ".join((*variables, *self.run))
 
-
-def left_by_cli(relative: PurePosixPath, login: PurePosixPath) -> bool:
-    """Whether a path lies in the folder of a `create` entry's login file without being it: the folder is the CLI's, its 0700 guards it, and hal never reads it."""
-    return login.parent in relative.parents and relative != login
+def is_renewal_sibling(relative: PurePosixPath, login: PurePosixPath) -> bool:
+    """Whether a path is the `.<file>.new` the agent service writes beside a `create` entry's login file while it renews it and
+    then renames over the file; nothing else is expected in that folder."""
+    return relative == login.with_name(f".{login.name}.new")
 
 
 def parse_create(path: Path, where: str, raw: Mapping[str, object], *, is_tool_login: bool) -> CreateCommand | None:

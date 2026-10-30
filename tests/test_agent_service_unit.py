@@ -27,6 +27,10 @@ SIZE_BOUND = re.compile(r"size=\d+[kmg]")
 # The keys under which each provider's relationship is read from its owners, not values.
 VERSION_ARGUMENTS = {"anthropic": "CLAUDE_VERSION", "openai": "CODEX_VERSION"}
 LOGIN_ENTRIES = {"anthropic": "agent-service-claude", "openai": "agent-service/codex"}
+# The service renews this login itself and needs its directory writable to rename over the file.
+RENEWED_LOGIN = "openai"
+# agent-runtime's stop waits up to 45 s for a renewal in flight and asks for 60 s beyond that.
+MINIMUM_STOP_GRACE_SECONDS = 45 + 60
 
 
 @pytest.fixture(scope="module")
@@ -86,14 +90,24 @@ def test_every_writable_directory_is_a_size_bounded_private_tmpfs_for_the_user(t
         assert any(SIZE_BOUND.fullmatch(option) for option in options)
 
 
-def test_every_volume_of_the_service_is_a_read_only_bind(service):
-    assert all(
-        volume["type"] == "bind" and volume["read_only"] is True for volume in service["volumes"]
-    )
+def test_every_volume_of_the_service_is_a_read_only_bind_but_the_renewed_login_directory(
+    service, configuration
+):
+    renewed = str(PurePosixPath(configuration["cli"][RENEWED_LOGIN]["token_file"]).parent)
+    assert all(volume["type"] == "bind" for volume in service["volumes"])
+    writable = [v["target"] for v in service["volumes"] if not v.get("read_only", False)]
+    assert writable == [renewed]
+
+
+def test_the_stop_grace_covers_a_login_renewal_in_flight(service):
+    """A kill during a renewal leaves `.<file>.new` behind and the login then needs a manual fix."""
+    grace = re.fullmatch(r"(?:(\d+)m)?(?:(\d+)s)?", str(service["stop_grace_period"]))
+    minutes, seconds = (int(part or 0) for part in grace.groups())
+    assert minutes * 60 + seconds >= MINIMUM_STOP_GRACE_SECONDS
 
 
 @pytest.mark.parametrize("provider", LOGIN_ENTRIES)
-def test_each_login_is_a_read_only_directory_bind_that_is_never_created(
+def test_each_login_is_a_directory_bind_that_is_never_created_and_read_only_unless_renewed(
     provider, configuration, binds
 ):
     """U8, U10: a directory so that `mv -T` reaches the running container; a missing source fails
@@ -105,7 +119,7 @@ def test_each_login_is_a_read_only_directory_bind_that_is_never_created(
     token_file = PurePosixPath(configuration["cli"][provider]["token_file"])
     login = binds[str(token_file.parent)]
 
-    assert login["read_only"] is True
+    assert login.get("read_only", False) is (provider != RENEWED_LOGIN)
     assert login["bind"] == {"create_host_path": False}
     assert login["source"].replace("${HOME}", "~") == str(folder)
 

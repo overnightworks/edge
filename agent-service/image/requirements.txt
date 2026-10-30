@@ -1,4 +1,4 @@
-# agent-runtime v0.11.0, commit cc5f2701f47218d2673ea9a06318ab3b5701fe10
+# agent-runtime v0.12.0, commit 9176b471d11c5090eb701689ead0224837ce5981
 # uv export --no-header --frozen --no-dev --no-emit-workspace --package overnightworks-agent-runtime-service, then the release's wheels.
 # Written only by scripts/agent_service_lock.py; do not edit.
 annotated-doc==0.0.5 \
@@ -352,9 +352,9 @@ uvicorn==0.54.0 \
     --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf \
     --hash=sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620
     # via overnightworks-agent-runtime-service
-overnightworks-agent-runtime @ https://github.com/overnightworks/agent-runtime/releases/download/v0.11.0/overnightworks_agent_runtime-0.11.0-py3-none-any.whl \
-    --hash=sha256:247416471d4299669bd11503eff8df0b9df97522743f496d73f144c556078387
-overnightworks-agent-runtime-client @ https://github.com/overnightworks/agent-runtime/releases/download/v0.11.0/overnightworks_agent_runtime_client-0.11.0-py3-none-any.whl \
-    --hash=sha256:d0a58149d0a597085a67a308f10e2eefe39d934450ac2a05be30e92242aca60d
-overnightworks-agent-runtime-service @ https://github.com/overnightworks/agent-runtime/releases/download/v0.11.0/overnightworks_agent_runtime_service-0.11.0-py3-none-any.whl \
-    --hash=sha256:0592544de0fe89be04d5db7fef35b5875e7cff52ca19889614f3335a6498d351
+overnightworks-agent-runtime @ https://github.com/overnightworks/agent-runtime/releases/download/v0.12.0/overnightworks_agent_runtime-0.12.0-py3-none-any.whl \
+    --hash=sha256:73a54b3e1d25871cc091e8ad4bc4eb4b6cca63e876674b5dc41190ad90430597
+overnightworks-agent-runtime-client @ https://github.com/overnightworks/agent-runtime/releases/download/v0.12.0/overnightworks_agent_runtime_client-0.12.0-py3-none-any.whl \
+    --hash=sha256:b4652a8b64ece25136663ce7719f8cb540905148efec896a9eecc841c2380e28
+overnightworks-agent-runtime-service @ https://github.com/overnightworks/agent-runtime/releases/download/v0.12.0/overnightworks_agent_runtime_service-0.12.0-py3-none-any.whl \
+    --hash=sha256:b833dd0963cb5cbaa82c81532ae07371d9406f5216df60ed9921df2cff983325

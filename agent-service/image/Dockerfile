@@ -17,7 +17,7 @@ RUN curl --fail --silent --show-error --location --output /tmp/codex.tar.gz \
     && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
     && tar -xzf /tmp/codex.tar.gz -C /tmp codex-x86_64-unknown-linux-musl
 
-FROM docker.io/library/python:3.13.17-slim-trixie@sha256:d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962
+FROM docker.io/library/python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999
 COPY --from=claude-download --chown=0:0 --chmod=0555 /tmp/claude /opt/claude/claude
 COPY --from=codex-download --chown=0:0 --chmod=0555 /tmp/codex-x86_64-unknown-linux-musl /opt/codex/codex
 COPY requirements.txt /tmp/requirements.txt
