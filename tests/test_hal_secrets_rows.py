@@ -249,6 +249,26 @@ def test_six_findings_in_one_folder_share_a_row_per_rule_and_carry_no_step(
     ]
 
 
+def test_a_tree_finding_alone_in_its_group_is_its_own_row_with_its_step_among_grouped_ones(
+    add_entries, run
+) -> None:
+    home = add_entries(entry("vault/token"))
+    crowd_a_login_folder(home)
+    shared = home / ".secrets" / "vault" / "shared"
+    shared.mkdir()
+    shared.chmod(0o775)
+
+    code, lines = run()
+
+    assert code == 1
+    assert lines[:4] == [
+        "  ! vault | unknown | 7 paths · not in the manifest",
+        "  ! vault | too open | .cache, .cache/fontconfig · has mode 755; at most 700 allowed",
+        "  ! vault/shared | too open | has mode 775; at most 700 allowed",
+        "    chmod 700 ~/.secrets/vault/shared",
+    ]
+
+
 def test_an_entry_finding_stays_its_own_row_with_its_step_among_grouped_findings(
     add_entries, run
 ) -> None:
