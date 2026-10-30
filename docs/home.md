@@ -674,7 +674,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
 - **Proof.** `flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>`, once per part, each into its own evidence dir (`<evidence dir>/fresh`, `<evidence dir>/prepared`, `<evidence dir>/shapes`, since each run truncates `cells.txt`), drives
   the step in a throwaway systemd container, never on this PC. `fresh` is the first install with both reboots, `prepared` the
   second install under both sudos, and `shapes` a third one that converges once and then refuses the foreign account shapes (A1-3);
-  each part is one container and ran in 881 s (`shapes`), 924 s (`fresh`) and 383 s (`prepared`) after the lock, so a part that nears the lock's 1800 s cap is cut, not given more time. Its cells D1-D8 also drive the mail of `hal check` there:
+  each part is one container, and a part that nears the lock's 1800 s cap is cut, not given more time; the measured times per part are in the header of `scripts/system-proof/run.sh`. Its cells D1-D8 also drive the mail of `hal check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
   a rejected login and a stalled server. Its cells R0-R7 drive rsyslog's removal there: the image carries rsyslog, an
   unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
