@@ -394,7 +394,7 @@ services:
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: &agent-service-image edge-agent-service:0.10.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.11.0-2.1.302
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"

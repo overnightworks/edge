@@ -210,11 +210,12 @@ Speicher den Stand (Journal-Alter, Standardtreiber, Zahl der Container).
 ## hal secrets
 
 ```
-hal secrets                # jedes Geheimnis: Datei, Prüfung, Ablauf; nie ein Wert
+hal secrets                # was Aufmerksamkeit braucht, die gesunden Einträge gezählt; nie ein Wert
+hal secrets -v             # jeder Eintrag als Tabelle, jeder Fund einzeln mit seinem Schritt
 hal secrets --by-service   # welcher Dienst welches Geheimnis liest (deklariert)
 ```
 
-`hal secrets` zeigt jedes Geheimnis, das das Manifest
+`hal secrets` prüft jedes Geheimnis, das das Manifest
 `src/hal/workstation/secrets_manifest.toml` nennt, und ändert nichts außer seinem
 Bericht `~/.local/state/home/secrets-report.md`. Es braucht kein Terminal;
 Agenten dürfen es fahren. Einrichten geht nur mit `hal setup` (unten);
@@ -227,7 +228,29 @@ einzige Prüfung der Ansicht ist `gh auth status` (der Keyring-Login von `gh`): 
 behält davon nur den Exit-Code, verwirft Ausgabe und Fehlerausgabe und bricht
 nach 20 Sekunden ab.
 
-Beispiel (gekürzt):
+Das Terminal zeigt Zeilen im Format der übrigen Befehle (Beispiel, gekürzt): je Fund eine
+`!`-Zeile mit dem einen Schritt darunter, dann eine `✓`-Zeile für alle vorhandenen Einträge ohne
+Fund, eine `·`-Zeile für fehlende optionale und eine für zurückgezogene mit bestätigtem Widerruf, am
+Ende das Urteil, das jeden Fund zählt. Ab sechs Fund-Zeilen teilen sich Datei- und Ordnerfunde mit
+gleicher Regel, gleichem Ordner und gleichem Befund eine Zeile (bis drei Pfade mit Namen, sonst
+ihre Zahl) ohne Schritt; `-v` bündelt nie.
+
+```
+  ! cloudflared/old.json  unknown        not in the manifest
+    add ~/.secrets/cloudflared/old.json to the manifest or delete it
+  ! gmail-cleanup   too open       has mode 775; at most 700 allowed
+    chmod 700 ~/.secrets/gmail-cleanup
+  ✓ 4 entries       present        gh checked: valid; the rest not checked
+  · 1 optional      not set up     ssh/id_ed25519.ppk
+  · 1 retired       revoked        github/token
+! 2 findings · hal secrets -v lists every entry
+```
+
+`hal secrets -v` druckt stattdessen eine ausgerichtete Tabelle mit den Spalten `name`, `kind`,
+`file`, `check`, `place` und `renew`, darunter jeden Fund einzeln und das Urteil ohne Hinweis.
+
+Der Bericht `secrets-report.md` bleibt Markdown, Byte für Byte: `hal check` und seine Mail lesen
+ihn. Beispiel (gekürzt):
 
 ```
 # hal secrets 15.10.2026 09:00 | 2 findings
@@ -251,7 +274,7 @@ Beispiel (gekürzt):
 No values: hal secrets reads secret files by stat only and never opens them.
 ```
 
-So liest sich die Tabelle:
+So liest sich die Tabelle des Berichts (und, ohne Expiry, die von `-v`):
 
 | Spalte | Werte |
 |---|---|

@@ -30,6 +30,7 @@ from hal.output import (
     write_groups,
     write_line,
     write_row,
+    write_table,
     write_verdict,
 )
 
@@ -366,6 +367,8 @@ def test_an_empty_no_colour_does_not_turn_colour_off(
 class Finding(Noun):
     ACTION = "action"
     AREA_CHECKED = "area checked"
+    ENTRY = "entry"
+    DAY = "day"
 
 
 class Page(TrailingNoun):
@@ -403,6 +406,9 @@ def test_counted_puts_the_count_before_the_noun_and_pluralises_its_first_word(
         (Page.NEW_PAGE, 2, "2 new pages"),
         (Page.NEW_PAGE, 0, "0 new pages"),
         (Finding.AREA_CHECKED, 2, "2 areas checked"),
+        (Finding.ENTRY, 1, "1 entry"),
+        (Finding.ENTRY, 2, "2 entries"),
+        (Finding.DAY, 2, "2 days"),
     ],
 )
 def test_a_trailing_noun_takes_its_plural_after_the_last_word_and_a_noun_after_the_first(
@@ -662,3 +668,36 @@ def test_a_line_reaches_its_stream_at_once_only_when_flushed(
     write_line("a line", stream=stream, flush=flush)
 
     assert sink.getvalue() == (b"a line\n" if flush else b"")
+
+
+def test_a_table_aligns_each_column_to_its_widest_cell_and_leaves_the_last_unpadded(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    write_table(
+        ("name", "kind", "renew"), [("a", "derived copy", "x"), ("long-name", "token", "y")]
+    )
+
+    assert capsys.readouterr().out.splitlines() == [
+        "name       kind          renew",
+        "a          derived copy  x",
+        "long-name  token         y",
+    ]
+
+
+def test_a_table_escapes_each_cell_before_it_pads(capsys: pytest.CaptureFixture[str]) -> None:
+    write_table(("name", "kind"), [("we\nird\x1b[31m", "token"), ("plain", "token")])
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines == ["name             kind", "we\\nird\\x1b[31m  token", "plain            token"]
+
+
+def test_a_table_header_is_bold_on_a_terminal_and_plain_off_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_table(("name", "kind"), [("a", "b")])
+    plain = capsys.readouterr().out
+    out, _err = put_on_terminals(monkeypatch)
+
+    write_table(("name", "kind"), [("a", "b")])
+
+    assert out.getvalue() == plain.replace("name  kind", "\x1b[1mname  kind\x1b[0m", 1)

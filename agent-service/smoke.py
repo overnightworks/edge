@@ -29,7 +29,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import IO, NoReturn
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 4
 AGENT = "chat"
 EVENT_PREFIX = "event: "
 SERVED_BY = "served by"
@@ -218,6 +218,8 @@ class Smoke:
         return 0
 
     def say_text(self, frame: Frame) -> None:
+        if frame.event == "succeeded" and not isinstance(frame.data.get("files"), list):
+            raise ValueError("a succeeded frame whose files is no list")
         if frame.event in TEXT_EVENTS:
             self.say(text_of(frame, "text"))
         elif frame.event == "run_started":

@@ -33,7 +33,7 @@ smoke = load_smoke()
 
 def stream_of(*events: tuple[str, dict]) -> bytes:
     frames = (
-        (number, name, json.dumps({"v": 3, "type": name, **data}))
+        (number, name, json.dumps({"v": smoke.PROTOCOL_VERSION, "type": name, **data}))
         for number, (name, data) in enumerate(events)
     )
     return b"".join(
@@ -106,7 +106,7 @@ def run_events(*events: tuple[str, dict]) -> FakeResponse:
 SUCCESS = (
     ("run_started", {"heartbeat_interval_s": 15, "model": "anthropic/opus", "route": "cli"}),
     ("assistant_text", {"text": "ok"}),
-    ("succeeded", {"text": "ok"}),
+    ("succeeded", {"text": "ok", "files": []}),
 )
 
 
@@ -136,12 +136,16 @@ def test_the_tokens_go_to_the_service_as_headers_and_nowhere_else():
     assert WORKLOAD_TOKEN.encode() not in body
 
 
-def test_the_run_is_asked_for_in_wire_v3_naming_an_agent_and_no_model():
+def test_the_run_is_asked_for_in_the_current_wire_version_naming_an_agent_and_no_model():
     _, _, connection = drive(run_events(*SUCCESS))
 
     ((_, _, body, _),) = connection.requests
     document = json.loads(body)
-    assert (document["v"], document["tools"], document["roles"]) == (3, {}, ["admin", "user"])
+    assert (document["v"], document["tools"], document["roles"]) == (
+        smoke.PROTOCOL_VERSION,
+        {},
+        ["admin", "user"],
+    )
     assert document["agent"] == "chat"
     assert "purpose" not in document
     assert "model" not in document
@@ -172,7 +176,9 @@ def test_a_failed_run_prints_its_code_and_message_and_exits_1():
 
 
 def test_a_refusal_prints_the_services_code_and_message_and_exits_1():
-    refusal = json.dumps({"v": 3, "code": "unauthorized", "message": "Sign in again."}).encode()
+    refusal = json.dumps(
+        {"v": smoke.PROTOCOL_VERSION, "code": "unauthorized", "message": "Sign in again."}
+    ).encode()
 
     exit_code, out, _ = drive(FakeResponse(401, refusal))
 
@@ -192,12 +198,38 @@ def test_a_refusal_that_is_no_typed_body_prints_the_status_only():
     [
         run_events(("assistant_text", {"text": 5})),
         FakeResponse(200, b'event: assistant_text\ndata: ["ok"]\n\n'),
-        FakeResponse(200, b'event: succeeded\ndata: {"v": 2, "type": "succeeded"}\n\n'),
+        FakeResponse(
+            200,
+            b'event: succeeded\ndata: {"v": %d, "type": "succeeded"}\n\n'
+            % (smoke.PROTOCOL_VERSION - 1),
+        ),
     ],
-    ids=["text of no text", "data of no object", "frame of version 2"],
+    ids=["text of no text", "data of no object", "frame of the previous version"],
 )
 def test_a_frame_of_the_wrong_shape_ends_the_run_as_broken_off(answer):
     exit_code, out, _ = drive(answer)
+
+    assert exit_code == 1
+    assert out.splitlines()[-1] == "the run broke off: ValueError"
+
+
+def test_a_succeeded_run_with_files_prints_no_line_for_them_and_exits_0():
+    files = [{"name": "report.txt", "content": "b2s="}]
+    succeeded = ("succeeded", {"text": "ok", "files": files})
+
+    exit_code, out, _ = drive(run_events(SUCCESS[0], succeeded))
+
+    assert exit_code == 0
+    assert out.splitlines() == [
+        "event: run_started",
+        "served by anthropic/opus on route cli",
+        "event: succeeded",
+        "ok",
+    ]
+
+
+def test_a_succeeded_run_without_files_ends_the_run_as_broken_off():
+    exit_code, out, _ = drive(run_events(SUCCESS[0], ("succeeded", {"text": "ok"})))
 
     assert exit_code == 1
     assert out.splitlines()[-1] == "the run broke off: ValueError"
@@ -223,7 +255,7 @@ def test_cancel_closes_a_stream_that_is_still_running_after_the_hold():
 
 @pytest.mark.parametrize("ending", ["succeeded", "failed", "cancelled"])
 def test_cancel_fails_when_the_run_ends_during_the_hold(ending):
-    response = StalledResponse(200, stream_of(SUCCESS[0], (ending, {"text": "ok"})))
+    response = StalledResponse(200, stream_of(SUCCESS[0], (ending, {"text": "ok", "files": []})))
 
     exit_code, out, _ = drive(response, "--cancel")
 

@@ -1,7 +1,7 @@
-"""The refusals that come before any run (cell U17 of unit.py `--cell smoke`): a v2 body, a caller
-outside the app's group and a caller with no subscription group. Each is asked of the running
-service from the `agent-smoke` container with person tokens that carry exactly the groups the case
-names; the login is never read."""
+"""The refusals that come before any run (cell U17 of unit.py `--cell smoke`): a body of the
+previous protocol, a caller outside the app's group and a caller with no subscription group. Each
+is asked of the running service from the `agent-smoke` container with person tokens that carry
+exactly the groups the case names; the login is never read."""
 
 from __future__ import annotations
 
@@ -43,7 +43,12 @@ class Refusal(NamedTuple):
 
 
 REFUSALS = (
-    Refusal("a v2 body", MEMBER_GROUPS, 2, "400 unsupported_version"),
+    Refusal(
+        "a body of the previous protocol",
+        MEMBER_GROUPS,
+        PROTOCOL_VERSION - 1,
+        "400 unsupported_version",
+    ),
     Refusal("a caller outside the app", (PLAN_GROUP,), PROTOCOL_VERSION, "403 forbidden"),
     Refusal(
         "a caller of the api group only",
