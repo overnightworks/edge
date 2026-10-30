@@ -13,7 +13,6 @@ Docker's transcripts go to `--output`, an existing directory (default: a new tem
 printed).
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse
@@ -325,7 +324,7 @@ def unauthenticated_run_status(port: int) -> int:
         headers={"Content-Type": "application/json"},
     )  # fmt: skip
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - a fixed http URL on the loopback address
+        with urllib.request.urlopen(request, timeout=10) as response:  # noqa: S310 - an http URL on the loopback address
             return response.status
     except urllib.error.HTTPError as refusal:
         return refusal.code
