@@ -600,7 +600,7 @@ They survive a dead PC because they live at the provider.
 
 **Exists today:**
 - `hal check`, `hal secrets` (view only);
-- edge: Traefik, socket proxy, Keycloak as code with its probe, `hal check`, hal backup with weekly and monthly timers. The edge stack is **not running** on this PC (no `edge/.env`, no edge containers);
+- edge: Traefik, socket proxy, Keycloak as code with its probe, `hal check`, `hal alarm` (every 5 minutes, mails a service or backup finding after two runs in a row), hal backup with weekly and monthly timers;
 - songmaker's auto-deploy, alerts and monitoring stack;
 - the tunnel with songmaker's host and auth, then the terminal 404 rule;
 - org rulesets 25224011 and 25224012.

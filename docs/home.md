@@ -158,7 +158,7 @@ eigener Fund, nie ein sauberer Lauf.
   ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein Container einer App, die mit `hal stop`
   abgeschaltet ist (eine Datei unter `~/.local/state/edge/stopped/`; nur der Name wird gelesen), ist mit jedem Code ungleich 0
   kein Fund, und der Bericht nennt die Schalter; `container-restarting`, `container-dead` und `container-unhealthy` bleiben
-  Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter. `docker-unreadable`, wenn Docker nicht lesbar ist.
+  Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter, weil nur `hal` weiß, welche Dienste eine Einheit bilden und dafür noch niemand zuständig ist; `hal alarm` meldet sie deshalb nach der eingestellten Zahl Läufe. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Jobs.** `systemctl --user list-units --state=failed` für `hal*`: nur die erste Spalte, der Einheitenname
   (`hal-backup.service`), wird gelesen, nie die Beschreibung. Jede fehlgeschlagene `hal*`-Einheit ist ein `job-failed`
   (Action needed, Gegenstand der Name samt Endung); sie verschwindet mit `reset-failed` oder einem erfolgreichen Lauf. Passt ein Name nicht
@@ -485,7 +485,7 @@ come before the system step, which is the one that asks for sudo:
    Verzeichnis. It comes after the four steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
 6. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
-   restore test and `hal check`) are written as a `.service` and a `.timer` file each into
+   restore test, `hal check` and `hal alarm`) are written as a `.service` and a `.timer` file each into
    `~/.config/systemd/user/`, led by a marker line that says `hal setup` rewrites the file
    and that changes belong in a drop-in (`<unit>.d/*.conf`, which `hal setup` never
    touches). The `ExecStart` runs `.venv/bin/hal` of the live checkout, `~/srv/hal`
@@ -736,6 +736,18 @@ Die Zusage ist enger als „jeder Commit“:
   ein Allow-Eintrag steht dort als sichtbare Zeile mit Hash und Grund.
 - Der Framework-Hook von hopin (`.pre-commit-config.yaml`) läuft hier nicht mit.
 
+## hal alarm
+
+`hal alarm` ist der Fünf-Minuten-Lauf: Er fährt nur die Prüfungen `platform` (Dienste, Jobs, Neustart, Platte) und
+`backup` des täglichen `hal check` mit denselben Regeln und merkt sich je Fund, in wie vielen Läufen hintereinander er
+auftrat. Ein Fund zählt erst, wenn er in `runs` Läufen hintereinander auftrat (Default 2); ein Fund, der einmal fehlt,
+beginnt von vorn. Was zählt, geht in dieselbe gemerkte Fundmenge wie beim täglichen Lauf
+(`~/.local/state/hal/check-findings.txt`); die Zahl der Läufe steht daneben in `alarm-streaks.json`. Mail, Popup, Wortlaut und
+Kanalregeln sind die des täglichen `hal check` (siehe oben): eine Mail, wenn ein Handlungsbedarf zählt, eine, wenn er weg
+ist, und der 09:00-Lauf meldet nichts davon noch einmal, so wenig wie der Alarm, was der tägliche Lauf schon gemeldet
+hat. Ein Alarmlauf, der scheitert, ist ein `job-failed` (`hal-alarm.service`). Der Lauf endet mit Exit-Code `0`, bei
+ungültiger Konfiguration mit `2`.
+
 ## Konfiguration
 
 `hal` liest seine Einstellungen aus `~/.config/hal/config.toml`, eine Tabelle je
@@ -751,13 +763,26 @@ weiterzulaufen. Die Datei enthält kein Geheimnis; das SMTP-Konto bleibt unter
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
+| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` und `hal alarm` ab |
+
+### `[alarm]`
+
+| Schlüssel | Default | Bedeutung |
+|---|---|---|
+| `interval` | `5` | Minuten zwischen zwei Läufen von `hal alarm`; `hal setup` schreibt `hal-alarm.timer` daraus (`OnUnitActiveSec`) |
+| `runs` | `2` | Läufe hintereinander, in denen ein Fund auftreten muss, bevor er zählt |
+
+Beide Werte sind ganze Zahlen ab 1. Ein neuer `interval` gilt nach `hal setup`; `runs` gilt beim nächsten Lauf.
 
 Beispiel:
 
 ```toml
 [check]
 notify = true
+
+[alarm]
+interval = 5
+runs = 2
 ```
 
 ## Installation
@@ -781,8 +806,9 @@ Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
 ausführen (oder `hal` über `bin/hal` aufrufen), bevor der Timer läuft.
 
-Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
-nach) und fährt nur `hal check`.
+`hal-check.timer` läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
+nach) und fährt nur `hal check`; `hal-alarm.timer` fährt `hal alarm` alle `[alarm] interval` Minuten
+(Default 5, ab dem Start und nach jedem Lauf).
 
 ## Tests
 
