@@ -514,9 +514,17 @@ come before the system step, which is the one that asks for sudo:
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
    restarting Docker while it does not report `journald`.
    It runs as root under one `sudo` call, which asks once; Ansible asks for nothing, and `sudo -k` follows
-   the call, so `hal setup` leaves no cached sudo ticket. Root executes the operator-writable
-   `~/.local/bin/ansible-playbook`, the same trust the operator's Ansible had as the producer of root's modules until the
-   agents get their own user. sudo logs its whole argv, so the play's extra vars never carry a secret. Ansible keeps its state
+   the call, so `hal setup` leaves no cached sudo ticket. Ansible's stderr joins its output inside sudo; sudo's password
+   prompt stays on the terminal, and the password never passes through hal. hal's own output callback `hal_events`,
+   selected by the packaged `ansible.cfg`, writes one marker line per unreachable result and per failed result whose
+   error is not ignored, and one with the final counts. The run succeeded when Ansible exited 0 and the counts show no
+   failed or unreachable host; hal reads no recap text. When the counts name a failed or unreachable host, the message
+   of the last such result is the fact of the red `system` row; every other unfinished run, a failure a rescue caught
+   included, shows `Ansible did not finish · its output above says why`. Root executes the operator-writable
+   `~/.local/bin/ansible-playbook` and `hal_events.py` from the operator's uv tool directory. The same account already
+   controls both and the whole ansible-core tool root, so no new principal changes what root runs (#510 decision 5): the
+   same trust the operator's Ansible had as the producer of root's modules until the agents get their own user.
+   sudo logs its whole argv, so the play's extra vars never carry a secret. Ansible keeps its state
    in root's `~/.ansible`, never the operator's; a sudoers that keeps `HOME` would leave a root-owned `~/.ansible`, and
    `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup` as themselves, never `sudo hal`.
 

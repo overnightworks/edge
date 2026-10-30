@@ -70,6 +70,7 @@ jobs:
           uv run --isolated --no-project --no-build --with dist/*.whl hal check --help
           python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F hal/exposure/allow-list.toml
           python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F hal/workstation/system/ansible.cfg
+          python3 -m zipfile -l dist/overnightworks_hal-*.whl | grep -F hal/workstation/system/callback_plugins/hal_events.py
           scratch=$(mktemp -d)
           mkdir "$scratch/home" "$scratch/work"
           UV_TOOL_DIR="$scratch/tools" UV_TOOL_BIN_DIR="$scratch/bin" uv tool install --no-build "$PWD"/dist/overnightworks_hal-*.whl
