@@ -1,0 +1,8 @@
+claim_id = "6bedba8eb48345a8bf1f47a912bf36e2"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "b85f53d590e16ae600580fdda6010879856fd87f"
+branch = "claude/issue-768-s1a-fake-anthropic-through-litellm"
+scope = [".github/workflows/ci.yml", "agent-service/api_canary.py", "agent-service/egress/dynamic/allowed.yml", "agent-service/egress/traefik.yml", "agent-service/litellm/auth.py", "agent-service/litellm/config.yaml", "agent-service/litellm/front/dynamic/route.yml", "agent-service/litellm/front/traefik.yml", "agent-service/litellm/gate.py", "agent-service/litellm/start.sh", "compose.yaml", "docs/agent-service.md", "docs/architecture.md", "docs/internal-ca.md", "probe/agent-service/agent_networks.py", "probe/agent-service/egress.py", "probe/agent-service/fake_anthropic.py", "probe/agent-service/litellm.py", "probe/edge_copy.py", "quality/config.toml", "tests/support/front.compose.yaml", "tests/test_agent_egress.py", "tests/test_litellm_front.py", "tests/test_litellm_gate.py", "tests/test_litellm_unit.py"]
+opened_commit = "c49d5fa5bb450219f257b8887a77a5932b9f7ec2"
+whole_reason = "S1a builds the whole inference path from agent-service to a fake Anthropic (front, LiteLLM, gateway entrypoint 2) and its proof; every hop is part of the one boundary under test and the proof runs only end to end."
