@@ -1,8 +1,0 @@
-claim_id = "8cbae0ee6cf143c0ae86c0d4778a45fe"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "dd0c56194fc550782750bb42fec6c64c4f1025c1"
-branch = "claude/issue-729-s7d-probe-prints-write-line"
-scope = ["probe/agent-service/cells_12b.py", "probe/agent-service/containment.py", "probe/agent-service/egress.py", "probe/agent-service/image.py", "probe/agent-service/login_checks.py", "probe/agent-service/refusals.py", "probe/agent-service/unit.py", "probe/apps/alias_routing.py", "probe/apps/emergency_switch.py", "probe/keycloak/probe.py", "probe/step-ca/health.py", "probe/step-ca/mcp_networks.py", "probe/switches/built_image.py", "probe/switches/probe.py", "src/hal/output/__init__.py", "tests/test_hal_output.py"]
-opened_commit = "adb687f570a811a367883a8f89456b36ed42d8e9"
-whole_reason = "One rule, one sink and one mapping across the host-side probes; the flush keyword's first callers are in them, so the contract change and its callers land together."
