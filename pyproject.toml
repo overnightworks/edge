@@ -3,10 +3,10 @@ name = "overnightworks-hal"
 version = "0.1.0"
 description = "hal, the daily door."
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "pyyaml>=6",
-    "overnightworks-appkit @ https://github.com/overnightworks/appkit/releases/download/v0.5.0/overnightworks_appkit-0.5.0-py3-none-any.whl#sha256=7539a8a42d3e07aaf71e14fae63db0eb59806eb641c18c87abad5b67ea21ada1",
+    "overnightworks-appkit @ https://github.com/overnightworks/appkit/releases/download/v0.7.0/overnightworks_appkit-0.7.0-py3-none-any.whl#sha256=f6e056cd70d4cb5f9ad52ee55a7bee9efb40beb4f303db1e43d19a3acf8401a8",
 ]
 
 [project.scripts]
@@ -30,17 +30,18 @@ extend-include = ["keycloak/go-live", "step-ca/init", "agent-service/setup"]
 [tool.ruff.format]
 # home's tree is imported as it is: home-tools#56 / home-tools#45 move its texts.
 # Deletion target: home-tools#45, or one mechanical reformat item, whichever lands first.
-exclude = ["src/hal/workstation/**", "tests/home/**"]
+exclude = ["src/hal/workstation/**", "tests/*workstation*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+external = ["S", "T20"]
 
 [tool.ruff.lint.per-file-ignores]
 # Same reason and deletion target as [tool.ruff.format]. E501: home's lines run to 140;
 # RUF001: the German strings carry U+203A; I001/RUF009/RUF043/RUF100: single imported lines
 # (the last three only in the tests).
 "src/hal/workstation/**" = ["E501", "I001", "RUF001"]
-"tests/home/**" = ["E501", "I001", "RUF001", "RUF009", "RUF043", "RUF100"]
+"tests/*workstation*.py" = ["E501", "I001", "RUF001", "RUF009", "RUF043", "RUF100"]
 
 [tool.coverage.run]
 branch = true

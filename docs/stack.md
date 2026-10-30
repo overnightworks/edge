@@ -34,7 +34,8 @@ and `hal apply --local` writes it again.
   tokens and fonts (`legal/assets/appkit-<version>/`, which `hal apply` writes from the installed appkit) answer under `/_rechtliches/`, every other path with 404. The catalog gives
   it the apex as its host, which the Cloudflare redirect leaves to it for the three pages, `/favicon.ico` (answered 404) and
   `/_rechtliches/` (`cloudflare.redirect.serve`). The pages are built by `hal apply` from `legal/frame` and `legal/sections` (the plan names each page that is
-  new or changes) and go live when it has written them; before the first build they answer 404. The stylesheet goes live once the live checkout is
+  new or changes) and go live when it has written them; every answer carries `Cache-Control: no-cache`, so a cache that
+  stored a page asks again before it shows it; before the first build they answer 404. The stylesheet goes live once the live checkout is
   pulled; a changed `legal/nginx/default.conf` needs the container restarted with `hal stop legal` and
   `hal start legal`.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host
@@ -102,7 +103,7 @@ ways:
 
 `hal setup` deviates in one way:
 
-- **E4:** `hal setup` prints four rows and a verdict, and a stop as an `error:`/`next:` pair
+- **E4:** `hal setup` prints five rows and a verdict, and a stop as an `error:`/`next:` pair
   ([docs/home.md](home.md), `hal setup`); it shows its plan and asks one `yes` before it acts (`--dry-run` only shows); it ends with 0 when nothing failed or
   nothing was open, 1 when the `yes` was declined, 3 for a failed step, 4 without a terminal (after the plan, before any
   step). Ansible's own stream stays until

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import yaml
 
+from hal.output import Stream, write_line
 from hal.stack import catalog
 from hal.stack.external import secrets, tofu
 from hal.stack.external.tofu import EXTERNAL_ROOT, PROJECT_ROOT, TofuError
@@ -26,8 +27,7 @@ ACCEPTED_TEST_FILE = "*.tftest.hcl"
 # Every form `tofu test` runs: in the root folder and in `tests/`.
 TOFU_TEST_FILE_PATTERNS = ("*.tftest.hcl", "*.tofutest.hcl", "*.tftest.json", "*.tofutest.json")
 MOCKED_PROVIDERS = ("cloudflare",)
-# Encrypts nothing real: the tests keep no state.
-THROWAWAY_STATE_PASSPHRASE = "edge-tofu-test-throwaway-passphrase"
+THROWAWAY_STATE_PASSPHRASE = "edge-tofu-test-throwaway-passphrase"  # noqa: S105 - encrypts nothing real because the tests keep no state
 INIT_ARGUMENTS = ["init", "-backend=false", "-lockfile=readonly", "-input=false"]
 
 
@@ -100,13 +100,13 @@ def test_environment(tofu_path: Path, home: Path, temporary_directory: Path) -> 
 def run_tests(tofu_path: Path, external_directory: Path = EXTERNAL_ROOT) -> int:
     problems = refusals(external_directory)
     if problems:
-        print("\n".join(f"edge: {problem}" for problem in problems), file=sys.stderr)
+        write_line("\n".join(f"edge: {problem}" for problem in problems), stream=Stream.STDERR)
         return 2
     with tempfile.TemporaryDirectory(prefix="edge-tofu-test-") as scratch:
         environment = test_environment(tofu_path, Path(scratch), Path(scratch))
         for arguments in (INIT_ARGUMENTS, ["test"]):
             completed = tofu.run(tofu_path, arguments, environment)
-            print(completed.output, end="")
+            write_line(completed.output, end="")
             if completed.exit_code != 0:
                 return completed.exit_code
     return 0
@@ -114,7 +114,7 @@ def run_tests(tofu_path: Path, external_directory: Path = EXTERNAL_ROOT) -> int:
 
 def main(arguments: list[str]) -> int:
     if arguments:
-        print("usage: python -m hal.stack.external.tofu_test", file=sys.stderr)
+        write_line("usage: python -m hal.stack.external.tofu_test", stream=Stream.STDERR)
         return 2
     try:
         located = tofu.locate_tofu()
@@ -122,7 +122,7 @@ def main(arguments: list[str]) -> int:
             environment = test_environment(located, Path(scratch), Path(scratch))
             tofu.require_pinned_version(located, environment)
     except TofuError as error:
-        print(f"edge: {error}", file=sys.stderr)
+        write_line(f"edge: {error}", stream=Stream.STDERR)
         return 2
     return run_tests(located)
 

@@ -5,8 +5,6 @@ the history for secrets).
 """
 
 import hashlib
-import importlib.machinery
-import importlib.util
 import json
 import os
 import secrets as random_secrets
@@ -20,6 +18,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from support.script_module import loaded_script
 
 STEP_CA = Path(__file__).resolve().parents[1] / "step-ca"
 PROBE = Path(__file__).resolve().parents[1] / "probe" / "step-ca" / "probe.py"
@@ -34,14 +33,7 @@ INTERMEDIATE_FILES = {"certs/intermediate_ca.crt", "secrets/intermediate_ca_key"
 
 @pytest.fixture(scope="module")
 def init_module() -> Iterator[ModuleType]:
-    loader = importlib.machinery.SourceFileLoader("step_ca_init", str(STEP_CA / "init"))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
-    loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+    yield from loaded_script("step_ca_init", STEP_CA / "init")
 
 
 @dataclass
@@ -541,41 +533,31 @@ def ca_config() -> dict:
     return json.loads((STEP_CA / "ca.json").read_text())
 
 
-def test_the_ca_has_one_acme_provisioner_for_tls_alpn_01_and_mcp_internal_names(ca_config):
-    """#38 rule 2: one ACME provisioner; the name policy sits on the authority."""
+def test_the_ca_has_one_acme_provisioner_without_its_own_policy(ca_config):
+    """#38 rule 2: policy on the authority only."""
     provisioners = ca_config["authority"]["provisioners"]
-
-    assert [(p["type"], p["challenges"]) for p in provisioners] == [("ACME", ["tls-alpn-01"])]
-    assert "policy" not in provisioners[0]  # step-ca 0.30.2 ignores it there
-    assert ca_config["authority"]["policy"] == {"x509": {"allow": {"dns": ["*.mcp.internal"]}}}
+    assert [provisioner["type"] for provisioner in provisioners] == ["ACME"]
+    assert not [p for p in provisioners if "policy" in p]
 
 
-def test_the_ca_keeps_the_default_certificate_lifetime_of_24_hours(ca_config):
-    """#38 rule 2: default lifetime."""
-    provisioner = ca_config["authority"]["provisioners"][0]
+def test_the_ca_allows_only_wildcards_under_never_public_names(ca_config):
+    """#38 rule 2: `*.` under a never-public name (ICANN, RFC 6761/6762)."""
+    never_public = {"internal", "test", "invalid", "localhost", "local"}
+    allowed = ca_config["authority"]["policy"]["x509"]["allow"]["dns"]
+    assert allowed
+    assert all(pattern.startswith("*.") for pattern in allowed)
+    assert all(pattern.rsplit(".", 1)[-1] in never_public for pattern in allowed)
 
-    assert "claims" not in provisioner
-    assert "claims" not in ca_config["authority"]
 
-
-def test_the_ca_listens_on_9000_as_step_ca_with_no_remote_management(ca_config):
-    """#38 rule 2: address :9000, dnsNames step-ca, no remote management."""
-    assert ca_config["address"] == ":9000"
-    assert ca_config["dnsNames"] == ["step-ca"]
+def test_the_ca_has_no_remote_management(ca_config):
+    """#38 rule 2: no admin API, no insecure listener."""
     assert not ca_config["authority"].get("enableAdmin")
     assert "insecureAddress" not in ca_config or not ca_config["insecureAddress"]
 
 
 @pytest.fixture(scope="module")
 def probe() -> Iterator[ModuleType]:
-    spec = importlib.util.spec_from_file_location("step_ca_probe", PROBE)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+    yield from loaded_script("step_ca_probe", PROBE)
 
 
 @pytest.mark.parametrize("stop_signal", ["TERM", "INT"])

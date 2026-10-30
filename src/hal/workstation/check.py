@@ -67,7 +67,7 @@ CheckFindings = tuple[str, frozenset[str]]
 """What one check returns: its report section and the identities of its findings."""
 
 
-MISSING_PASSWORD_RULE = "missing-password"
+MISSING_PASSWORD_RULE = "missing-password"  # noqa: S105 - a rule name and no credential
 
 
 def _secret_rule(finding: secrets_view.SecretFinding) -> str:
@@ -260,6 +260,10 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "hook-file"): HOOK_BROKEN,
     ("hook", "quality"): HOOK_BROKEN,
     ("hook", "engines"): HOOK_BROKEN,
+    ("hook", "mise"): RuleReport(
+        ACTION, "mise is missing or not the pinned one; the quality gate cannot install its scanners.", SETUP_APPLY,
+        resolved="mise is the pinned one again.", describes_shared_state=True,
+    ),
     ("hook", "hidden-hook"): RuleReport(NOTE, "A repo's own commit step is hidden.", area_note="a repo's own commit step is hidden"),
     ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", SECRETS_VIEW, resolved="A secret is no longer readable by others."),
     ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", SECRETS_VIEW, resolved="A secret no longer sits behind a link."),
@@ -339,7 +343,7 @@ def _split(identity: str) -> tuple[str, str, str]:
 def _item(identity: str, readers: Mapping[str, str]) -> Item:
     check_name, rule, subject = _split(identity)
     report = _rule_report(check_name, rule)
-    assert report is not None, identity
+    assert report is not None, identity  # noqa: S101 - the identity names a rule that exists
     words = {"subject": subject, "area": AREA_LABELS[check_name], "readers": f" for {readers[subject]}" if readers.get(subject) else ""}
     note = (report.area_note or report.sentence).removesuffix(".")
     return Item(identity, check_name, report, report.sentence.format(**words), report.next_step.format(**words), note.format(**words), report.resolved.format(**words))

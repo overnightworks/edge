@@ -8,7 +8,9 @@ The user units come before the system step, which is the one that asks for sudo.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import tempfile
 import tomllib
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -33,20 +35,28 @@ from hal.workstation.system_step import (
     UnresolvableRunningUser,
 )
 from hal.workstation.layout import CommandRunner, Layout
-from hal.workstation.user_units import UnitsApplied, UserUnits
+from hal.workstation.path_link import PathLink
+from hal.workstation.user_units import UnitsApplied, UnitsPartial, UserUnits
 
 if TYPE_CHECKING:
-    from hal.workstation.ports import Ports
+    from hal.workstation.ports import Downloader, Ports
 
-# Quality v0.5.1. A commit SHA cannot move and needs no tag; a bump is a one-line change here.
-QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@d3a0466fc6dc87898431b722e9488921d729be42"
+# Quality v0.8.0. A commit SHA cannot move; a bump is a one-line change here.
+QUALITY_SOURCE = "overnightworks-quality @ git+https://github.com/overnightworks/quality@64009e7eba23ba7d3c5d2b2df0e7d68b71b27a73"
+# The release binary of mise and its sha256 (the same in the release's SHASUMS256.txt); a bump is a two-line change here.
+MISE_VERSION = "2026.10.23"
+MISE_SHA256 = "a6ac620e73fb58cefbdfef8fb154856fbd8ae08d75ae88103e4b81daef3a836e"
+MISE_URL = f"https://github.com/jdx/mise/releases/download/v{MISE_VERSION}/mise-v{MISE_VERSION}-linux-x64"
 # The engine of the system step; a bump is a one-line change here.
 ANSIBLE_SOURCE = "ansible-core==2.21.5"
 HOOK_NAMES = ("pre-commit", "pre-merge-commit")
 HOOK_TEMPLATE = Path(__file__).parent / "hooks" / "commit-hook"
 HOOK_MODE = 0o755
+MISE_MODE = 0o755
 HOOK_WHY = "without the hook no commit is checked for secrets"
-UNITS_WHY = "without the links and the reload the timers run no unit of this checkout, or an older one"
+MISE_WHY = "without mise the pinned quality gate cannot install its scanners"
+PATH_WHY = "without the link your terminal finds no hal, or the one of a checkout that has moved"
+UNITS_WHY = "without the units and the reload the timers run no hal job, or an older one"
 SECRETS_WHY = "without them the services and the tunnel have no token, password or key to start with"
 SYSTEM_WHY = (
     "without it the tunnel ignores edge's global stop after a reboot, and only root may stop it"
@@ -59,9 +69,10 @@ APPLY_PLAN = command(Verb.APPLY)
 
 
 class SetupRow(StrEnum):
-    """The four rows `hal setup` prints, in the order it runs them."""
+    """The five rows `hal setup` prints, in the order it runs them."""
 
     COMMIT_HOOK = "commit hook"
+    PATH = "path"
     TIMERS = "timers"
     SYSTEM = "system"
     SECRETS = "secrets"
@@ -129,7 +140,7 @@ class WalkTold(StepFailed):
 
 
 class StillOpenSecret(Noun):
-    SECRET = "secret still open"
+    SECRET = "secret still open"  # noqa: S105 - a noun for a count and no credential
 
 
 class OpenRow(TrailingNoun):
@@ -386,7 +397,39 @@ def _write_atomically(path: Path, content: str) -> None:
     temporary.replace(path)
 
 
-def _quality_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
+def mise_hash_is_pinned(path: Path) -> bool:
+    with path.open("rb") as binary:
+        return hashlib.file_digest(binary, "sha256").hexdigest() == MISE_SHA256
+
+
+def mise_is_current(layout: Layout) -> bool:
+    return _is_executable(layout.mise_executable) and mise_hash_is_pinned(layout.mise_executable)
+
+
+def _install_mise(layout: Layout, download: Downloader) -> bool:
+    """Downloads into a private staging file beside the destination and publishes it only whole, hash-checked and executable."""
+    destination = layout.mise_executable
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, staging_name = tempfile.mkstemp(prefix=".mise-", dir=destination.parent)
+    staging = Path(staging_name)
+    try:
+        with os.fdopen(descriptor, "wb") as writer:
+            try:
+                download(MISE_URL, writer)
+            except OSError as error:
+                raise StepFailed(f"mise could not be downloaded: {error.strerror or error}") from error
+        if not mise_hash_is_pinned(staging):
+            raise StepFailed("the download of mise does not match its pinned sha256")
+        staging.chmod(MISE_MODE)
+        os.replace(staging, destination)
+    except OSError as error:
+        raise StepFailed(f"mise could not be installed: {error.strerror or error}") from error
+    finally:
+        staging.unlink(missing_ok=True)
+    return True
+
+
+def _quality_steps(layout: Layout, run: CommandRunner, download: Downloader) -> tuple[Step, ...]:
     quality, engines_dir = str(layout.quality_executable), str(layout.quality_engines_dir)
 
     def quality_current() -> bool:
@@ -402,6 +445,14 @@ def _quality_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
         return run([quality, "engines", "install", engines_dir]) is not None and engines_current()
 
     return (
+        _local_step(
+            "mise",
+            SetupRow.COMMIT_HOOK,
+            lambda: mise_is_current(layout),
+            lambda: _install_mise(layout, download),
+            MISE_WHY,
+            "mise did not install",
+        ),
         _local_step(
             "quality",
             SetupRow.COMMIT_HOOK,
@@ -463,10 +514,26 @@ def _hook_steps(layout: Layout, run: CommandRunner) -> tuple[Step, ...]:
     )
 
 
+def _path_steps(layout: Layout) -> tuple[Step, ...]:
+    link = PathLink(layout)
+    return (
+        Step(
+            "PATH link",
+            SetupRow.PATH,
+            link.check,
+            link.apply,
+            PATH_WHY,
+            "the link could not be made",
+            open_fact=link.fact,
+            operators_only=True,
+        ),
+    )
+
+
 def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
     run = ports.run
     system = SystemStep(layout, ports.system)
-    units = UserUnits(layout, ports.unit_directory, run)
+    units = UserUnits(layout, ports.timer_jobs, run)
     system_row = SetupRow.SYSTEM
 
     def ansible_current() -> bool:
@@ -483,6 +550,7 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
             units.apply,
             UNITS_WHY,
             "the user units did not come up",
+            open_fact=units.open_fact,
             operators_only=True,
         ),
         _local_step(
@@ -511,7 +579,7 @@ def _system_steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
 
 
 def _steps(layout: Layout, ports: Ports) -> tuple[Step, ...]:
-    return (*_quality_steps(layout, ports.run), *_hook_steps(layout, ports.run), *_system_steps(layout, ports), _secrets_step(layout, ports))
+    return (*_quality_steps(layout, ports.run, ports.download), *_hook_steps(layout, ports.run), *_path_steps(layout), *_system_steps(layout, ports), _secrets_step(layout, ports))
 
 
 def _role(ports: Ports) -> ExecutionRole:
@@ -554,6 +622,19 @@ def _run_row(row: SetupRow, steps: tuple[Step, ...], role: ExecutionRole, mode: 
     return max(outcomes, key=lambda candidate: EVENT_LOOK[candidate.event].severity)
 
 
+def _failure_detail(row: SetupRow, error: OSError | StepFailed, step: Step, mode: Pass) -> str:
+    """What the failed row left behind, for the rows that say: no mutation is tracked, so `may` is true whether or not anything changed."""
+    match row:
+        case SetupRow.SYSTEM:
+            leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
+            return f" · {leaves}"
+        case SetupRow.PATH:
+            return " · nothing changed" if mode is not Pass.RUN else ""
+        case SetupRow.TIMERS:
+            return " · units may be partial" if isinstance(error, UnitsPartial) else " · nothing changed"
+    return ""
+
+
 def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStopped, mode: Pass) -> None:
     step = stopped.step
     match stopped.error:
@@ -564,8 +645,7 @@ def _stop_after_failure(rows: list[SetupRow], position: int, stopped: _RowStoppe
             detail = f" · {counted(len(names), StillOpenSecret.SECRET)}"
         case error:
             outcome = Outcome(SetupEvent.FAILED, _failure_sentence(step, error))
-            leaves = "/etc may be partial" if step.may_leave_system_partial and mode is Pass.RUN else "/etc unchanged"
-            detail = f" · {leaves}" if rows[position] is SetupRow.SYSTEM else ""
+            detail = _failure_detail(rows[position], error, step, mode)
     write_row(outcome.row(rows[position]))
     for later in rows[position + 1 :]:
         write_row(Outcome(SetupEvent.NOT_RUN).row(later))

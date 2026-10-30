@@ -4,10 +4,11 @@ R2-R4).
 
 The step runs only when Keycloak is on, set up and running, and an input changed: the step's entry
 in `applied.json` (under `keycloak-config-cli`) is missing, unfinished, or differs from the digests
-of the checkout files config-cli reads and its resolved definition, or Keycloak's own
-import-checksum attributes differ from the ones the entry saw after the last apply. A rotated
-client secret alone does not trigger it: Compose's definition hash ignores the content of a
-secret file.
+of the checkout files config-cli reads and hal's digest of its resolved service, or Keycloak's own
+import-checksum attributes differ from the ones the entry saw after the last apply. The digest
+makes each bind source inside the checkout relative to it, so moving the checkout is no realm
+change. A rotated client secret alone does not trigger it: the digest covers the secret
+attachments, not their content.
 
 An apply that runs takes `hal backup keycloak --pre-apply --json`, proves that snapshot with
 `hal restore --test keycloak --snapshot`, observes both realms, runs config-cli, observes again and
@@ -18,6 +19,7 @@ Nothing is deleted but what config-cli resets to the file; those removals say so
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -55,7 +57,7 @@ KEYCLOAK_SERVICE = "keycloak"
 CONFIG_CLI = "keycloak-config-cli"
 # config-cli imports these from its directory bind of keycloak/, which `core.file_binds` skips.
 REALM_FILES = ("keycloak/master.yaml", "keycloak/realm.yaml")
-DEFINITION_KEY = "definition"  # the entry's key for config-cli's `compose config --hash`
+DEFINITION_KEY = "definition"  # the entry's key for `definition_digest` of config-cli
 BACKUP_SECONDS = 1800
 STOP_GRACE_SECONDS = 120  # what hal backup gets to remove its staging and restore container
 COLLECT_SECONDS = 5  # what the output of a killed hal backup gets before its pipes are closed
@@ -111,9 +113,23 @@ def bound_files(config: Mapping[str, Any], repository: Path) -> tuple[Path, ...]
     return (*realm_files, *core.file_binds(config["services"].get(CONFIG_CLI, {}), repository))
 
 
-def read_inputs(engine: compose.Compose, config: Mapping[str, Any], repository: Path) -> Inputs:
+def definition_digest(service: Mapping[str, Any], repository: Path) -> str:
+    """The sha256 of the resolved service in canonical JSON, each bind source inside the checkout
+    as its path relative to it, so a checkout elsewhere is the same definition. Compose's own hash
+    names the checkout, which the recreate decisions need and this record must not."""
+    mounts = [
+        {**mount, "source": Path(mount["source"]).relative_to(repository).as_posix()}
+        if mount.get("type") == "bind" and Path(mount["source"]).is_relative_to(repository)
+        else mount
+        for mount in service.get("volumes", [])
+    ]
+    canonical = json.dumps({**service, "volumes": mounts}, sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def read_inputs(config: Mapping[str, Any], repository: Path) -> Inputs:
     files = core.digests(bound_files(config, repository), repository)
-    return Inputs(files, engine.config_hashes((CONFIG_CLI,))[CONFIG_CLI])
+    return Inputs(files, definition_digest(config["services"][CONFIG_CLI], repository))
 
 
 def _flat(checksums: Checksums) -> dict[str, str]:
@@ -187,7 +203,6 @@ def restart_of(plans: Iterable[UnitPlan], recreates: Iterable[Recreate]) -> Real
 
 
 def plan_realm(
-    engine: compose.Compose,
     observer: Observer,
     record: core.Record,
     config: Mapping[str, Any],
@@ -201,7 +216,7 @@ def plan_realm(
         return RealmPlan()
     if restart:
         return RealmPlan(RealmAction.NOT_CHECKED, restart=restart)
-    inputs = read_inputs(engine, config, repository)
+    inputs = read_inputs(config, repository)
     reading = record.read()
     if gate is not core.Gate.ON:
         if why := _why(reading, inputs, None):
@@ -243,7 +258,7 @@ def run_edge_backup(
     systemd unit is (`KillMode=control-group` default): SIGTERM to its whole group, then
     `STOP_GRACE_SECONDS` to remove its staging and restore container."""
     try:
-        with subprocess.Popen(
+        with subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,

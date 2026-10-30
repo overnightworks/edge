@@ -55,7 +55,7 @@ def _require_every_container_inspected(inspect_json: str, listed: int) -> None:
 
 def _run(command: HostCommand) -> str:
     try:
-        completed = subprocess.run(
+        completed = subprocess.run(  # noqa: S603 - argv comes from the host check's own commands and no shell runs
             command.argv,
             capture_output=True,
             text=True,

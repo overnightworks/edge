@@ -1,8 +1,0 @@
-[Unit]
-Description=hal check: reports what is wrong on this machine and in the secrets manifest; mails only when a finding appears or goes
-
-[Service]
-Type=oneshot
-ExecStart=%h/git/edge/.venv/bin/hal check
-# Exit 1 means "findings exist": news, not a failure. Exit 2 (invalid config) and 3 (unexpected error) still fail the unit.
-SuccessExitStatus=1

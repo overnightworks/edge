@@ -168,7 +168,6 @@ def _plan(
     )
     unit_services = plan_unit_services(fleet, containers, hashes, plans, followers, gates, engine)
     realm = reconcile.plan_realm(
-        engine,
         reconcile.Observer(engine),
         record,
         fleet.config,

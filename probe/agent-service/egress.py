@@ -1,10 +1,11 @@
-#!/usr/bin/env python3
 """Probe of the agent service's egress (#189 cells E1-E10, E12, E13; #201 E11, E14 and the real
 service; #346 P26, P36): the gateway `agent-egress` and either the stand-in `agent-probe` or
 the real `agent-service` of compose.yaml, in a throwaway compose project of their own.
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
         python3 probe/agent-service/egress.py --scratch DIR [--target stand-in|service]
+
+Measured teardown: 2 s (K 50 s, CAP 1780 s).
 
 The stack runs from a copy of compose.yaml and of the gateway's static file with the egress
 network moved to a free /24 of its own (the gateway's address and the subject's `extra_hosts`
@@ -71,6 +72,8 @@ from egress_observe import (  # noqa: E402
     udp_connect,
 )
 from scratch_secrets import write_scratch_secrets  # noqa: E402
+
+from hal.output import write_line  # noqa: E402
 
 PROJECT = "edge-agentegress-probe"
 LABEL = f"edge.probe={PROJECT}"
@@ -261,7 +264,7 @@ class Client:
 
     @staticmethod
     def main(arguments: list[str]) -> int:
-        print(json.dumps(getattr(Client, arguments[0])(*arguments[1:])), flush=True)
+        print(json.dumps(getattr(Client, arguments[0])(*arguments[1:])), flush=True)  # noqa: T201 - this in-container program imports nothing of hal and prints itself
         return 0
 
 
@@ -306,11 +309,11 @@ class Probe:
 
     def run(
         self, command: list[str], *, stdin: str | None = None, check: bool = True,
-        timeout: int = 300,
+        timeout: int = 300, own_session: bool = False,
     ) -> subprocess.CompletedProcess:  # fmt: skip
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, input=stdin, capture_output=True, text=True, env=self.environment, cwd=REPO,
-            check=False, timeout=timeout, close_fds=True,
+            check=False, timeout=timeout, close_fds=True, start_new_session=own_session,
         )  # fmt: skip
         if check and result.returncode != 0:
             tail = (result.stderr or result.stdout).strip().splitlines()
@@ -406,6 +409,7 @@ class Probe:
         copy.chmod(0o644)
 
     def __exit__(self, *_: object) -> None:
+        edge_copy.begin_teardown()
         if self.listener:
             self.listener.close()
         for window in self.windows:
@@ -427,7 +431,8 @@ class Probe:
         ).stdout.split()
         if stray:
             self.run(["docker", "rm", "-f", *stray], check=False)
-        self.compose("down", "--volumes", "--remove-orphans", "--timeout", "10", check=False)
+        down = self.compose_command("down", "--volumes", "--remove-orphans", "--timeout", "10")
+        self.run(down, check=False, own_session=True)  # `timeout`'s group signal must not stop it
 
     # --- the packet windows -------------------------------------------------------------------
 
@@ -436,7 +441,7 @@ class Probe:
         command = self.compose_command(
             "run", "--rm", "--no-deps", "-T", "--label", LABEL, service, *arguments
         )
-        watcher = subprocess.Popen(
+        watcher = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             env=self.environment, cwd=REPO, close_fds=True,
         )  # fmt: skip
@@ -489,7 +494,7 @@ class Probe:
         )  # fmt: skip
 
     def hold(self, cell: str, how: str) -> None:
-        print(f"{cell} held: {how}", flush=True)
+        write_line(f"{cell} held: {how}", flush=True)
         self.held.append(cell)
 
     def wait_until_the_gateway_answers(self) -> None:
@@ -584,7 +589,7 @@ class Probe:
 
     def cell_e7(self) -> None:
         self.listener = socket.socket()
-        self.listener.bind(("0.0.0.0", 0))  # reachable on every host address: that is the point
+        self.listener.bind(("0.0.0.0", 0))  # reachable on every host address: that is the point  # noqa: S104 - the listener must be reachable on every host address
         self.listener.listen(8)
         port = str(self.listener.getsockname()[1])
         internet = self.network_gateway(f"{PROJECT}_internet")
@@ -659,7 +664,7 @@ class Probe:
                 self.drive_dns_window()
                 return
             except NotDriven as problem:
-                print(f"E10 try {attempt}: {problem}", flush=True)
+                write_line(f"E10 try {attempt}: {problem}", flush=True)
         raise NotDriven(f"E10: not driven in {HOST_WINDOW_TRIES} windows")
 
     def drive_dns_window(self) -> None:
@@ -776,9 +781,9 @@ def run_probe(open_probe: Callable[[], Probe]) -> int:
         with open_probe() as probe:
             probe.drive()
     except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
-        print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
+        write_line(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
         return 1
-    print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
+    write_line(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
     return 0
 
 

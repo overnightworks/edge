@@ -5,6 +5,8 @@ It stops accidental and non-interactive runs; it does not identify the operator 
 
 import sys
 
+from hal.output import Stream, write_line
+
 NEEDS_TERMINAL = "refused, stdin and stdout must be a terminal"
 
 
@@ -17,5 +19,5 @@ def refused_without_terminal(command: str) -> bool:
     """True, after saying so, when stdin and stdout are not both a terminal."""
     if at_terminal():
         return False
-    print(f"{command}: {NEEDS_TERMINAL}", file=sys.stderr)
+    write_line(f"{command}: {NEEDS_TERMINAL}", stream=Stream.STDERR)
     return True

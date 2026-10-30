@@ -8,7 +8,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from edge_backup_support import declare_shipped_apps, declare_two_apps, no_restore_server_left
+from backup_support import declare_shipped_apps, declare_two_apps, no_restore_server_left
 
 
 @pytest.mark.parametrize(

@@ -50,10 +50,12 @@ from service_log import (
 )
 from smoke import RUN_END_EVENTS, Tokens
 
+from hal.output import write_line
+
 WRAPPER_DIRECTORY = "/opt/probe-wrapper"
 WRAPPER = f"{WRAPPER_DIRECTORY}/claude"
 PLANT_FLAG = "plant"
-TEMPORARY = "/tmp"  # NOSONAR(S5443) only listed in the census, never written to
+TEMPORARY = "/tmp"  # NOSONAR(S5443) only listed in the census, never written to  # noqa: S108 - a path the census lists and never writes
 FRAME = "event: failed"
 WINDOW_SECONDS = 60  # the sampler's window, which covers the whole run
 REAP_SECONDS = 6  # the reap's bound is 5 s
@@ -476,7 +478,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         self.expect_driven("B2", canary, [APP_LISTING.format(canary=1)])
         failed = [*self.judge(b1_verdicts(relay)), *self.judge(b2_verdicts(canary))]
         for cell in ("B1 (a)", "B2 (a)"):
-            print(
+            write_line(
                 f"{cell} NOT DRIVEN: the loopback capture is not built (#339); B1 (b), "
                 f"B2 (b)(c) and agent-runtime's CI cover the relay side",
                 flush=True,
@@ -500,7 +502,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         try:
             return self.judge(self.cell_b5(census, relay.app.count(APP_LISTING.format(canary=0))))
         except NotDriven as error:
-            print(f"B5 NOT DRIVEN: {error}", flush=True)
+            write_line(f"B5 NOT DRIVEN: {error}", flush=True)
             return ["B5"]
 
     # --- the cells ----------------------------------------------------------------------------
@@ -510,7 +512,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         for cell, (held, evidence) in verdicts.items():
             if held:
                 self.held.append(cell)
-            print(f"{cell} {'held' if held else 'FAILED'}: {evidence}", flush=True)
+            write_line(f"{cell} {'held' if held else 'FAILED'}: {evidence}", flush=True)
         return [cell for cell, (held, _) in verdicts.items() if not held]
 
     def expect_driven(self, cell: str, seen: Observed, lines: list[str]) -> None:
@@ -527,7 +529,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         looked = self.snapshot(census)
         expect(not looked.sleepers(), "the wrapper planted a marker before the run")
         pids = looked.service_pids()
-        print(
+        write_line(
             f"baseline: no marker, {looked.working_root} working-root entries and "
             f"{looked.temporary} /tmp entries",
             flush=True,
@@ -561,7 +563,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         )
         expect_comparable(before, after, roots)
         for name, listing in changed_mounts(before, after, roots).items():
-            print(
+            write_line(
                 f"B5 (reported): the listing of {name} changed to {len(listing)} entries "
                 f"{[list(entry) for entry in listing]}",
                 flush=True,
@@ -615,7 +617,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         are minted here: B5 takes minutes and the issuer's tokens expire."""
         tokens = self.mint()
         self.write_mode(Mode.RELAY)
-        smoke = subprocess.Popen(
+        smoke = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             self.smoke_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, env=self.environment, cwd=REPO,
             close_fds=True,

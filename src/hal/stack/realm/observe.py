@@ -42,7 +42,7 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 REALMS = ("master", "hallucinai")
 CLIENT_ID = "config-cli"
-TOKEN_PATH = "/realms/master/protocol/openid-connect/token"
+TOKEN_PATH = "/realms/master/protocol/openid-connect/token"  # noqa: S105 - an OpenID endpoint path and no credential
 ADMIN_PATH = "/admin/realms"
 PAGE = 100
 REQUEST_SECONDS = 15.0
@@ -192,7 +192,7 @@ CLIENT = shape(
     defaultClientScopes optionalClientScopes attributes""",
     maps={"attributes": CLIENT_ATTRIBUTES},
     elsewhere="protocolMappers",
-    secret="secret registrationAccessToken",
+    secret="secret registrationAccessToken",  # noqa: S106 - names the realm export fields that hold a secret and holds none
 )
 MAPPER_CONFIG = MapShape(
     keys(
@@ -302,7 +302,7 @@ SETTINGS = Read("realm settings (the realm shape's allow-list, other keys as dig
 # Every top-level key of keycloak/master.yaml and keycloak/realm.yaml, and every
 # keycloak-config-cli 6.5.1 import type, mapped to a read or a named gap, plus each named gap
 # inside a read type as its dotted field path (`clients.secret`). The realm settings
-# the realm shape lists are covered as they stand; tests/test_realm_observe.py fails when a
+# the realm shape lists are covered as they stand; tests/test_stack_realm_observe.py fails when a
 # YAML gains a key neither names.
 COVERAGE: dict[str, Coverage] = {
     **dict.fromkeys(REALM.listed, SETTINGS),
@@ -439,7 +439,7 @@ class Session:
                 "client_secret": self.secret,
             }
         ).encode()
-        status, body = self.send(Request(self.base_url + TOKEN_PATH, data=form, method="POST"))
+        status, body = self.send(Request(self.base_url + TOKEN_PATH, data=form, method="POST"))  # noqa: S310 - the base URL is the observer own --base-url argument
         if status in (400, 401):
             raise ObserveError(f"sign-in refused (status {status} at {TOKEN_PATH})")
         if status != 200:
@@ -459,7 +459,7 @@ class Session:
 
     def send_get(self, target: str) -> tuple[int, bytes]:
         headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
-        return self.send(Request(self.base_url + target, headers=headers, method="GET"))
+        return self.send(Request(self.base_url + target, headers=headers, method="GET"))  # noqa: S310 - the base URL is the observer own --base-url argument
 
     def send(self, request: Request) -> tuple[int, bytes]:
         path = request.selector.split("?", 1)[0]
@@ -756,10 +756,10 @@ def main(
         session = Session(arguments.base_url.rstrip("/"), read_secret(secret_file))
         found = import_checksums(session) if key is None else observe(session, Digester(key))
     except ObserveError as error:
-        print(f"realm-observer: {error}", file=sys.stderr, flush=True)
+        print(f"realm-observer: {error}", file=sys.stderr, flush=True)  # noqa: T201 - this container program imports nothing of hal and prints itself
         return 1
     except KeyboardInterrupt:
-        print("realm-observer: stopped", file=sys.stderr, flush=True)
+        print("realm-observer: stopped", file=sys.stderr, flush=True)  # noqa: T201 - this container program imports nothing of hal and prints itself
         return 130
     json.dump(found, sys.stdout, sort_keys=True)
     sys.stdout.write("\n")

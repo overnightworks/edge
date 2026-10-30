@@ -9,15 +9,15 @@ import json
 import signal
 import subprocess
 import sys
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from probe_support import CONFIGURATION, TOKEN, login_probe_modules, make_login, resolved
+from support.probe_support import CONFIGURATION, TOKEN, login_probe_modules, make_login, resolved
 
 MARKER = "SECRET-MARKER-NOT-TO-BE-PRINTED"
+TEMPORARY_MOUNT = "/tmp"  # noqa: S108 - a mount path the scenario names and never a file this test creates
 
 
 @pytest.fixture(scope="module")
@@ -380,7 +380,13 @@ def s00_run(probe, mounts):
 @pytest.mark.parametrize(
     ("mounts", "held", "failed", "not_driven", "line"),
     [
-        ({"/tmp": ((), 0)}, ["S00 (roots)", "S00 (token)"], [], [], "S00 (token) held: 0 files"),
+        (
+            {TEMPORARY_MOUNT: ((), 0)},
+            ["S00 (roots)", "S00 (token)"],
+            [],
+            [],
+            "S00 (token) held: 0 files",
+        ),
         (
             {"n-0": ((("replaced", 1),), 0)},
             [],
@@ -389,21 +395,21 @@ def s00_run(probe, mounts):
             "S00 (roots) NOT DRIVEN: 1 directory roots were not listed",
         ),
         (
-            {"/tmp": ((), 2)},
+            {TEMPORARY_MOUNT: ((), 2)},
             ["S00 (roots)"],
             ["S00 (token)"],
             [],
             "S00 (token) FAILED: 2 files hold the login token",
         ),
         (
-            {"/tmp": ((("refused", 1),), 0)},
+            {TEMPORARY_MOUNT: ((("refused", 1),), 0)},
             ["S00 (roots)"],
             [],
             ["S00 (token)"],
             "S00 (token) NOT DRIVEN: 1 entries could not be read for the token",
         ),
         (
-            {"/tmp": ((), 0), "n-0": ((("file mount", 1),), 0)},
+            {TEMPORARY_MOUNT: ((), 0), "n-0": ((("file mount", 1),), 0)},
             ["S00 (roots)", "S00 (token)"],
             [],
             [],
@@ -424,7 +430,9 @@ def test_the_s00_verdicts_decide_the_cells_and_the_run(
 ):
     """#457 rows 9 and 10: the cell turns the census into held, failed and not driven."""
     census_mounts = {
-        shown: probe.census.Mount((("n-0", "file"),) if shown == "/tmp" else (), skips, token_files)
+        shown: probe.census.Mount(
+            (("n-0", "file"),) if shown == TEMPORARY_MOUNT else (), skips, token_files
+        )
         for shown, (skips, token_files) in mounts.items()
     }
     run = s00_run(probe, census_mounts)
@@ -441,12 +449,12 @@ def test_the_census_key_joins_the_gate(probe):
 # --- the setup of the command ------------------------------------------------------------------
 
 
-def test_a_lock_that_cannot_be_opened_prints_the_type_alone_and_exits_1(
+def test_a_scratch_directory_that_cannot_be_made_prints_the_type_alone_and_exits_1(
     probe, tmp_path, capsys, restored_signals
 ):
     """#457 row 6: a failure before the gate prints no exception text."""
     login = probe.checks.read_login(str(make_login(tmp_path / "login")))
-    assert probe.cells.run_command(login, tmp_path / "missing" / "lock", {}) == 1
+    assert probe.cells.run_command(login, {"TMPDIR": str(tmp_path / "missing")}) == 1
     captured = capsys.readouterr()
     assert captured.out == "setup FAILED (FileNotFoundError)\nPROBE FAILED: setup\n"
     assert captured.err == ""
@@ -460,12 +468,11 @@ def test_a_scratch_directory_inside_the_login_directory_is_refused_and_nothing_i
     (directory / "inner").mkdir()
     login = probe.checks.read_login(str(directory))
     for inside in (directory, directory / "inner"):
-        assert probe.cells.run_command(login, tmp_path / "lock", {"TMPDIR": str(inside)}) == 1
+        assert probe.cells.run_command(login, {"TMPDIR": str(inside)}) == 1
         assert capsys.readouterr().out == (
             f"setup FAILED: {probe.checks.Refusal.SCRATCH_IN_LOGIN}\nPROBE FAILED: setup\n"
         )
     assert sorted(path.name for path in directory.iterdir()) == ["inner", "token"]
-    assert not (tmp_path / "lock").exists()
 
 
 def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
@@ -488,6 +495,7 @@ def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
     run.listener, run.windows = None, []
     run.compose_file = run.static_file = tmp_path / "unused"
     run.compose = compose
+    run.compose_command = lambda *arguments: list(arguments)
     run.write_on_probe_subnet = lambda *_: None
     run.guard = SimpleNamespace(expect_clean_teardown=lambda: None)
 
@@ -504,23 +512,19 @@ def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
     assert seen[-1] == (signal.SIG_IGN, 0)
 
 
-# --- the lock ----------------------------------------------------------------------------------
-
-
-def test_the_command_says_it_waits_for_another_holder_and_starts_after_the_release(probe, tmp_path):
-    """#457 row 15: the command says it waits and starts after the release."""
-    lock = tmp_path / "lock"
-    waiting = threading.Event()
-    started = threading.Event()
-
-    def second() -> None:
-        with probe.checks.probe_lock(lock, waiting.set):
-            started.set()
-
-    with probe.checks.probe_lock(lock, lambda: pytest.fail("the first holder waited")):
-        thread = threading.Thread(target=second)
-        thread.start()
-        assert waiting.wait(timeout=10)
-        assert not started.is_set()
-    thread.join(timeout=10)
-    assert started.is_set()
+def test_the_stack_is_removed_in_a_session_of_its_own(probe, tmp_path):
+    """The group signal of the lock's `timeout` must not reach a `compose down` that runs."""
+    docker = tmp_path / "docker"
+    record = tmp_path / "down-led-its-session"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "if 'down' in sys.argv:\n"
+        f"    open({str(record)!r}, 'w').write(str(os.getsid(0) == os.getpid()))\n"
+    )
+    docker.chmod(0o755)
+    run = object.__new__(probe.egress.Probe)
+    run.environment = {"PATH": str(tmp_path)}
+    run.compose_command = lambda *arguments, **_: ["docker", "compose", *arguments]
+    run.remove_stack()
+    assert record.read_text() == "True"

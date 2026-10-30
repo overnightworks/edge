@@ -20,8 +20,10 @@ EXIT_OF_SETUP: dict[SetupEnd, ExitCode] = {
 SETUP_DESCRIPTION = (
     "Shows what is missing and asks you to type yes; with --dry-run it only shows"
     " (at a terminal sudo still checks the system)."
-    " After the yes it sets up quality, the engines and the hook."
-    " Then it links, reloads and enables the checkout's user units"
+    " After the yes it sets up quality, the engines and the hook,"
+    " then links ~/.local/bin/hal to the checkout hal runs from"
+    " and re-points it after the checkout moved."
+    " Then it writes, reloads and enables hal's user units"
     " (the backup and hal-check timers), installs Ansible and runs the system step,"
     " edge's cloudflared files and the stop-only polkit rule,"
     " which asks once for sudo after the yes; the activation comes before the system step."

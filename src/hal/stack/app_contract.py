@@ -77,7 +77,7 @@ def check_image_volumes(
     """Raises ContractError for a volume that the image of a service declares (`declared` maps
     each service to its paths) and that no named volume, bind or tmpfs of that service covers:
     Docker would keep its data in an anonymous volume that the next release does not find."""
-    for name, definition in yaml.load(text, _ComposeLoader)["services"].items():
+    for name, definition in yaml.load(text, _ComposeLoader)["services"].items():  # noqa: S506 - the loader subclasses SafeLoader
         covered = _covered_paths(definition)
         for path in declared.get(str(name), ()):
             if path.rstrip("/") not in covered:
@@ -92,7 +92,7 @@ def _document(text: str | None, refuse: Any) -> dict:
     if text is None:
         raise refuse("none at the root of the repository")
     try:
-        document = yaml.load(text, _ComposeLoader)
+        document = yaml.load(text, _ComposeLoader)  # noqa: S506 - the loader subclasses SafeLoader
     except yaml.YAMLError as error:
         raise refuse(f"cannot be read ({type(error).__name__})") from None
     services = document.get("services") if isinstance(document, dict) else None
@@ -155,15 +155,16 @@ def _volume_refusal(definition: dict) -> str | None:
     for volume in _mounts(definition):
         if _mount_interpolates(volume):
             return "interpolates a volume entry ($); not yet supported"
-        if isinstance(volume, str) and _is_drive_letter_entry(volume):
-            return (
-                "has a volume entry that starts with one letter (volumes); "
-                "write it in the long form"
-            )
-        if isinstance(volume, str) and _short_target(volume) is None:
-            return "has a volume entry without a source (volumes); give it a named volume"
-        if isinstance(volume, dict) and volume.get("type") != "tmpfs" and not volume.get("source"):
-            return "has a volume entry without a source (volumes); give it a named volume"
+        match volume:
+            case str() if _is_drive_letter_entry(volume):
+                return (
+                    "has a volume entry that starts with one letter (volumes); "
+                    "write it in the long form"
+                )
+            case str() if _short_target(volume) is None:
+                return "has a volume entry without a source (volumes); give it a named volume"
+            case dict() if volume.get("type") != "tmpfs" and not volume.get("source"):
+                return "has a volume entry without a source (volumes); give it a named volume"
     if any(_interpolates(mount) for mount in _tmpfs_mounts(definition)):
         return "interpolates a tmpfs mount ($); not yet supported"
     return None

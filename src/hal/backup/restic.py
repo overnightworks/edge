@@ -13,7 +13,7 @@ from hal.backup.apps import DB_FOLDER, PRE_APPLY_TAG
 from hal.backup.settings import RESTIC_HOSTNAME, RESTIC_IMAGE, Settings
 
 REPOSITORY = "/repo"
-PASSWORD_FILE = "/run/secrets/restic-password"
+PASSWORD_FILE = "/run/secrets/restic-password"  # noqa: S105 - the path of a mounted secret file and no secret
 RESTORE_TARGET = "/restore"
 SCRATCH = "/scratch"
 RETRY_LOCK = "5m"

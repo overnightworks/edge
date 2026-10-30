@@ -208,7 +208,7 @@ PYTHON
 }
 
 # Today's PC, frozen literally, never derived from /proof/tunnel, so a changed hardening setting in edge's files shows
-# as a difference. The non-ExecStart lines come from edge's EFFECTIVE_UNIT_WITHOUT_EXEC_START (tests/test_edge_tunnel_files.py,
+# as a difference. The non-ExecStart lines come from edge's EFFECTIVE_UNIT_WITHOUT_EXEC_START (tests/test_stack_tunnel_files.py,
 # tunnel id as @TUNNEL_ID@); the ExecStart lines come from the head's read-only `systemctl cat cloudflared.service` of
 # 18.10.2026. The effective ExecStart is the one `10-root-binary.conf` sets; the base unit's is the operator's ~/bin one.
 write_todays_unit() {
@@ -1071,7 +1071,7 @@ cell_a1_7() {
     loginctl enable-linger bystander
     timeout 60 bash -c 'until systemctl is-active --quiet "user@$(id -u bystander).service"; do sleep 1; done'
     install -d -o bystander -g bystander /home/bystander/git/edge
-    cp -r /proof/systemd /proof/tunnel /home/bystander/git/edge/
+    cp -r /proof/tunnel /home/bystander/git/edge/
     chown -R bystander:bystander /home/bystander/git
     install_wheel_for bystander
     run_as bystander a1-7-dry /home/bystander/.local/bin/hal setup --dry-run

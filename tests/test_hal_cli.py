@@ -179,7 +179,7 @@ def test_a_git_that_fails_is_a_failure_that_names_the_checkout(tmp_path):
 
 
 def test_ctrl_c_while_git_runs_exits_130_without_a_traceback(tmp_path):
-    """G-8: git's group is cleaned up by `run_git` (test_edge_checkout), not asserted here."""
+    """G-8: git's group is cleaned up by `run_git` (test_stack_checkout), not asserted here."""
     tree = main_checkout(tmp_path)
     started, silence = tmp_path / "started", tmp_path / "silence"
     os.mkfifo(silence)
@@ -263,7 +263,7 @@ def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypat
 def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     """G-11. The stack's commands are left out: run here they would reach the real system manager;
     their stdin cells run on fakes in test_hal_stack_commands. The backup commands would reach the
-    real repository; their stdin cell runs on the fake host in test_edge_backup. `hal check` would
+    real repository; their stdin cell runs on the fake host in test_backup_runner. `hal check` would
     run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal` needs a key;
     its stdin cell runs with its own arguments in test_hal_legal. `hal secrets` runs `--by-service`,
     the one form that reads no home and starts no probe."""

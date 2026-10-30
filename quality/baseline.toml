@@ -1,24 +1,24 @@
 # Measured by `quality baseline write`. Entries only ever go down.
 
-[ccn."tests/realm_fake.py"]
+[ccn."tests/support/realm_fake.py"]
 "AdminApi.answer" = 31
 
 [ccn."tests/test_keycloak_go_live.py"]
 "Keycloak.admin_api" = 29
 
 [file_lines]
-"probe/keycloak/probe.py" = 2829
-"probe/step-ca/probe.py" = 1052
-"src/hal/workstation/secrets_view.py" = 841
-"tests/home/test_secrets_view.py" = 1085
-"tests/test_edge_apply.py" = 4486
-"tests/test_edge_backup.py" = 1232
-"tests/test_edge_cloudflare_read.py" = 906
-"tests/test_edge_external.py" = 2708
-"tests/test_edge_host_check.py" = 817
-"tests/test_keycloak_go_live.py" = 1729
-"tests/test_keycloak_probe.py" = 1038
-"tests/test_realm_reconcile.py" = 999
+"probe/keycloak/probe.py" = 2828
+"probe/step-ca/probe.py" = 881
+"src/hal/workstation/secrets_view.py" = 834
+"tests/test_backup_runner.py" = 1171
+"tests/test_keycloak_go_live.py" = 1715
+"tests/test_keycloak_probe.py" = 997
+"tests/test_stack_apply.py" = 4486
+"tests/test_stack_cloudflare_read.py" = 906
+"tests/test_stack_external.py" = 2708
+"tests/test_stack_host_check.py" = 817
+"tests/test_stack_realm_reconcile.py" = 979
+"tests/test_workstation_secrets_view.py" = 919
 
 [function_lines."probe/keycloak/probe.py"]
 "Probe.admin_console_only_on_loopback" = 74
@@ -30,10 +30,10 @@
 [function_lines."src/hal/stack/external/cli.py"]
 "apply_command" = 70
 
-[function_lines."tests/realm_fake.py"]
+[function_lines."tests/support/realm_fake.py"]
 "hallucinai" = 96
 
-[function_lines."tests/test_edge_external.py"]
+[function_lines."tests/test_stack_external.py"]
 "terminal" = 71
 
 [clones."probe/agent-service/egress.py"]
@@ -46,23 +46,17 @@ write_dummy_token = [["probe/agent-service/image.py", "write_dummy_token"]]
 [clones."probe/keycloak/probe.py"]
 claims = [["probe/keycloak/test_rp.py", "token_claims"]]
 
-[clones."tests/test_agent_service_setup.py"]
-setup_module = [["tests/test_keycloak_go_live.py", "golive"]]
-
-[clones."tests/test_edge_app_compose.py"]
-"Docker.run" = [["tests/test_realm_reconcile.py", "Commands.__call__"]]
-
-[clones."tests/test_edge_apps.py"]
-home = [["tests/test_edge_checkout.py", "home"], ["tests/test_edge_deploy_checkout.py", "home"], ["tests/test_hal_cli.py", "home"], ["tests/test_hal_version.py", "home"]]
-
-[clones."tests/test_edge_checkout.py"]
-home = [["tests/test_edge_deploy_checkout.py", "home"], ["tests/test_hal_cli.py", "home"], ["tests/test_hal_version.py", "home"]]
-
-[clones."tests/test_edge_deploy_checkout.py"]
-home = [["tests/test_hal_cli.py", "home"], ["tests/test_hal_version.py", "home"]]
-
 [clones."tests/test_hal_cli.py"]
-home = [["tests/test_hal_version.py", "home"]]
+home = [["tests/test_hal_version.py", "home"], ["tests/test_stack_apps.py", "home"], ["tests/test_stack_checkout.py", "home"], ["tests/test_stack_deploy_checkout.py", "home"]]
 
-[clones."tests/test_keycloak_probe.py"]
-probe = [["tests/test_step_ca_init.py", "probe"]]
+[clones."tests/test_hal_version.py"]
+home = [["tests/test_stack_apps.py", "home"], ["tests/test_stack_checkout.py", "home"], ["tests/test_stack_deploy_checkout.py", "home"]]
+
+[clones."tests/test_stack_app_compose.py"]
+"Docker.run" = [["tests/test_stack_realm_reconcile.py", "Commands.__call__"]]
+
+[clones."tests/test_stack_apps.py"]
+home = [["tests/test_stack_checkout.py", "home"], ["tests/test_stack_deploy_checkout.py", "home"]]
+
+[clones."tests/test_stack_checkout.py"]
+home = [["tests/test_stack_deploy_checkout.py", "home"]]

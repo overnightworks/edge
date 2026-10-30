@@ -15,7 +15,7 @@ from pathlib import Path
 from shlex import quote
 
 from hal.workstation.report import findings_count, markdown_table
-from hal.workstation.setup import HOOK_NAMES, _has_hook_mode, _is_executable, _recorded_quality_source_matches, render_hook
+from hal.workstation.setup import HOOK_NAMES, _has_hook_mode, _is_executable, _recorded_quality_source_matches, mise_hash_is_pinned, render_hook
 from hal.workstation.layout import CommandRunner, Layout, is_git_repo, registered_worktrees
 from hal.output.command import Verb, command
 
@@ -147,6 +147,15 @@ def _quality_findings(layout: Layout, run: CommandRunner) -> list[HookFinding]:
     return findings
 
 
+def _mise_findings(layout: Layout) -> list[HookFinding]:
+    mise = layout.mise_executable
+    if not _is_executable(mise):
+        return [HookFinding("mise", str(mise), "fehlt oder ist nicht ausführbar", SETUP_APPLY)]
+    if not mise_hash_is_pinned(mise):
+        return [HookFinding("mise", str(mise), "weicht vom gepinnten sha256 ab", SETUP_APPLY)]
+    return []
+
+
 def _hidden_repository_hooks(common_dir: Path) -> list[HookFinding]:
     """The global hooks path hides a repository's own hook unless it carries one of the chained names."""
     hooks_dir = common_dir / "hooks"
@@ -163,7 +172,7 @@ def _hidden_repository_hooks(common_dir: Path) -> list[HookFinding]:
 
 
 def collect_findings(layout: Layout, run: CommandRunner) -> list[HookFinding]:
-    findings = [*_hook_file_findings(layout), *_quality_findings(layout, run)]
+    findings = [*_hook_file_findings(layout), *_mise_findings(layout), *_quality_findings(layout, run)]
     seen_common_dirs: set[Path] = set()
     for _repo, worktree in _worktrees_under_git(layout, run):
         config = _read_worktree_config(worktree, run)

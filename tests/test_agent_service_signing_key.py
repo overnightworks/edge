@@ -8,8 +8,8 @@ import threading
 from pathlib import Path
 
 import pytest
-import test_agent_service_setup as base
-from test_agent_service_setup import (
+import support.agent_service_setup as base
+from support.agent_service_setup import (
     DUMMY_TOKEN,
     SECOND_TOKEN,
     generate_key,
@@ -20,7 +20,7 @@ from test_agent_service_setup import (
     write_token,
 )
 
-# The scripted Docker host, terminal, throwaway home and openssl are that module's fixtures.
+# The scripted Docker host, terminal, throwaway home and openssl are the support module's fixtures.
 setup_module, docker, terminal, home, make_setup, openssl = (
     base.setup_module, base.docker, base.terminal, base.home, base.make_setup, base.openssl,
 )  # fmt: skip

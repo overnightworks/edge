@@ -5,8 +5,8 @@ Jeder Befehl erklärt sich mit `hal <command> --help` samt Beispielen;
 dieses README ist die lange Anleitung.
 
 Alle Befehle teilen sich die Exit-Codes: `0` wenn alles sauber ist, `1` sobald
-es einen Fund gibt (das ist kein Fehler — `systemd/hal-check.service` trägt
-`SuccessExitStatus=1` dafür), `2` wenn das
+es einen Fund gibt (das ist kein Fehler — `hal-check.service` (von `hal setup`
+geschrieben) trägt `SuccessExitStatus=1` dafür), `2` wenn das
 Geheimnis-Manifest ungültig ist (`hal check` kennt zusätzlich die Konfigurationsdatei, siehe „Konfiguration“), `3` wenn ein Lauf an einem unerwarteten Fehler
 zerbrach; dann steht eine `error:`-Zeile auf stderr. Bei `2` und `3` meldet der
 Timer einen fehlgeschlagenen Dienst, zu Recht.
@@ -38,7 +38,7 @@ Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Re
 |---|---|---|
 | `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `job-failed`, `systemd-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
-| `hook` | `hooks-path`, `hook-file`, `quality`, `engines` | `hidden-hook` |
+| `hook` | `hooks-path`, `hook-file`, `quality`, `mise`, `engines` | `hidden-hook` |
 | `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
 | `exposure` | `reachable-beyond-loopback` (Veröffentlichung oder Listener jenseits von Loopback, ein Fund je Prozess oder Container), `routing-name-unusable` (`routed-without-edge-name`, `invalid-edge-name`, `duplicate-edge-name`) | – |
@@ -127,6 +127,8 @@ Korrektur:
   oder weicht vom gerenderten Text ab (`hal setup`).
 - **quality nicht wie festgelegt.** `~/.local/bin/quality` fehlt, ist nicht ausführbar oder uv hat
   nicht `QUALITY_SOURCE` aufgezeichnet (`hal setup`).
+- **mise nicht wie festgelegt.** `~/.local/bin/mise` fehlt, ist nicht ausführbar oder sein sha256 weicht
+  von `MISE_SHA256` ab (`hal setup`); der Bericht nennt es als eigene Aufgabe, nicht als kaputten Commit-Schutz.
 - **Engines.** `quality engines verify` scheitert (`hal setup`).
 - **Verdeckter Repository-Hook.** `.git/hooks` enthält eine Datei außer
   `*.sample`, `pre-commit` und `pre-merge-commit`; der globale Pfad verdeckt sie.
@@ -334,7 +336,8 @@ später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
 Der Assistent druckt kein eigenes Ende; den Ausgang nennt `hal setup` mit seiner `secrets`-Zeile und seinem Urteil.
 
 Jeder Fall druckt eine Zeile `Zeichen Name Ereignis Tatsache` (Ereignisse: `verified`,
-`generated`, `stored`, `rejected`, `skipped`, `not checked`, `by hand`, `not stored`); ein Eintrag, der
+`generated`, `stored`, `rejected`, `skipped`, `not checked`, `by hand`, `not stored`, `new login`,
+`signed in`, `not signed in`); ein Eintrag, der
 schon da ist, druckt keine. Nie steht ein Wert in einer Zeile, nur Name, Pfad und Rechte. Ein TURN-Wert
 endet mit `✓ cloudflare/turn-hopin/key-id  stored  not verified · ~/.secrets/cloudflare/turn-hopin/key-id (644)`.
 
@@ -407,18 +410,26 @@ Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
 `expires_in_days` (1 bis 366), alle vier zusammen; ein `unverified-token` nennt keinen davon und hat
 genau einen Pfad: der Assistent fragt seinen Wert unsichtbar ab und speichert ihn ungeprüft; ein `service-password`
 hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
-dann schreibt ihn die Einheit aus `recreate`. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
+dann schreibt ihn die Einheit aus `recreate`. Ein `tool-login` kann statt eines `recreate` ein `create` nennen (nur mit `purpose`; beides zusammen lehnt das Laden ab)
+(`run`: die CLI, `home`: die Variablen, die sie auf den Ordner des Eintrags zeigen lässt, `label`: das
+Konto, wie der Mensch es nennt); ein solcher Eintrag hat genau einen Pfad ohne Platzhalter: der Assistent lässt die CLI im
+Browser anmelden (`new login`, danach `signed in` mit Pfad und Rechten, oder `not signed in` mit dem Grund),
+setzt den Ordner auf 0700 und die Anmeldedatei auf 0600 und liest sie nie; was die CLI daneben ablegt, gehört zum Eintrag (nie unbekannt, nie auf den Modus geprüft, durch den Ordner 0700 geschützt); bei einem Fehlschlag löscht er, was die CLI
+hinterließ, und der nächste Lauf fragt wieder. `hal secrets` zeigt als Erneuerung den aus `create`
+abgeleiteten Befehl. Ein unbekannter Schlüssel (auch ein Versuch, einen Wert
 abzulegen), ein falscher Wert oder ein doppelter Name lässt `hal secrets`
 mit Exit-Code `2` abbrechen; die Meldung nennt Datei und Schlüssel.
 
 ## hal setup
 
 Richtet den globalen Commit-Hook gegen Geheimnisse ein.
-Then it links the checkout's user units and runs the system step.
+Then it links `~/.local/bin/hal` to the `bin/hal` of the live checkout, whichever tree runs `hal setup` (the `path` row: it creates a missing link,
+re-points a link into another hal checkout, such as a clone that has moved, and refuses to replace a file, a directory or a link into anything else).
+Then it writes hal's user units and runs the system step.
 `hal setup` zeigt den Plan, fragt `Type yes to set up N open rows:` (`hal.output.confirmed`: nur genau `yes`,
 Ende der Eingabe heißt nein, Strg-C wird nicht gefangen) und führt es erst danach der Reihe nach aus; es hält beim ersten Fehler an.
 `hal setup --dry-run` zeigt nur, überspringt das yes und ändert nichts (an einem Terminal fragt sudo trotzdem, um `system` zu prüfen). Vor dem yes liest und ändert `hal setup` nichts mit Root: die Zeile `system` steht im Plan
-als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print four rows (below) and a verdict.
+als `! system  not checked  sudo checks it after your yes` und zählt als offen. Both print five rows (below) and a verdict.
 Exit: 0 fertig oder nichts offen, 1 abgelehnt (`error: aborted, nothing changed`), 3 ein Schritt ist gescheitert (auch eine Prüfung des Plans, ohne Frage), 4 braucht ein Terminal
 (`error: setup asks yes at a terminal · nothing changed`, `next: hal setup in your own terminal window`; der Plan steht, kein Schritt läuft), 130 unterbrochen.
 Ist nichts offen, fragt es nicht und braucht kein Terminal (das trifft nur das Konto des Agenten). `--apply` gibt es nicht: `error: unrecognized arguments: --apply`, Exit 2.
@@ -426,41 +437,55 @@ The activation comes before the user units and the system step, so a wrong
 sudo password never keeps the commit hook from being active; the user units
 come before the system step, which is the one that asks for sudo:
 
-1. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
-   `src/hal/workstation/setup.py`, einem Commit-SHA von overnightworks/quality (ein
-   Tag gibt es noch nicht; eine neue Version ist eine Zeile). Der Schritt
+1. **mise.** Die Release-Binärdatei `mise-v<MISE_VERSION>-linux-x64` von GitHub, mit `MISE_VERSION` und
+   `MISE_SHA256` aus `src/hal/workstation/setup.py` (ein Bump sind zwei Zeilen). Sie wird in eine
+   private Staging-Datei (Modus 600) neben dem Ziel geladen; erst wenn deren sha256 dem Pin gleicht,
+   wird sie 755 und per `os.replace` nach `~/.local/bin/mise` gelegt. Jeder Fehler (Timeout,
+   abgeschnittener Download, falscher Hash, Schreib- oder Umbenennfehler) entfernt die Staging-Datei
+   und lässt ein vorhandenes `mise` unberührt. Der Schritt läuft auch, wenn die Datei fehlt, nicht
+   ausführbar ist oder einen anderen sha256 hat; ohne mise läuft `quality hygiene` nicht.
+2. **quality.** `uv tool install --force` mit `QUALITY_SOURCE` aus
+   `src/hal/workstation/setup.py`, dem Commit-SHA eines Tags von overnightworks/quality
+   (eine neue Version ist eine Zeile). Der Schritt
    läuft auch, wenn `~/.local/bin/quality` fehlt oder nicht ausführbar ist.
-2. **Engines.** `quality engines install` nach
+3. **Engines.** `quality engines install` nach
    `~/.local/share/quality/engines`, wenn `quality engines verify` es verlangt;
    danach gilt der Schritt erst, wenn `verify` besteht.
-3. **Hook-Dateien.** `pre-commit` und `pre-merge-commit` in
+4. **Hook-Dateien.** `pre-commit` und `pre-merge-commit` in
    `~/.local/share/home/git-hooks/`, atomar geschrieben, Modus 755. Ein
    Inhalt, der abweicht, ein verlorenes Ausführungsrecht oder ein anderer Modus als 755 wird
    repariert.
-4. **Aktivierung.** `git config --global core.hooksPath` auf dieses
-   Verzeichnis. It comes after the three steps above, so a failure in one of
+5. **Aktivierung.** `git config --global core.hooksPath` auf dieses
+   Verzeichnis. It comes after the four steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
-5. **User units.** Every unit file in `~/git/edge/systemd/` is linked into
-   `~/.config/systemd/user/`, systemd reloads once after a change (also when only a
-   unit file changed after a pull), and each timer is enabled and started. A link
-   into `systemd/` whose file is gone (a renamed or removed unit) is stopped while
-   systemd still has it loaded and unlinked, at the top level and in the
-   `*.wants/` and `*.requires/` directories; timers stop before services. A same-name
-   entry that is not this checkout's link (a link elsewhere, a mask to `/dev/null`, a
-   file) is never replaced, and a retired link whose name the top level now gives to
-   such an entry is never stopped: the step fails before it changes anything, names
-   the file and leaves the decision to you. A timer that is not active after
-   enabling fails the step too. A
-   missing `systemd/` directory fails the step as well. A changed `timers` row says
-   `N timers` (every timer of the checkout's `systemd/`) and ` · systemd reloaded` when a
-   reload ran; an unchanged row stays bare. The step is
-   verified when every unit is linked, nothing needs a reload, every timer is
-   enabled and active, and no link dangles.
-6. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
+6. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
+   restore test and `hal check`) are written as a `.service` and a `.timer` file each into
+   `~/.config/systemd/user/`, led by a marker line that says `hal setup` rewrites the file
+   and that changes belong in a drop-in (`<unit>.d/*.conf`, which `hal setup` never
+   touches). The `ExecStart` runs `.venv/bin/hal` of the live checkout, `~/git/edge`
+   (`Layout.live_checkout`), whichever checkout runs `hal setup`. systemd reloads once
+   after a change (also when only a unit file changed), and each timer is enabled and
+   started. A file is replaced by rename, so a unit name never lacks a unit and a loaded
+   timer stays active. The step replaces only a regular file whose first line is the
+   marker and the nine links an earlier `hal setup` wrote (six units linked into
+   `~/git/edge/systemd/` and the three `timers.target.wants/` links of the timers, which
+   it repoints at the written files whatever the timers' state). Every other entry of a
+   unit's name (a file without the marker, a link elsewhere, a mask to `/dev/null`, a
+   dependency link in a `*.wants/` or `*.requires/` directory) is refused before
+   anything changes: `<entry> was not written by hal · move or delete it, then rerun`,
+   and the row ends `nothing changed`. A failure after that check (a write, a rename, a
+   `systemctl` call, a timer that is not active after enabling) ends `units may be
+   partial`; a rerun classifies what is there and finishes. A changed `timers` row says
+   `N timers` (every declared timer) and ` · systemd reloaded` when a reload ran; an
+   unchanged row stays bare, and the plan of the first run after the move says
+   `replaces 6 links with 3 timers`. The step is verified when every unit is written
+   as declared, nothing needs a reload, every timer is enabled and active, and no
+   link into `systemd/` is left.
+7. **Ansible.** `uv tool install --force` with `ANSIBLE_SOURCE` from
    `src/hal/workstation/setup.py`, a pinned `ansible-core`; like quality, it runs
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
-7. **System.** The playbook `src/hal/workstation/system/playbook.yml` installs
+8. **System.** The playbook `src/hal/workstation/system/playbook.yml` installs
    edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
    It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
@@ -473,22 +498,22 @@ come before the system step, which is the one that asks for sudo:
    `sudo rm -rf ~/.ansible` recovers it. The operator runs `hal setup` as themselves, never `sudo hal`.
 
 **Who runs it.** `hal setup` resolves a role from the running user. Exactly the account `agent`
-(`AGENT_USER` in `src/hal/workstation/system_step.py`) is the agent role: quality, Engines, Hook-Dateien and
-Aktivierung run, and User units, Ansible, System and Geheimnisse are skipped (`timers  skipped  the operator's step`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
+(`AGENT_USER` in `src/hal/workstation/system_step.py`) is the agent role: mise, quality, Engines, Hook-Dateien and
+Aktivierung run, and PATH link, User units, Ansible, System and Geheimnisse are skipped (`path  skipped  the operator's step`, likewise `timers`; the agents hold no secrets), with exit 0 and no sudo. Everyone else, root
 and a sudoers-only admin included, is the operator role, and a system step that cannot run still exits 3.
 If the running uid has more than one passwd name and one of them is `agent`, `hal setup` does not guess: it exits 3 with a line saying so.
 
-**The rows.** The eight steps print as four rows, in the form of
-[docs/design/hal-output.html](design/hal-output.html): `commit hook` (quality, Engines,
-Hook-Dateien, Aktivierung), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
+**The rows.** The ten steps print as five rows, in the form of
+[docs/design/hal-output.html](design/hal-output.html): `commit hook` (mise, quality, Engines,
+Hook-Dateien, Aktivierung), `path` (der Link `~/.local/bin/hal`; `unchanged`, solange das `bin/hal` des Live-Checkouts fehlt), `timers` (User units), `system` (Ansible, System) and `secrets`. A row's
 event is its worst step's: failed or not started, then needs you, then changed, then unchanged,
 then skipped. After the yes a row says `changed` or `unchanged` (`stored` or `complete` for the
 secrets), `skipped` for the agent role; a dry run says `will change`, `unchanged`, `not checked`
 (`needs sudo at a terminal`, or `needs Ansible, …` before the Ansible step has installed it) or, for the
 secrets, `missing` with the names (`(by hand)` for an entry only a person can create, `(unknown)` for one whose
-presence `stat` cannot tell). The last line is the verdict, counted over the four rows:
-`✓ setup done · 1 changed, 3 unchanged · 47s`, `~ setup plan · 2 open, 2 unchanged · 3s · run hal setup`
-or `✓ setup up to date · 4 unchanged · 21s`. The run time is whole seconds rounded down (`<1s` under one second, `1m05s` from
+presence `stat` cannot tell). The last line is the verdict, counted over the five rows:
+`✓ setup done · 1 changed, 4 unchanged · 47s`, `~ setup plan · 2 open, 3 unchanged · 3s · run hal setup`
+or `✓ setup up to date · 5 unchanged · 21s`. The run time is whole seconds rounded down (`<1s` under one second, `1m05s` from
 a minute, `1h02m` from an hour) and stands after the counts and before the hint; a failed run ends with the error pair and shows none. A step that fails prints its row as `failed` with its own
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup`. For the
@@ -704,18 +729,18 @@ notify = true
 ```
 cd ~/git/edge
 uv sync --locked
-ln -s ~/git/edge/bin/hal ~/.local/bin/hal
-hal setup
+bin/hal setup
 ```
 
-Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) verlinkt die Units aus
-`systemd/` und startet die Timer, darunter `hal-check.timer`.
+Der Schritt „User units“ von `hal setup` (siehe [hal setup](#hal-setup)) schreibt die Units aus
+der Job-Liste `src/hal/workstation/jobs.py` und startet die Timer, darunter `hal-check.timer`.
 
 `uv sync --locked` baut die `.venv` des Checkouts. `bin/hal` ist der Starter,
 der `.venv/bin/hal` des Checkouts ausführt; der Link
-unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet. Die systemd-Unit ruft
-`~/git/edge/.venv/bin/hal` direkt auf und hängt so an keinem Link. `hal`
-läuft mit dem Python der `.venv` (`requires-python >= 3.12`). Das
+unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet; den Link legt der Schritt `path` von `hal setup` an
+und zieht ihn nach, wenn der Checkout umzieht. Die erzeugten systemd-Units rufen
+`~/git/edge/.venv/bin/hal` direkt auf und hängen so an keinem Link. `hal`
+läuft mit dem Python der `.venv` (`requires-python >= 3.14`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
 ausführen (oder `hal` über `bin/hal` aufrufen), bevor der Timer läuft.

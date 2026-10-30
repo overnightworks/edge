@@ -77,6 +77,13 @@ no API key (`sk-ant-api…`), nothing group or others can touch. The service ref
 otherwise, naming `cli.anthropic.token_file` and the path, never the content. `hal secrets` lists
 the entry `agent-service-claude`.
 
+A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/auth.json`
+(folder 0700, file 0600); the service does not bind it yet. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
+separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
+rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
+leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file. What the CLI leaves beside it (`log/`, `tmp/`) is part of the entry, never an unknown file, and a failed login removes only what that run left.
+`hal secrets` lists the entry `agent-service/codex` and shows the renewal command above.
+
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC, so his
 own `claude setup-token` writes a file the container can read. Another uid needs its own renewal
@@ -216,8 +223,8 @@ capability it receives verifies against `public.pem` (signature, `kid`, `aud`, t
 capability. It needs `[apps.songmaker] mcp_origin` in `service.toml`. It also refuses once anything but traefik-mcp is on songmaker's MCP network; from then on
 songmaker's own call is the proof.
 
-**The login command** is `python3 probe/agent-service/cells_12b.py --login-directory DIR` (it takes the
-probe-stack lock itself). It starts the service in a throwaway project with `DIR` bound read-only as the
+**The login command** is `python3 probe/agent-service/cells_12b.py --login-directory DIR`; its docstring gives the
+full command line (the probe-stack lock and a timeout). It starts the service in a throwaway project with `DIR` bound read-only as the
 login, a stand-in issuer, the bootstrapped entrypoint and `max_parallel_cli_runs = 1` in a scratch
 `service.toml` only, and holds agent-runtime#440's A1d conditions there (`config`, U2, U3, U6, U7, U8, and I6
 against the container's own image), the S00 census of every writable mount and S1, the no-token cell. It
@@ -237,7 +244,7 @@ dummy login makes no call: B9 (a)-(e) are then NOT DRIVEN ("no call reached the 
 exits 1 by design. With the real login R2 is one paid model turn, which is why it is posted once and `busy` is
 not retried.
 
-**The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
+**The unit probe** is `python3 probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
 with a dummy login and drives the cells U1 to U11 and U15, which its docstring and code define: the
 process, the container hardening, the tmpfs and login mounts, a renewal seen at once, and the

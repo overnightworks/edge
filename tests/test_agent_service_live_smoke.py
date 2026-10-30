@@ -16,7 +16,8 @@ sys.path.insert(0, str(ROOT / "agent-service"))
 
 import live_smoke  # noqa: E402
 from live_smoke import Cell, LiveSmokeFailed, Report, Verdict  # noqa: E402
-from live_smoke_fakes import (  # noqa: E402
+from smoke import served_line  # noqa: E402
+from support.live_smoke_fakes import (  # noqa: E402
     GATEWAY,
     KNOWN,
     PAID_OUTPUT,
@@ -27,7 +28,6 @@ from live_smoke_fakes import (  # noqa: E402
     completed,
     healthy_service,
 )
-from smoke import served_line  # noqa: E402
 
 JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhIn0.c2lnbmF0dXJl"
 

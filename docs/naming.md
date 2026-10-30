@@ -33,8 +33,8 @@ topics are not set at all.
 
 ### Import clashes
 
-They matter only inside one environment. Tools (`aco`, `hal`, `quality`,
-`edge`) run in their own uv environments. Only the libraries (`webauth`,
+They matter only inside one environment. Tools (`aco`, `hal`, `quality`)
+run in their own uv environments. Only the libraries (`webauth`,
 `agent_runtime*`) enter foreign environments. Each change proves its import
 with `python -I -c "import X; print(X.__file__)"` resolving into our tree, and
 with no foreign distribution named like the import in the affected `uv.lock`
@@ -63,9 +63,8 @@ The `hal` command's name and verbs have one code owner, `hal.output.command`; ev
 | Stem (was) | Distribution(s) | Import(s) | CLI | Units / compose | Sonar key | Hosts and Keycloak (unchanged) |
 |---|---|---|---|---|---|---|
 | `aco` (agent-coordination, dir `agent-claim`) | `overnightworks-aco` | `aco` (`aco.board`) | `aco`, `aco serve` | none | `overnightworks_aco` | none until AC2, then `/apps/aco` |
-| `home` (home-tools) | `overnightworks-home` | `home` | `hal` ✓ | `home-check` ✓ | `overnightworks_home` | none |
+| `hal` (was `edge` and `home`) | `overnightworks-hal` ✓ | `hal` ✓ (`hal.stack`, `hal.backup`, `hal.exposure`, `hal.output`, `hal.workstation`) | `hal` ✓ | `hal-backup`, `hal-backup-restore-test`, `hal-check` ✓; compose `edge` (H5i renames it) | `overnightworks_hal` | `auth.hallucinai.de` |
 | `quality` ✓ | `overnightworks-quality` | `quality` | `quality` | check `quality / verdict` ✓ | ✓ | none |
-| `edge` ✓ | `overnightworks-edge` | `edge` (`edge.check`, `edge.backup`) | `edge check`, `edge backup ...` | `edge-backup`, `edge-backup-restore-test` ✓; compose `edge` ✓ | none yet | `auth.hallucinai.de` |
 | `atelier` (marketplace) | `overnightworks-atelier` (dev only) | none | plugin and marketplace `atelier` ✓ | none | `overnightworks_atelier` | none |
 | `webauth` ✓ | ✓ | ✓ | none | none | ✓ | none |
 | `agent-runtime` (agent-providers) | `overnightworks-agent-runtime`, `overnightworks-agent-runtime-client`, `overnightworks-agent-runtime-service` | `agent_runtime`, `agent_runtime_client`, `agent_runtime_service` | `agent-runtime-service` | none | `overnightworks_agent-runtime` | client `agent-service` |
@@ -91,8 +90,9 @@ Rulings of overnightworks/edge#24 recorded in the table:
 
 ### P1: repository rename
 
-1. Before: `aco status` in that repo shows no claim and no live lane.
-2. The operator approves; an agent runs `gh repo rename`.
+1. Before: `aco status` in that repo shows no claim and no live lane other than the rename's own (P2 step 1).
+2. The operator approves; an agent runs `gh repo rename` (for a repository with
+   `sonar-project.properties`, after P2 steps 1-2).
 3. The operator runs `hal rename OLD NEW` in their own terminal: it shows the moves, asks
    `Type yes`, then moves (`--dry-run` only shows; an agent without a terminal can only
    `--dry-run`).
@@ -107,12 +107,15 @@ Rulings of overnightworks/edge#24 recorded in the table:
    `uv venv` gets the venv's own Python minor version (3.12 stays 3.12; the patch
    release and the interpreter install it comes from may change). It deletes nothing.
    It refuses, changing nothing, while a process runs inside a clone, a target
-   exists, a symbolic link lies anywhere in a clone, worktree (inside or outside `~/git`,
-   as git lists it), `.venv` or target path, or GitHub does not know the new name. `hal rename NEW OLD` undoes it and asks its own yes.
+   exists, a symbolic link lies in any path it reads or acts on (the home directory
+   included: a clone, a worktree inside or outside `~/git` as git lists it, a `.venv`
+   or a target path), or a link in `~` or `~/srv` points to a checkout of this
+   repository outside the moved clones, or GitHub does not know the new name. `hal rename NEW OLD` undoes it and asks its own yes.
    A step that fails stops it, names the step and what is done; run the same
    command again once the cause is fixed and it finishes the half-moved clones.
-4. It reports, exit 1, the user units, `~/.local/bin` links and uv tools that
-   point into a moved clone; the repository's own head fixes those (reinstall
+4. It reports, exit 1, the user units, links in `~/.local/bin`, `~` and `~/srv`
+   and uv tools that point into a moved clone; the repository's own head fixes those (a rerun of
+   `hal setup` from the moved clone re-points its `~/.local/bin/hal`; reinstall
    uv tools from the new path).
 5. Update the repo description and the callers' URLs (git URLs redirect in the
    meantime).
@@ -125,10 +128,20 @@ workflows in a renamed repo: move those callers first.
 Repos with `sonar-project.properties` (and a bootstrap workflow, where one
 exists):
 
-1. The agent opens the key PR and holds other merges.
-2. The operator runs Administration, Update Key.
-3. Merge the PR at once.
-4. The operator re-saves the binding.
+1. The agent opens the PR that carries the rename's other changes, green under the
+   old name; the key commit stays local (pushed under the old name it fails the
+   gate's preflight), and other merges are held.
+2. An agent disables the repository's CI workflow (`ci` here) and drains it: it
+   lists every unfinished run (any status but completed) over all pages and
+   waits until each is completed or cancelled, listing again until none is
+   left. This happens before the first identity change in either direction;
+   the workflow is enabled again only once the GitHub name and the Sonar key
+   agree. Going back, SonarCloud's key changes back before the GitHub name.
+3. The operator runs Administration, Update Key, once the project's Background
+   Tasks show nothing pending or in progress.
+4. An agent enables the workflow and pushes the key commit onto that PR; once the
+   verdict is green, it merges the PR.
+5. The operator re-saves the binding.
 
 Automatic-analysis repos: Update Key and binding on the server only.
 

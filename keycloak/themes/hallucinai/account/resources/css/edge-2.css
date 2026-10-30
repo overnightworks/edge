@@ -1,0 +1,250 @@
+/* hallucinai's look on Keycloak's account console: the app colour and shapes of songmaker's
+   hallucinai.de, over appkit's tokens and fonts (the first stylesheet), laid over PatternFly.
+   docs/design/keycloak-theme.html is the picture. */
+
+:root {
+  --primary: #c8180a;
+  --accent: #7a18c0;
+  --on-accent: #ffffff;
+  --h-bad: var(--fail);
+  --h-action: var(--accent);
+}
+
+/* The dark values follow appkit's mechanism: the device, unless data-theme forces a look. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --primary: #ff3220;
+    --accent: #b45cf5;
+    --on-accent: #111111;
+  }
+}
+
+:root[data-theme="dark"] {
+  --primary: #ff3220;
+  --accent: #b45cf5;
+  --on-accent: #111111;
+}
+
+/* PatternFly's palette, light and dark, re-pointed at the hallucinai tokens. */
+:root,
+:root.pf-v5-theme-dark {
+  --pf-v5-global--BackgroundColor--100: var(--bg);
+  --pf-v5-global--BackgroundColor--150: var(--surface);
+  --pf-v5-global--BackgroundColor--200: var(--bg-deep);
+  --pf-v5-global--BackgroundColor--300: var(--surface-hover);
+  --pf-v5-global--BackgroundColor--dark-100: var(--bg);
+  --pf-v5-global--BackgroundColor--dark-200: var(--bg-deep);
+  --pf-v5-global--BackgroundColor--dark-300: var(--surface-hover);
+  --pf-v5-global--BackgroundColor--light-100: var(--bg);
+  --pf-v5-global--BackgroundColor--light-200: var(--bg-deep);
+  --pf-v5-global--BackgroundColor--light-300: var(--surface-hover);
+  --pf-v5-global--BorderColor--100: var(--border);
+  --pf-v5-global--BorderColor--200: var(--border);
+  --pf-v5-global--Color--100: var(--text);
+  --pf-v5-global--Color--200: var(--text-muted);
+  --pf-v5-global--active-color--100: var(--h-action);
+  --pf-v5-global--primary-color--100: var(--h-action);
+  --pf-v5-global--primary-color--300: var(--h-action);
+  --pf-v5-global--primary-color--400: var(--on-accent);
+  --pf-v5-global--link--Color: var(--h-action);
+  --pf-v5-global--link--Color--hover: color-mix(in srgb, var(--h-action) 80%, white);
+  --pf-v5-global--link--Color--visited: var(--h-action);
+  --pf-v5-global--danger-color--100: var(--h-bad);
+  --pf-v5-global--FontFamily--text: var(--font-body);
+  --pf-v5-global--FontFamily--text--vf: var(--font-body);
+  --pf-v5-global--FontFamily--heading: var(--font-body);
+  --pf-v5-global--FontFamily--heading--vf: var(--font-body);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ---------- masthead: the wordmark replaces the Keycloak logo ---------- */
+
+:root .pf-v5-c-masthead,
+:root.pf-v5-theme-dark .pf-v5-c-masthead {
+  --pf-v5-c-masthead--BackgroundColor: var(--header-bg);
+  --pf-v5-c-masthead--c-toolbar--BackgroundColor: var(--header-bg);
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.pf-v5-c-masthead__content,
+.pf-v5-c-masthead .pf-v5-c-toolbar {
+  background: var(--header-bg);
+}
+
+.pf-v5-c-masthead__brand img {
+  display: none;
+}
+
+.pf-v5-c-masthead__brand::after {
+  content: "Hallucinai";
+  font-family: var(--font-display);
+  font-size: 21px;
+  line-height: 1.1;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  -webkit-text-fill-color: transparent;
+  background-image: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--primary) 80%, var(--text)) 0 35%,
+    var(--text) 35% 65%,
+    color-mix(in srgb, var(--accent) 80%, var(--text)) 65% 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* ---------- navigation ---------- */
+
+.pf-v5-c-page__sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.pf-v5-c-nav__link {
+  color: var(--text-muted);
+}
+
+.pf-v5-c-nav__link.pf-m-current,
+.pf-v5-c-nav__link:hover {
+  color: var(--text);
+}
+
+.pf-v5-c-nav__link.pf-m-current {
+  background: color-mix(in srgb, var(--h-action) 8%, transparent);
+}
+
+.pf-v5-c-nav__link.pf-m-current::after {
+  border-color: var(--h-action);
+}
+
+/* ---------- page: title in the red-to-violet run, no explaining sentences ---------- */
+
+.pf-v5-c-page__main-section {
+  background: var(--bg);
+}
+
+h1[data-testid="page-heading"] {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  -webkit-text-fill-color: transparent;
+  background-image: linear-gradient(90deg, var(--primary), var(--accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+[data-testid="page-heading"] + p[data-pf-content],
+span[data-testid$="/help-text"] {
+  display: none;
+}
+
+.keycloak__loading-container {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.pf-v5-c-title.pf-m-xl {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ---------- fields ---------- */
+
+.pf-v5-c-form__label-text {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pf-v5-c-form-control,
+.pf-v5-c-menu-toggle {
+  --pf-v5-c-form-control--BackgroundColor: var(--surface);
+  --pf-v5-c-form-control--BorderColor: var(--border);
+  --pf-v5-c-menu-toggle--BackgroundColor: var(--surface);
+  min-height: 44px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control::after,
+.pf-v5-c-menu-toggle::before,
+.pf-v5-c-menu-toggle::after {
+  display: none;
+}
+
+.pf-v5-c-form-control:focus-within {
+  border-color: var(--h-action);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--h-action) 30%, transparent);
+}
+
+.pf-v5-c-form-control input,
+.pf-v5-c-form-control input:focus {
+  outline: none;
+}
+
+/* ---------- buttons: violet acts ---------- */
+
+.pf-v5-c-button {
+  border-radius: 4px;
+  font-family: var(--font-display);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.pf-v5-c-button.pf-m-primary {
+  --pf-v5-c-button--m-primary--BackgroundColor: var(--h-action);
+  --pf-v5-c-button--m-primary--Color: var(--on-accent);
+  background: var(--h-action);
+  color: var(--on-accent);
+}
+
+.pf-v5-c-button.pf-m-secondary,
+.pf-v5-c-button.pf-m-secondary::after {
+  --pf-v5-c-button--m-secondary--Color: var(--text);
+  --pf-v5-c-button--m-secondary--BorderColor: var(--border);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.pf-v5-c-button.pf-m-link {
+  color: var(--h-action);
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-body);
+}
+
+/* ---------- lists ---------- */
+
+.pf-v5-c-data-list {
+  --pf-v5-c-data-list--BorderTopColor: var(--border);
+  background: var(--surface);
+}
+
+.pf-v5-c-data-list__item {
+  background: var(--surface);
+  --pf-v5-c-data-list__item--BackgroundColor: var(--surface);
+  border-color: var(--border);
+}
+
+.pf-v5-c-data-list__cell {
+  color: var(--text);
+}
