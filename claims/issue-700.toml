@@ -1,0 +1,8 @@
+claim_id = "4a4565b4a0bc47358ded6e1edbc5222e"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "f2d51bcfcf5b237b798ac1b3f183773452dd87ae"
+branch = "claude/issue-700-b1-reverted-the-live-checkout-is-git-edg"
+scope = ["agent-service/live_signer.py", "agent-service/live_smoke.py", "docs/agent-service.md", "docs/backup.md", "docs/design/hal-output.html", "docs/external.md", "docs/home.md", "docs/internal-ca.md", "docs/naming.md", "docs/stack.md", "probe/edge_copy.py", "quality/baseline.toml", "scripts/system-proof/Dockerfile", "scripts/system-proof/drive.sh", "src/hal/stack/apply.py", "src/hal/stack/checkout.py", "src/hal/workstation/jobs.py", "src/hal/workstation/layout.py", "tests/old_names_baseline.toml", "tests/test_old_names.py", "tests/test_stack_apply.py", "tests/test_stack_apply_checkout.py", "tests/test_stack_apply_publish.py", "tests/test_stack_apply_yes.py", "tests/test_stack_checkout.py", "tests/test_stack_external.py", "tests/test_stack_plan_rows.py", "tests/test_workstation_path_link.py", "tests/test_workstation_setup.py", "tests/test_workstation_setup_yes.py", "tests/test_workstation_user_units.py"]
+opened_commit = "2a4082c5d1f6776b8691b4a0a547104304ca538e"
+whole_reason = "It restores B1's reviewed tree byte for byte, so its scope is exactly B1's."
