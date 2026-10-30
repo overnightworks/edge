@@ -30,7 +30,7 @@ class BackchannelLogoutHandler(BaseHTTPRequestHandler):
             return
         claims = token_claims(logout_token)
         record = {key: claims.get(key) for key in ("iss", "sub", "sid", "events")}
-        print("backchannel-logout " + json.dumps(record, sort_keys=True), flush=True)
+        print("backchannel-logout " + json.dumps(record, sort_keys=True), flush=True)  # noqa: T201 - this in-container program answers on standard output
         self.send_response(200)
         self.end_headers()
 

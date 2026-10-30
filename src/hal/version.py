@@ -4,12 +4,11 @@ left. It never fetches, so it answers offline and changes nothing in the checkou
 
 import argparse
 import subprocess
-import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from hal.grammar import Asks, Command, ExitCode
-from hal.output import printable, write_error
+from hal.output import Stream, printable, write_error, write_line
 from hal.output.command import PROGRAM, Verb, command
 from hal.stack import checkout
 
@@ -28,7 +27,7 @@ def configure(parser: argparse.ArgumentParser) -> None:
 def run(arguments: argparse.Namespace) -> ExitCode:
     tree = CODE_TREE
     if not (tree / ".git").exists():
-        print(NO_CHECKOUT)
+        write_line(NO_CHECKOUT)
         return ExitCode.OK
     runner = _echoing(checkout.run_git) if arguments.verbose else checkout.run_git
     try:
@@ -38,7 +37,7 @@ def run(arguments: argparse.Namespace) -> ExitCode:
             f"cannot read the checkout {printable(str(tree))}, {error}", command(Verb.VERSION, "-v")
         )
         return ExitCode.FAILURE
-    print(printable(line))
+    write_line(printable(line))
     return ExitCode.OK
 
 
@@ -74,7 +73,7 @@ def _echoing(runner: checkout.Runner) -> checkout.Runner:
     def echo(
         tree: Path, arguments: Sequence[str], profile: checkout.Profile
     ) -> subprocess.CompletedProcess[bytes]:
-        print(f"git {printable(' '.join(arguments))}", file=sys.stderr)
+        write_line(f"git {printable(' '.join(arguments))}", stream=Stream.STDERR)
         return runner(tree, arguments, profile)
 
     return echo

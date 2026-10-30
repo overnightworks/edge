@@ -95,7 +95,7 @@ def prove(
     )
     expect(ran.returncode == 0, f"the back-channel client failed:\n{ran.stderr[-1000:]}")
     seen = json.loads(ran.stdout)
-    expect(seen["token"] == "400", f"the wrong password answered {seen['token']}, not 400")
+    expect(seen["token"] == "400", f"the wrong password answered {seen['token']}, not 400")  # noqa: S105 - compares a status code and holds no credential
     stored = [
         event
         for event in admin.get(f"/hallucinai/events?user={user_id}")

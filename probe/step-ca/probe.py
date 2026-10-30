@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe of the internal CA and of traefik-mcp (#38 proofs 1-5, #48 proofs 6-9, #52 proof 10,
 #60 proof 11, #69 proof 12, #89 proof 13, #346 cells P13-P27): a throwaway compose project and a
 throwaway HOME.
@@ -152,7 +151,7 @@ class Probe(McpNetworks):
         self, command: list[str], *, stdin: bytes | None = None, check: bool = True,
         own_session: bool = False,
     ):  # fmt: skip
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, capture_output=True, input=stdin, env=self.environment, cwd=REPO,
             check=False, timeout=240, close_fds=True, start_new_session=own_session,
         )  # fmt: skip

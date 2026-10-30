@@ -53,7 +53,7 @@ from smoke import RUN_END_EVENTS, Tokens
 WRAPPER_DIRECTORY = "/opt/probe-wrapper"
 WRAPPER = f"{WRAPPER_DIRECTORY}/claude"
 PLANT_FLAG = "plant"
-TEMPORARY = "/tmp"  # NOSONAR(S5443) only listed in the census, never written to
+TEMPORARY = "/tmp"  # NOSONAR(S5443) only listed in the census, never written to  # noqa: S108 - a path the census lists and never writes
 FRAME = "event: failed"
 WINDOW_SECONDS = 60  # the sampler's window, which covers the whole run
 REAP_SECONDS = 6  # the reap's bound is 5 s
@@ -615,7 +615,7 @@ class ContainmentProbe(FakeApp, IssuerProbe):
         are minted here: B5 takes minutes and the issuer's tokens expire."""
         tokens = self.mint()
         self.write_mode(Mode.RELAY)
-        smoke = subprocess.Popen(
+        smoke = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             self.smoke_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, env=self.environment, cwd=REPO,
             close_fds=True,

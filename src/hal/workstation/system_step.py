@@ -81,7 +81,7 @@ def read_recap(returncode: int, output: str) -> PlaybookRun:
 
 def _forget_the_sudo_ticket() -> None:
     try:
-        subprocess.run(["sudo", "-k"], check=True)
+        subprocess.run(["sudo", "-k"], check=True)  # noqa: S607 - sudo is found on PATH by design
     except subprocess.CalledProcessError as failure:
         raise StepFailed(f"sudo could not forget its ticket (exit {failure.returncode}) · it may still be valid") from failure
 
@@ -97,7 +97,7 @@ def run_playbook_as_root(argv: Sequence[str]) -> PlaybookRun:
     """
     environment = {name: value for name, value in os.environ.items() if not name.startswith("ANSIBLE_")}
     shown: list[str] = []
-    with subprocess.Popen(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:
+    with subprocess.Popen(["sudo", "env", "PYTHONDONTWRITEBYTECODE=1", *argv], stdout=subprocess.PIPE, text=True, cwd=PLAYBOOK.parent, env=environment) as playbook:  # noqa: S603, S607 - argv is the packaged playbook and sudo is found on PATH by design
         try:
             for line in playbook.stdout:
                 sys.stdout.write(line)

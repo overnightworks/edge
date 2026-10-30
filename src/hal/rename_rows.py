@@ -3,7 +3,6 @@ finding, and the verdict or error that ends the run. The words are English; path
 the home directory."""
 
 import re
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, StrEnum
@@ -14,11 +13,13 @@ from hal.output import (
     Glyph,
     Noun,
     Row,
+    Stream,
     Verdict,
     counted,
     format_duration,
     printable,
     write_error,
+    write_line,
     write_row,
     write_verdict,
 )
@@ -172,8 +173,8 @@ def write_halfway(
     )
     for label, steps in (("done", done), ("not done", pending)):
         for step in steps:
-            print(printable(f"{label}: {step.description}"), file=sys.stderr)
-    print(f"next: {command(Verb.RENAME, new, old)}", file=sys.stderr)
+            write_line(printable(f"{label}: {step.description}"), stream=Stream.STDERR)
+    write_line(f"next: {command(Verb.RENAME, new, old)}", stream=Stream.STDERR)
 
 
 def write_refusals(reasons: Sequence[str]) -> None:

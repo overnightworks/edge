@@ -49,7 +49,7 @@ def run(
         source = files.enter_context(stdin.open("rb")) if stdin else subprocess.DEVNULL
         sink = files.enter_context(_new_private_file(stdout)) if stdout else subprocess.PIPE
         try:
-            completed = subprocess.run(
+            completed = subprocess.run(  # noqa: S603 - argv is built by the backup runner and no shell runs
                 argv,
                 stdin=source,
                 stdout=sink,

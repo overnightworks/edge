@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe of deploy by tag (#255 P1, matrix block A): `hal apply --local` of a copy of the
 repository switches on an app of a throwaway bare origin at its newest `vYYYY.MM.DD.N` tag, updates
 it, and refuses or ends partial where block A says so.
@@ -141,8 +140,8 @@ class Probe:
     # --- docker ------------------------------------------------------------------------------
 
     def docker(self, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[bytes]:
-        result = subprocess.run(
-            ["docker", *arguments], capture_output=True, env=self.environment,
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["docker", *arguments], capture_output=True, env=self.environment,  # noqa: S607 - docker is found on PATH by design
             cwd=self.copy if self.copy.exists() else REPO, check=False, timeout=COMPOSE_SECONDS,
         )  # fmt: skip
         if check and result.returncode != 0:
@@ -327,8 +326,8 @@ class Probe:
         whitespace-normalised output of a run that exits `exit_code`."""
         expect(not set(arguments) & set(FORBIDDEN_VERBS), f"hal {arguments} names a tunnel")
         command = shlex.join([str(self.copy / ".venv" / "bin" / "hal"), *arguments])
-        result = subprocess.run(
-            ["script", "-qec", command, "/dev/null"], input=typed, capture_output=True,
+        result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["script", "-qec", command, "/dev/null"], input=typed, capture_output=True,  # noqa: S607 - script is found on PATH by design
             env=self.environment, cwd=self.copy, check=False, timeout=HAL_SECONDS,
         )  # fmt: skip
         output = " ".join((result.stdout + result.stderr).decode(errors="replace").split())
@@ -386,8 +385,8 @@ class Probe:
         """Git in the app's checkout as the operator would run it: the throwaway HOME's global
         configuration (the `insteadOf` of the origin), no `GIT_*` of the probe's own shell."""
         environment = {k: v for k, v in self.environment.items() if not k.startswith("GIT_")}
-        subprocess.run(
-            ["git", "-C", str(self.srv), *arguments], env=environment, capture_output=True,
+        subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["git", "-C", str(self.srv), *arguments], env=environment, capture_output=True,  # noqa: S607 - git is found on PATH by design
             check=True, timeout=COMPOSE_SECONDS,
         )  # fmt: skip
 

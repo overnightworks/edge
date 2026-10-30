@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The login command (#457, agent-runtime#440's 12b row): the real `agent-service` of compose.yaml
 in a throwaway compose project, running the login directory it is given, read-only, with the
 stand-in issuer, a bootstrapped entrypoint and `max_parallel_cli_runs = 1` in a scratch
@@ -79,7 +78,7 @@ from service_log import BOOTSTRAP, classify_log
 from smoke import Tokens
 from unit import SERVICE, ServiceConditions, login_directory
 
-PROBE_LOCK = Path("/tmp/probe-stack.lock")  # NOSONAR(S5443) the lock every probe run shares
+PROBE_LOCK = Path("/tmp/probe-stack.lock")  # NOSONAR(S5443) the lock every probe run shares  # noqa: S108 - the machine-wide lock every probe run shares
 COMMAND_SECONDS = 1500  # the alarm: the drive stops here and the teardown still has time to run
 GATEWAY = "agent-egress"
 STARTED = (GATEWAY, ISSUER_SERVICE, APP_SERVICE, SERVICE)
@@ -290,7 +289,7 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             "-v", f"{CLIENT_PROGRAM}:{CLIENT_TARGET}:ro", SMOKE_SERVICE,
             "-I", "-B", CLIENT_TARGET,
         )  # fmt: skip
-        process = subprocess.Popen(
+        process = subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, errors="replace", env=self.environment, cwd=REPO, close_fds=True,
         )  # fmt: skip
