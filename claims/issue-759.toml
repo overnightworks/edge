@@ -1,0 +1,7 @@
+claim_id = "6f92657eb5744165acb534438f84ea08"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "f2d51bcfcf5b237b798ac1b3f183773452dd87ae"
+branch = "claude/issue-759-the-fresh-part-of-the-system-proof-is-cu"
+scope = ["docs/home.md", "scripts/system-proof/drive.sh", "scripts/system-proof/run.sh"]
+opened_commit = "5d8c8d2238cc5524c32f9d0c36ab38b7d68208b0"
