@@ -1,8 +1,0 @@
-claim_id = "61d61bace13944bdb89e0f53a01434dc"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "dd0c56194fc550782750bb42fec6c64c4f1025c1"
-branch = "claude/issue-730-s9-test-security-and-print"
-scope = ["tests/backup_support.py", "tests/support/fake_docker.py", "tests/test_agent_service_cells_12b.py", "tests/test_agent_service_containment.py", "tests/test_agent_service_login_checks.py", "tests/test_agent_service_tree_census.py", "tests/test_exposure_check.py", "tests/test_keycloak_probe.py", "tests/test_stack_compose_one_offs.py", "tests/test_stack_realm_observe.py", "tests/test_workstation_check_exposure.py", "tests/test_workstation_secrets_verification.py"]
-opened_commit = "cd4127e152d6911e465e42f7021ddcaf71a9f2d9"
-whole_reason = "One rule across twelve test files: each change is a constant, a marker or a one-line stream write, and a split would pay a claim per file."
