@@ -203,9 +203,41 @@ and calls `http://agent-service:8080` (the service's own default port; the smoke
 use it). No CA mount is needed: the service is plain http on an isolated internal network, and no
 host process can reach it, because the network has no host address and publishes no port.
 
+## The API route
+
+A person who is in an API group but not in a subscription group reaches the provider through
+LiteLLM instead of a CLI. The path is `agent-service`, `litellm-front`, `litellm`, `agent-egress`,
+the provider, over the internal, isolated networks `litellm-api`, `litellm-backend` and
+`litellm-egress`. Nothing runs it yet: the profile `litellm` is in no unit, and `service.toml`
+has no `[api]` table.
+
+- **The boundary.** `litellm-front` is the same pinned Traefik as the gateway with one router,
+  `POST /v1/chat/completions` (`agent-service/litellm/front/`); every other method and path ends in
+  the front itself, so LiteLLM's own unauthenticated routes are unreachable. LiteLLM's hook
+  (`agent-service/litellm/auth.py`, deciding in `gate.py`) allows that one route with the service
+  credential as bearer, no query string, the body sent as exactly `application/json` (LiteLLM also
+  parses form bodies), no `x-litellm-` header (LiteLLM reads per-request retries and timeouts from
+  them), no `anthropic-` header (LiteLLM forwards `anthropic-version` and `anthropic-beta` to the
+  provider) and exactly the body keys `model`, `messages` and `tools`, which agent-runtime's one posting
+  function sends. LiteLLM has no database and no limiter and
+  messages are not logged; it needs a master key to boot, a third file secret that no client
+  holds, so its admin routes stay closed.
+- **What stays reachable.** The front sees every message and the service credential in memory; a
+  compromised front could spend credit through LiteLLM, bounded by the prepaid credit. The API
+  route has no concurrency cap until agent-runtime#634. LiteLLM reaches only the front and, through
+  the gateway's `litellm` entrypoint, the provider's name.
+- **A change reaches LiteLLM only through a recreate** of its container: `config.yaml` (model
+  remapping included), `auth.py`, `gate.py` and `start.sh` are read once at start, and the three
+  secrets (provider key, master key and service credential) are files mounted at create time.
+- **Proof:** `probe/agent-service/litellm.py` runs the whole path on a fake-only stack (its
+  docstring gives the command line): the fake Anthropic and a fake issuer sit on `internet`, made
+  internal, and the probe refuses to start otherwise. Re-run it for every LiteLLM, Traefik or Docker
+  bump. The CI job `front` runs the front's table of requests (`tests/test_litellm_front.py`) for
+  every Traefik bump; a LiteLLM bump still needs the probe.
+
 ## Proofs
 
-Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-runtime upgrade.
+Re-run the probes in `probe/agent-service/` for every Traefik, Docker, agent-runtime or LiteLLM upgrade.
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
 built: `cd ~/srv/hal && python3 agent-service/live_smoke.py`. It signs you in as yourself (the

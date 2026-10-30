@@ -17,6 +17,7 @@ from smoke import Tokens, served_line
 TOKENS = Tokens(person="person-token-0123456789", workload="workload-token-9876543210")
 KNOWN = Secrets(TOKENS, login_token="login-token-abcdef", client_secret="client-secret-fedcba")
 GATEWAY = "172.31.252.10"
+LITELLM_GATEWAY = "172.31.239.10"
 SERVICE_NETWORKS = {
     "agent-songmaker": "hal_agent_songmaker",
     "agent-presentator": "hal_agent_presentator",
@@ -41,6 +42,7 @@ def resolved_configuration(image: str = "i:1") -> dict:
     return {
         "name": "edge",
         "x-egress-address": GATEWAY,
+        "x-litellm-egress-address": LITELLM_GATEWAY,
         "services": {
             "agent-service": {"image": image, "networks": dict.fromkeys(SERVICE_NETWORKS)}
         },
