@@ -421,7 +421,7 @@ def test_a_publish_that_cannot_plan_ends_with_3_and_the_summary_line(world):
     result = world.run("yes")
 
     assert result.exit_code == ExitCode.FAILURE
-    assert "cloudflare: tofu plan failed (exit 1)" in result.err
+    assert "✗ cloudflare not planned tofu ended without naming a reason" in " ".join(result.out.split())
     assert "hal apply: the publish did not end clean (exit 1)" in result.err
 
 

@@ -396,7 +396,9 @@ def test_an_empty_plan_prints_one_current_row_and_no_tofu_text(fake, capsys, pub
     assert publish_answering() == 0
     printed = capsys.readouterr()
     assert said(printed.out) == "✓ cloudflare current nothing to publish"
+    assert not any(text in printed.out for text in TOFU_TEXT)
     assert printed.err == ""
+    assert "apply" not in commands_of(fake)
 
 
 def test_an_empty_plan_with_a_warning_prints_the_warning_row_then_the_current_row(
