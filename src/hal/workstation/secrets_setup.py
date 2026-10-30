@@ -4,8 +4,9 @@ A person stays in the loop on purpose: only someone with more rights than a toke
 for fine-grained tokens, and on Cloudflare the wizard would need an admin key on disk. So the browser login stays the
 operator's. The wizard does everything else: it says what comes and why, opens the provider's page, takes the pasted
 value without echo, has the provider confirm it and only then writes the file, 0600 in a 0700 directory. A service
-password is generated and written unseen. A login a CLI makes (`create` in the manifest) is made by that CLI in the entry's own
-folder; the wizard only runs it and checks path and mode. A file already present stays untouched. It runs only at a terminal.
+password is generated and written unseen. A login a CLI makes (`create` in the manifest) is made by that CLI in a fresh private
+home; the wizard only runs it, checks path and mode, and moves the login file into the entry's folder. A file already present
+stays untouched. It runs only at a terminal.
 
 Its read-only view is `secrets_view`.
 

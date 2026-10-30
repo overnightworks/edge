@@ -95,7 +95,7 @@ def login_home(tmp_path: Path, use_manifest) -> Path:
     return home
 
 
-def test_a_missing_login_is_made_by_its_cli_in_the_entrys_own_folder_with_the_ruled_rights(
+def test_a_missing_login_is_made_by_its_cli_and_stored_in_the_entrys_own_folder_with_the_ruled_rights(
     login_home: Path, boundaries: Boundaries, cli: FakeCli, capsys
 ) -> None:
     """#666 D1, D3: the CLI runs once; afterwards folder 0700 and file 0600, and the row never shows content."""

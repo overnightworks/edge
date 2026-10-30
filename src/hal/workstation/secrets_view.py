@@ -173,7 +173,7 @@ class SecretEntry:
 
     @property
     def folder(self) -> PurePosixPath:
-        """The folder the CLI of `create` writes into; the manifest guarantees one place for it."""
+        """The folder the login file of `create` is moved into; the manifest guarantees one place for it."""
         return self.place.parent
 
     @property
