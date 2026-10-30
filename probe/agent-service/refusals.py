@@ -12,6 +12,8 @@ from typing import NamedTuple
 from egress import LABEL, expect
 from smoke import PROTOCOL_VERSION, Tokens, request_body
 
+from hal.output import write_line
+
 SMOKE_SERVICE = "agent-smoke"
 APP_GROUP = "/apps/songmaker"
 PLAN_GROUP = "/services/agent-service/subscription"
@@ -83,4 +85,4 @@ def check_refusals(
     expect(answers.stdout.splitlines() == expected, f"U17: the answers were {answers.stdout!r}")
     held.append("U17")
     names = [refusal.name for refusal in REFUSALS]
-    print(f"U17 held: {names} answered {expected}", flush=True)
+    write_line(f"U17 held: {names} answered {expected}", flush=True)

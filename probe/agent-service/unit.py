@@ -67,6 +67,7 @@ from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
 from signer import SignerProbe
 
+from hal.output import write_line
 from hal.stack import compose
 
 SERVICE = Target.SERVICE.compose_service
@@ -214,7 +215,7 @@ class Inside:
 
     @staticmethod
     def main(arguments: list[str]) -> int:
-        print(json.dumps(getattr(Inside, arguments[0])(*arguments[1:])), flush=True)
+        print(json.dumps(getattr(Inside, arguments[0])(*arguments[1:])), flush=True)  # noqa: T201 - this in-container program imports nothing of hal and prints itself
         return 0
 
 
@@ -677,7 +678,7 @@ class SmokeProbe(IssuerProbe):
         expect(stack.gateway == self.address, f"U16: compose names the gateway {stack.gateway}")
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
         known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")  # noqa: S106 - a dummy secret of the throwaway probe client
-        report = Report(known.values(), out=lambda line: print(f"  {line}", flush=True))
+        report = Report(known.values(), out=lambda line: write_line(f"  {line}", flush=True))
         smoke_cells(stack, known, report)
         report.add(*live_egress_cells(stack))
         failed = sorted(
@@ -685,7 +686,7 @@ class SmokeProbe(IssuerProbe):
         )
         expect(failed == ["L2"], f"U16: the cells that failed were {failed}, not only L2")
         self.held.append("U16")
-        print(
+        write_line(
             "U16 held: the live smoke's cells ran; only L2 failed, as the dummy login must",
             flush=True,
         )
@@ -714,7 +715,7 @@ class SmokeProbe(IssuerProbe):
         for secret in (person, workload, dummy):
             expect(secret not in shown + logs, "U14: a token was printed")
         self.held.append("U14")
-        print(
+        write_line(
             f"U14 held: the smoke exited {smoke.returncode}; its output was {lines}; no token "
             "in it or in the service log; the log ends "
             f"{logs.strip().splitlines()[-3:]}",

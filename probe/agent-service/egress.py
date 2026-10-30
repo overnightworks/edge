@@ -71,6 +71,8 @@ from egress_observe import (  # noqa: E402
 )
 from scratch_secrets import write_scratch_secrets  # noqa: E402
 
+from hal.output import write_line  # noqa: E402
+
 PROJECT = "edge-agentegress-probe"
 LABEL = f"edge.probe={PROJECT}"
 COMPOSE_FILE = REPO / "compose.yaml"
@@ -260,7 +262,7 @@ class Client:
 
     @staticmethod
     def main(arguments: list[str]) -> int:
-        print(json.dumps(getattr(Client, arguments[0])(*arguments[1:])), flush=True)
+        print(json.dumps(getattr(Client, arguments[0])(*arguments[1:])), flush=True)  # noqa: T201 - this in-container program imports nothing of hal and prints itself
         return 0
 
 
@@ -488,7 +490,7 @@ class Probe:
         )  # fmt: skip
 
     def hold(self, cell: str, how: str) -> None:
-        print(f"{cell} held: {how}", flush=True)
+        write_line(f"{cell} held: {how}", flush=True)
         self.held.append(cell)
 
     def wait_until_the_gateway_answers(self) -> None:
@@ -658,7 +660,7 @@ class Probe:
                 self.drive_dns_window()
                 return
             except NotDriven as problem:
-                print(f"E10 try {attempt}: {problem}", flush=True)
+                write_line(f"E10 try {attempt}: {problem}", flush=True)
         raise NotDriven(f"E10: not driven in {HOST_WINDOW_TRIES} windows")
 
     def drive_dns_window(self) -> None:
@@ -775,9 +777,9 @@ def run_probe(open_probe: Callable[[], Probe]) -> int:
         with open_probe() as probe:
             probe.drive()
     except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as problem:
-        print(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
+        write_line(f"PROBE FAILED: {type(problem).__name__}: {problem}", flush=True)
         return 1
-    print(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
+    write_line(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
     return 0
 
 

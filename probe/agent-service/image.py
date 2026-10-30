@@ -38,6 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importabl
 
 from egress import scratch_directory  # noqa: E402
 
+from hal.output import Stream, write_line  # noqa: E402
+
 NO_NETWORK = "--network=none"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 PROBE_NAME = f"edge-probe-agent-image-{os.getpid()}"
@@ -463,28 +465,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     signal.signal(signal.SIGTERM, interrupt)
     output = arguments.output or Path(tempfile.mkdtemp(prefix="agent-image-probe-"))
-    print(f"transcripts: {output}")
+    write_line(f"transcripts: {output}")
     with tempfile.TemporaryDirectory(prefix="agent-image-probe-") as scratch_name:
         scratch = Path(scratch_name)
         try:
             cell_i1(output)
-            print("I1 held: built without cache, every download checked, pip check passed")
+            write_line("I1 held: built without cache, every download checked, pip check passed")
             cell_i2(output, scratch)
-            print("I2 held: an altered CLI hash and an altered wheel hash both fail the build")
+            write_line("I2 held: an altered CLI hash and an altered wheel hash both fail the build")
             cell_i3(output)
-            print("I3 held: an absent CLI version fails at curl --fail")
+            write_line("I3 held: an absent CLI version fails at curl --fail")
             cell_i4()
-            print(f"I4 held: uid 1000, read-only root, {CLI_REPORT}, glibc on x86_64")
+            write_line(f"I4 held: uid 1000, read-only root, {CLI_REPORT}, glibc on x86_64")
             cell_i5(output, scratch)
-            print("I5 held: the entrypoint listened after its version probe; POST /runs was 401")
+            write_line(
+                "I5 held: the entrypoint listened after its version probe; POST /runs was 401"
+            )
             cell_i6()
-            print("I6 held: no managed settings, no ~/.claude, no token")
+            write_line("I6 held: no managed settings, no ~/.claude, no token")
             cell_i7()
-            print("I7 held: pip freeze is exactly the lock's names and versions")
+            write_line("I7 held: pip freeze is exactly the lock's names and versions")
             cell_i8(scratch)
-            print("I8 held: a leftover of the old configuration shape stops the start")
+            write_line("I8 held: a leftover of the old configuration shape stops the start")
         except (ProbeFailed, subprocess.TimeoutExpired, KeyboardInterrupt) as failure:
-            print(f"FAILED {type(failure).__name__}: {failure}", file=sys.stderr)
+            write_line(f"FAILED {type(failure).__name__}: {failure}", stream=Stream.STDERR)
             return 1
         finally:
             remove_probe_artifacts()

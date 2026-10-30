@@ -30,6 +30,8 @@ from step_ca_names import (
     STAND_IN_URL,
 )
 
+from hal.output import write_line
+
 INCOMPLETE_EXIT_CODE = 2  # a cell was not driven: neither a pass nor a failure
 SERVICE_IMAGE_ROOT = "/root.crt"
 # What the service image's own TLS context (cli_runner.mcp_tls_context) makes of the origin.
@@ -49,9 +51,9 @@ print(answer.read().decode())
 def print_verdict(not_driven: list[str]) -> int:
     """PROBE PASSED only when every cell was driven; a cell that could not run is not held."""
     if not_driven:
-        print(f"PROBE INCOMPLETE: not driven: {'; '.join(not_driven)}")
+        write_line(f"PROBE INCOMPLETE: not driven: {'; '.join(not_driven)}")
         return INCOMPLETE_EXIT_CODE
-    print("PROBE PASSED: proofs 1-14, #95 P3 and #346 P13-P27 hold")
+    write_line("PROBE PASSED: proofs 1-14, #95 P3 and #346 P13-P27 hold")
     return 0
 
 
@@ -85,7 +87,9 @@ class McpNetworks:
             outcome = "answered" if result.returncode == 0 else f"curl exit {result.returncode}"
             wanted = 0 if expected else COULD_NOT_RESOLVE
             expect(result.returncode == wanted, f"{network} -> {url}: {outcome}")
-        print(f"proof 7 held: {len(reachable)} network pairs as ruled; only the control answers")
+        write_line(
+            f"proof 7 held: {len(reachable)} network pairs as ruled; only the control answers"
+        )
 
     def stand_in_requests(self) -> int:
         """How many requests the stand-in has logged so far; whoami logs one line per request."""
@@ -352,4 +356,4 @@ class McpNetworks:
         lines.append(self.cell_p25_network_shape())
         self.proof_7_network_split()  # P27: hello's route and the existing pairs still hold
         lines.append("route P27 held: hello's route and proof 7's pairs hold with the new network")
-        print(*lines, sep="\n")
+        write_line("\n".join(lines))

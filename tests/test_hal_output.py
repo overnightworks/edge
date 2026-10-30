@@ -647,3 +647,18 @@ def test_a_raw_line_goes_to_the_chosen_stream_exactly_as_given(
 
     captured = capsys.readouterr()
     assert (captured.out, captured.err) == (expected_out, expected_err)
+
+
+@pytest.mark.parametrize("stream", [Stream.STDOUT, Stream.STDERR])
+@pytest.mark.parametrize("flush", [True, False])
+def test_a_line_reaches_its_stream_at_once_only_when_flushed(
+    monkeypatch: pytest.MonkeyPatch, stream: Stream, flush: bool
+) -> None:
+    sink = io.BytesIO()
+    monkeypatch.setattr(
+        sys, stream.value, io.TextIOWrapper(sink, encoding="utf-8", write_through=False)
+    )
+
+    write_line("a line", stream=stream, flush=flush)
+
+    assert sink.getvalue() == (b"a line\n" if flush else b"")
