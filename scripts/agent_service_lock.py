@@ -78,7 +78,7 @@ def lock_text(tag: str, commit: str, closure: str, wheel_digests: dict[str, str]
 
 def wheel_digest(url: str) -> str:
     """The sha256 of the bytes the URL serves."""
-    with urllib.request.urlopen(url, timeout=DOWNLOAD_SECONDS) as response:
+    with urllib.request.urlopen(url, timeout=DOWNLOAD_SECONDS) as response:  # noqa: S310 - the URL is built from the checked release tag and https
         return hashlib.sha256(response.read()).hexdigest()
 
 
@@ -88,16 +88,16 @@ def released_commit_and_closure(tag: str) -> tuple[str, str]:
     with tempfile.TemporaryDirectory() as scratch:
         # release_tag checks the tag against its canonical pattern before any process call, no
         # shell is used, and -- precedes the URL and directory; two code routes stayed flagged.
-        subprocess.run(  # NOSONAR(S8701)
+        subprocess.run(  # NOSONAR(S8701)  # noqa: S603 - release_tag checks the tag first and no shell runs
             [*GIT_CLONE_TAG, release_tag(tag), "--", REPOSITORY_URL, scratch], check=True
         )
-        commit = subprocess.run(
-            ["git", "-C", scratch, "rev-parse", "HEAD^{commit}"],
+        commit = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["git", "-C", scratch, "rev-parse", "HEAD^{commit}"],  # noqa: S607 - git is found on PATH by design
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
-        closure = subprocess.run(
+        closure = subprocess.run(  # noqa: S603 - UV_EXPORT is the script own fixed command
             UV_EXPORT, cwd=scratch, check=True, capture_output=True, text=True
         ).stdout
     return commit, closure
