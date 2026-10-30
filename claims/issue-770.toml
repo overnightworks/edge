@@ -1,0 +1,8 @@
+claim_id = "b36954a579a042f282e70e116a02b34c"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "a1a0b7bfe76d82d77ef35c5a999c7b7e5f937c39"
+branch = "claude/issue-770-s3a-2c-1-global-verbose"
+scope = ["README.md", "src/hal/cli.py", "src/hal/output/__init__.py", "src/hal/secrets_commands.py", "src/hal/version.py", "tests/test_hal_cli.py"]
+opened_commit = "839e917b26d0a55575eba2149a5602f8d8b3b650"
+whole_reason = "One flag with one owner: argparse refuses a second -v on one parser, so the global flag in cli, its hand-off to hal.output and the removal of both local flags land as one commit."
