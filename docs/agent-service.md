@@ -17,7 +17,7 @@ name could be anyone's on a public one (`pull_policy: never`), so it is built on
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.11.0-claude-2.1.302-codex-0.163.0 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.12.0-claude-2.1.302-codex-0.163.0 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
@@ -80,9 +80,13 @@ otherwise, naming `cli.anthropic.token_file` and the path, never the content. `h
 the entry `agent-service-claude`.
 
 A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/auth.json`
-(folder 0700, file 0600), bound read-only at `/run/agent-service/login/codex` the same way. The start
-refuses an incomplete sign-in or a file that group or others can touch, naming `cli.openai.token_file`
-and the path; a Codex run gets a copy without the renewal token, and the service does not renew it.
+(folder 0700, file 0600), bound at `/run/agent-service/login/codex` the same way, but read-write: the
+service renews this login itself, so it needs the directory to create `.auth.json.new` and rename it
+over the file (a read-only directory logs `sibling not created` hourly and nothing renews). It is the
+service's one writable bind. The start refuses an incomplete sign-in or a file that group or others
+can touch, naming `cli.openai.token_file` and the path; a Codex run gets a copy without the renewal
+token. A stop waits for a renewal in flight, so `stop_grace_period` is 105 s (about 45 s for the
+renewal and at least 60 s beyond it); a kill sooner can leave `.auth.json.new` behind.
 `agent-service/setup --check` does not check it: a missing folder fails the start. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
 rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
@@ -155,10 +159,10 @@ reaches a container, never a restart. There is no grace period.
 
 ## What a turn leaves behind
 
-The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
+The service has no writable persistent mount but the Codex login directory (a renewal rewrites `auth.json` there, nothing a turn leaves). The CLI's per-run home and work directories and `/tmp`
 are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
-drops them. The only host binds are `service.toml` and the two login directories, both read-only
-([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the Claude login reaches the CLI only through its environment. The service sets
+drops them. The only host binds are `service.toml` and the two login directories, read-only except the Codex
+login directory, which the service renews ([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the Claude login reaches the CLI only through its environment. The service sets
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is

@@ -81,6 +81,8 @@ from hal.stack import compose
 SERVICE = Target.SERVICE.compose_service
 REFUSAL_SECONDS = 60
 UID = 1000
+# The service renews this login itself, so its directory is the one writable bind.
+RENEWED_LOGIN_PROVIDER = "openai"
 CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path  # noqa: S108 - the service tmpfs inside its container and no host path
 SERVICE_COMMAND = "agent-runtime-service"
 INIT_COMMAND = "docker-init"
@@ -355,13 +357,21 @@ class ServiceConditions:
         own_options = {m["point"]: m["own_options"] for m in self.inside("mounts")["mounts"]}
         for provider, table in cli_tables().items():
             directory = str(PurePosixPath(table["token_file"]).parent)
-            expect("ro" in own_options.get(directory, []), f"U8: the {provider} login is writable")
+            options = own_options.get(directory, [])
+            if provider == RENEWED_LOGIN_PROVIDER:
+                expect("rw" in options, f"U8: the {provider} login directory is not writable")
+            else:
+                expect("ro" in options, f"U8: the {provider} login is writable")
             login = self.inside("stat", table["token_file"])
             expect(
                 login["uid"] == UID and login["mode"] == TOKEN_MODE,
                 f"U8: the {provider} login is owned by {login['uid']} with mode {login['mode']:o}",
             )
-        self.hold("U8", f"the login mounts are read-only; the logins are 0600 owned by {UID}")
+        self.hold(
+            "U8",
+            f"the {RENEWED_LOGIN_PROVIDER} login directory is the one writable mount, the other "
+            f"login mounts are read-only; the logins are 0600 owned by {UID}",
+        )
 
 
 class UnitProbe(ServiceConditions, Probe):
