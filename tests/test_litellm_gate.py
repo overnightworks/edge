@@ -125,9 +125,16 @@ def test_a_valid_json_body_not_sent_as_exactly_one_application_json_is_refused(
         "X-LITELLM-TIMEOUT",
         "x-LiteLLM-stream-timeout",
         "x-litellm-api-key",
+        "anthropic-version",
+        "anthropic-beta",
+        "Anthropic-Version",
+        "ANTHROPIC-BETA",
+        "aNtHrOpIc-future",
     ],
 )
-def test_any_x_litellm_header_in_any_letter_case_is_refused(gate, credential_file, key, header):
+def test_any_x_litellm_or_anthropic_header_in_any_letter_case_is_refused(
+    gate, credential_file, key, header
+):
     names = ["host", "authorization", "content-type", header]
     assert not request(gate, credential_file, key, header_names=names).allowed
 

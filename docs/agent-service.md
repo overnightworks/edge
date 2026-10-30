@@ -217,7 +217,8 @@ has no `[api]` table.
   (`agent-service/litellm/auth.py`, deciding in `gate.py`) allows that one route with the service
   credential as bearer, no query string, the body sent as exactly `application/json` (LiteLLM also
   parses form bodies), no `x-litellm-` header (LiteLLM reads per-request retries and timeouts from
-  them) and exactly the body keys `model`, `messages` and `tools`, which agent-runtime's one posting
+  them), no `anthropic-` header (LiteLLM forwards `anthropic-version` and `anthropic-beta` to the
+  provider) and exactly the body keys `model`, `messages` and `tools`, which agent-runtime's one posting
   function sends. LiteLLM has no database and no limiter and
   messages are not logged; it needs a master key to boot, a third file secret that no client
   holds, so its admin routes stay closed.

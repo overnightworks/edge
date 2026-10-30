@@ -5,7 +5,8 @@ the request.
 A request passes only as `POST` on exactly /v1/chat/completions, with no query string (LiteLLM
 reads `model` from the query too), exactly one Content-Type of exactly `application/json` (LiteLLM
 parses form bodies by their media type, so a body is judged only as the JSON LiteLLM will parse),
-no header named `x-litellm-…` (LiteLLM reads per-request retries and timeouts from them), the
+no header named `x-litellm-…` (LiteLLM reads per-request retries and timeouts from them) or
+`anthropic-…` (LiteLLM forwards `anthropic-version` and `anthropic-beta` to the provider), the
 service credential's `shared_key` as the bearer, and a UTF-8 JSON body whose keys are exactly those
 agent-runtime's one posting function sends. Anything else, including a credential file that is
 missing or one agent-runtime's credential reader would refuse, is refused. A reason never carries
@@ -31,7 +32,8 @@ BEARER_PREFIX = "Bearer "
 # What agent-runtime sends; LiteLLM drops parameters and parses any non-form body as UTF-8 JSON,
 # so the exact value leaves no normalisation for the two to disagree on.
 CONTENT_TYPE = "application/json"
-LITELLM_HEADER_PREFIX = "x-litellm-"
+# Header names LiteLLM acts on or forwards to the provider; agent-runtime sends none of them.
+REFUSED_HEADER_PREFIXES = ("x-litellm-", "anthropic-")
 
 
 @dataclass(frozen=True)
@@ -57,8 +59,8 @@ def decide(
         return Verdict(False, "a query string is not accepted")
     if list(content_types) != [CONTENT_TYPE]:
         return Verdict(False, "the body must be sent as one Content-Type: application/json")
-    if any(name.lower().startswith(LITELLM_HEADER_PREFIX) for name in header_names):
-        return Verdict(False, "an x-litellm- header is not accepted")
+    if any(name.lower().startswith(REFUSED_HEADER_PREFIXES) for name in header_names):
+        return Verdict(False, "an x-litellm- or anthropic- header is not accepted")
     shared_key = _shared_key(credential_file)
     if shared_key is None:
         return Verdict(False, "the service credential is missing or invalid")
