@@ -18,12 +18,12 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, TextIO
 
-from hal.output import Stream, confirmed, write_line
+from hal.output import Stream, confirmed, write_line, write_row
 from hal.output.command import Verb, command
 from hal.stack import catalog, terminal
-from hal.stack.external import host_probe, secrets, tofu
+from hal.stack.external import host_probe, publish_rows, secrets, tofu
 
-SENDER = "cloudflare"
+SENDER = publish_rows.SUBJECT
 PLANS_DIRECTORY = secrets.OPENTOFU_DIRECTORY / "plans"
 _PLAN_SUFFIX = ".tfplan"
 _LOCK_SUFFIX = ".lock"
@@ -287,7 +287,9 @@ def _recording_interrupts(
         )
     except tofu.Interrupted as interrupted:
         progress.interrupted = True
-        print_interrupted_output(interrupted, token_values)
+        # the output of the plan steps is a machine stream and tofu's plan text, not for a person
+        if progress.step is not Step.PLAN:
+            print_interrupted_output(interrupted, token_values)
         raise
     except KeyboardInterrupt:
         progress.interrupted = True
@@ -332,6 +334,38 @@ def _unanswered(
     return lines
 
 
+def _print_plan(
+    planned: tofu.Completed,
+    plan_file: Path,
+    session: tofu.Session,
+    token_values: dict[str, str],
+    progress: Progress,
+) -> ApplyExit | None:
+    """The plan as rows and, with changes, tofu's rendering of the written file. The exit when the
+    run ends here (nothing to publish, or a plan that cannot be shown); None when changes wait."""
+    try:
+        stream = tofu.read_plan_stream(planned.output)
+    except tofu.MalformedPlanStream:
+        write_row(publish_rows.malformed_stream_row())
+        return ApplyExit.CANNOT_PLAN
+    for row in publish_rows.warning_rows(stream, token_values):
+        write_row(row)
+    if planned.exit_code == tofu.PlanExit.NO_CHANGES:
+        progress.plan_was_empty = True
+        write_row(publish_rows.current_row())
+        return ApplyExit.APPLIED_OR_NOTHING
+    if planned.exit_code != tofu.PlanExit.CHANGES:
+        for row in publish_rows.failed_plan_rows(stream, token_values):
+            write_row(row)
+        return ApplyExit.CANNOT_PLAN
+    rendered = tofu.run(session.tofu, tofu.show_arguments(plan_file), session.environment)
+    if rendered.exit_code != 0:
+        write_row(publish_rows.failed_show_row(rendered.output, token_values))
+        return ApplyExit.CANNOT_PLAN
+    show_tofu_output(secrets.redact(rendered.output, token_values).rstrip("\n"), sys.stdout)
+    return None
+
+
 def _show_confirm_apply(
     session: tofu.Session,
     plan_file: Path,
@@ -345,16 +379,8 @@ def _show_confirm_apply(
         tofu.PLAN_ARGUMENTS if catalog_bytes is None else session.plan_arguments_on(catalog_bytes)
     )
     planned = tofu.run(session.tofu, [*plan_arguments, f"-out={plan_file}"], session.environment)
-    shown = secrets.redact(planned.output, token_values)
-    if planned.exit_code == tofu.PlanExit.NO_CHANGES:
-        progress.plan_was_empty = True
-        show_tofu_output(shown.rstrip("\n"), sys.stdout)
-        return ApplyExit.APPLIED_OR_NOTHING
-    if planned.exit_code != tofu.PlanExit.CHANGES:
-        show_tofu_output(shown, sys.stderr)
-        write_line(f"{SENDER}: tofu plan failed (exit {planned.exit_code})", stream=Stream.STDERR)
-        return ApplyExit.CANNOT_PLAN
-    show_tofu_output(shown.rstrip("\n"), sys.stdout)
+    if (ended := _print_plan(planned, plan_file, session, token_values, progress)) is not None:
+        return ended
     progress.step = Step.READINESS
     if unanswered := _unanswered(hosts, prober_for):
         for line in unanswered:

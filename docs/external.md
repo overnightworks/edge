@@ -70,6 +70,13 @@ Allowlist-Umgebung, dieselbe State-Passphrase).
   nicht antwortende Host steht mit Pfad, Ziel und Status auf stderr, `tofu apply` laeuft nie, die
   Plan-Datei wird geloescht. Das gilt auch fuer eine ganz andere Aenderung (Host gestoppt, abgestuerzt,
   startet noch); `enabled: false` nimmt den Host aus der Pruefung.
+- **Der Plan als Zeilen.** `tofu plan -json` liefert nur Diagnosen: ein Plan ohne Aenderung und ohne
+  Diagnose ist die eine Zeile `cloudflare  current  nothing to publish`, jede Warnung eine `!`-Zeile
+  (`warning`), jeder Fehler eines gescheiterten Plans eine `✗`-Zeile (`not planned`), je mit tofus
+  Zusammenfassung und darunter gedimmt der Erklaerung. Mit Aenderungen zeigt `tofu show -no-color`
+  genau die geschriebene Plan-Datei, vor Bereitschaftspruefung und `yes`; scheitert das `show`, endet
+  es wie ein gescheiterter Plan (Exit 2, nichts angewendet). Jeder Text ist von Token und Passphrase
+  bereinigt und maskiert; `tofu show -json` bleibt aus, es traegt jeden sensitiven Wert im Klartext.
 - **Die Plan-Datei** liegt verschluesselt (X1a) in `~/.secrets/opentofu/plans/` (0700) und wird nach
   Erfolg, Abbruch, Fehler und SIGINT/SIGTERM geloescht. Eine nach SIGKILL uebrig gebliebene loescht und
   nennt der naechste Aufruf (`check` raeumt nicht auf).
@@ -105,8 +112,8 @@ umkehrbar fuer Monate). Reihenfolge:
 0. Der Betreiber gibt im Cloudflare-Dashboard beiden Tokens das Recht (`fleet-read`:
    `Zone › Zone Settings › Read`; `fleet-write`: `Zone › Zone Settings › Edit`), vor `hal apply`. Der
    Wert des Tokens bleibt dabei erhalten, an den Dateien aendert sich nichts.
-1. `hal apply`; die Publish-Phase wendet die Einstellung an; ein zweites `hal apply` meldet fuer die
-   Publish-Phase `No changes` und fragt nichts.
+1. `hal apply`; die Publish-Phase wendet die Einstellung an; ein zweites `hal apply` zeigt fuer die
+   Publish-Phase `cloudflare  current  nothing to publish` und fragt nichts.
 2. Der Header `strict-transport-security` erscheint genau einmal auf Apex, `www` und `auth`. Sind es
    zwei, verwerfen zuerst die Ursprungsdienste ihre eigene (in den Items von webauth und Keycloak).
 3. `https://hstspreload.org/api/v2/preloadable?domain=hallucinai.de` meldet keinen Fehler.
@@ -184,7 +191,7 @@ Katalog steht oder bewusst entfaellt. Erwartet nach dem Anwenden: `https://hallu
 Die Reihenfolge der Umstellung: erst `hal apply`, dann Keycloak. `hal apply` erstellt Keycloak bei einer
 geaenderten Umgebung nie neu; der Betreiber startet es erst, wenn die Regel bei Cloudflare steht
 (`docker compose --profile keycloak up -d --no-deps keycloak` in `~/git/edge`), und nur wenn
-`hal apply` sauber endete **und** ein zweites `hal apply` fuer die Publish-Phase `No changes` meldet
+`hal apply` sauber endete **und** ein zweites `hal apply` fuer die Publish-Phase `current` zeigt
 und nichts fragt. So gibt es kein Fenster: ein
 Keycloak auf `forwarded` ohne Regel davor wuerde ein vom Besucher gesendetes `Forwarded` vertrauen.
 

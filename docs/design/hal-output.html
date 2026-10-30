@@ -976,6 +976,19 @@ Type <span class="w">yes</span> to apply 8 changes: yes
 <span class="d">    git -C ~/git/edge merge --ff-only 4f0e7b1c2d9a8e6b5c3d1f0a9b8c7d6e5f4a3b2c</span>
 <span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
       </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> Cloudflare: nichts zu publizieren, mit einer Warnung von tofu</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="y">  !</span> cloudflare      warning        <span class="d">Check block assertion failed</span>
+<span class="d">    input differs</span>
+<span class="g">  ✓</span> cloudflare      current        <span class="d">nothing to publish</span></pre>
+      </figure>
+      <figure>
+        <figcaption><span class="tag new">neu</span> Cloudflare: der Plan scheitert</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="r">  ✗</span> cloudflare      not planned    <span class="d">failed to make http request</span>
+<span class="d">    403 Forbidden · Authentication error (10000) · a missing token right</span></pre>
+      </figure>
     </div>
   </div>
   <ul class="why">
@@ -988,6 +1001,7 @@ Type <span class="w">yes</span> to apply 8 changes: yes
     <li><b>Welche Gruppen schon Zeilen sind:</b> Die Core-Dienste und ihre Follower (<code>~</code> und <code>·</code> unter <code>core</code>), Recreates, Ein- und Ausschalten und „bleibt gestoppt“, die alten Images und der Realm (<code>~ + - · !</code> unter <code>units</code>), die Apps (<code>+ ~ -</code> und <code>·</code> unter <code>apps</code>) sowie appkit (<code>+ -</code>, nur wenn sich etwas ändert) und die Rechtsseiten (<code>+ ~</code>), beide ohne Überschrift, über <code>core</code>. Vor den Zeilen steht kein Plan-Text mehr; „the plan“ und die Ergebniszeilen bleiben Text.</li>
     <li><b>Das yes zählt die gedruckten <code>+ ~ -</code>-Zeilen</b> (gebaut mit #620): <code>Type yes to apply 8 changes:</code>; nur das genaue <code>yes</code> gilt, bei Setup, start, online und extern fragt derselbe Besitzer. Jede Weigerung endet in einer <code>error:</code>-Zeile mit <code>next:</code>, wo ein Befehl hilft; „nothing to change“ endet im ✓-Urteil mit der Laufzeit, ohne cloudflare, bis A5-3 es dazunimmt. Die Zeilen nach dem yes behalten ihre Worte, ohne Absender, bis A5-2 und A5-3.</li>
     <li><b>Cloudflare</b> kommt heute nach einem sauberen lokalen Lauf, mit eigenem Plan und yes.</li>
+    <li><b>Der Cloudflare-Plan ist eine Zeile:</b> ohne Änderung <code>current  nothing to publish</code> statt rund 30 Zeilen Lese- und Refresh-Text; eine Warnung oder ein Fehler von tofu steht als Zeile mit tofus Grund, die Erklärung gedimmt darunter. Mit Änderungen zeigt <code>tofu show</code> genau die geschriebene Plan-Datei vor dem yes.</li>
   </ul>
 </section>
 

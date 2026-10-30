@@ -1,5 +1,7 @@
-"""The pinned `tofu`: version check, `init` and `plan` with their exit codes."""
+"""The pinned `tofu`: version check, `init` and `plan` with their exit codes, and the diagnostics
+of the plan's machine stream."""
 
+import json
 import os
 import re
 import shutil
@@ -8,7 +10,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from pathlib import Path
 
 from hal.output import Stream, write_line
@@ -28,12 +30,37 @@ class TofuError(Exception):
     """tofu is missing, is not the pinned version, or failed in a step before the plan."""
 
 
+class MalformedPlanStream(TofuError):
+    """A diagnostic of the plan stream has no severity or summary; what it says is not guessed."""
+
+
 class PlanExit(IntEnum):
     """What `tofu plan -detailed-exitcode` returns."""
 
     NO_CHANGES = 0
     FAILED = 1
     CHANGES = 2
+
+
+class Severity(StrEnum):
+    ERROR = "error"
+    WARNING = "warning"
+
+
+@dataclass(frozen=True)
+class Diagnostic:
+    severity: Severity
+    summary: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class PlanStream:
+    """What `tofu plan -json` said that hal shows: its diagnostics in order, and the lines that
+    are no JSON object (a crash writes plain text)."""
+
+    diagnostics: tuple[Diagnostic, ...]
+    unparsed: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -75,7 +102,48 @@ def init_arguments(home: Path) -> list[str]:
 
 
 _FORWARDED_SIGNALS = {signal.SIGINT, signal.SIGTERM}
-PLAN_ARGUMENTS = ["plan", "-refresh=true", "-detailed-exitcode"]
+PLAN_ARGUMENTS = ["plan", "-refresh=true", "-detailed-exitcode", "-json"]
+
+
+def show_arguments(plan_file: Path) -> list[str]:
+    """tofu's human rendering of the written plan; `-no-color` because tofu colours even a pipe."""
+    return ["show", "-no-color", str(plan_file)]
+
+
+def read_plan_stream(output: str) -> PlanStream:
+    """The diagnostics of the stream; every other message type is ignored. Only severity, summary
+    and detail are read: the snippet and difference objects of a diagnostic can carry values."""
+    diagnostics = []
+    unparsed = []
+    for line in filter(None, (line.strip() for line in output.splitlines())):
+        message = _json_object(line)
+        if message is None:
+            unparsed.append(line)
+        elif message.get("type") == "diagnostic":
+            diagnostics.append(_diagnostic_of(message.get("diagnostic")))
+    return PlanStream(tuple(diagnostics), tuple(unparsed))
+
+
+def _json_object(line: str) -> dict | None:
+    try:
+        message = json.loads(line)
+    except ValueError:
+        return None
+    return message if isinstance(message, dict) else None
+
+
+def _diagnostic_of(fields: object) -> Diagnostic:
+    if not isinstance(fields, dict):
+        raise MalformedPlanStream
+    summary = fields.get("summary")
+    detail = fields.get("detail", "")
+    if not isinstance(summary, str) or not summary or not isinstance(detail, str):
+        raise MalformedPlanStream
+    try:
+        severity = Severity(fields.get("severity"))
+    except ValueError:
+        raise MalformedPlanStream from None
+    return Diagnostic(severity, summary, detail)
 
 
 def run(tofu: Path, arguments: list[str], environment: dict[str, str]) -> Completed:
