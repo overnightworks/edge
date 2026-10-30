@@ -1,7 +1,0 @@
-claim_id = "b865beca55a94429ab0159028172e582"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "bee4c168414eb35d0b89743ad1fc41c79788324b"
-branch = "claude/issue-760-rule-9-bounded-admission"
-scope = ["docs/architecture.md"]
-opened_commit = "523c5ce912d3250dc89f3a19fbd4ecab695bd4de"
