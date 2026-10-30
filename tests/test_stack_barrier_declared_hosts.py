@@ -5,14 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from test_hal_stack_commands import (
+from support.hal_stack_commands import (
     applying,  # noqa: F401 the fixture, requested by name below
     fakes,  # noqa: F401 the fixture, requested by name below
     hal,  # noqa: F401 the fixture, requested by name below
     system_commands,  # noqa: F401 the autouse fixture of the stack tests
     systemd,  # noqa: F401 the fixture, requested by `fakes`
 )
-from test_stack_apply import (
+from support.stack_apply import (
     PROBE_ENABLED,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     core_files,  # noqa: F401 the fixture, requested by name below
@@ -26,16 +26,16 @@ from test_stack_apply import (
     switch_off,
     write_fleet,
 )
-from test_stack_apply_publish import (
+from support.stack_apply_publish import (
     fake_tofu,  # noqa: F401 the fixture, requested by name below
     repository,  # noqa: F401 the fixture, requested by name below
     world,  # noqa: F401 the fixture, requested by name below
 )
-from test_stack_external import (
+from support.stack_external import (
     home,  # noqa: F401 the fixture, requested by name below
     live_checkout,  # noqa: F401 the fixture, requested by name below
 )
-from test_stack_global_stop import hosts_asked  # noqa: F401 the fixture, requested by `fakes`
+from support.stack_global_stop import hosts_asked  # noqa: F401 the fixture, requested by `fakes`
 
 from hal.grammar import ExitCode
 

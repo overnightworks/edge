@@ -582,6 +582,11 @@
 
   .legal span + span::before { content: "·"; margin: 0 .35em; }
 
+  .terms { margin: 0; font-size: 14px; line-height: 1.55; color: var(--h-text); }
+  .terms .lnk { font-size: inherit; white-space: normal; }
+  .btnrow { display: flex; gap: 12px; }
+  .btnrow .btn { flex: 1 1 0; min-width: 0; }
+
   @container (max-width: 480px) {
     .login { padding: 36px 16px 28px; gap: 18px; }
     .login .wordmark { font-size: 27px; }
@@ -1052,6 +1057,120 @@
           <li>Hilfesätze lassen sich nur ausblenden, nicht hinter ein ⓘ legen.</li>
           <li>Anwendungen zeigt nur, was die Person schon benutzt hat, dazu die Accountkonsole. Das stellt der Realm ein (<code>alwaysDisplayInConsole: false</code>), nicht das Theme.</li>
           <li>„In Benutzung“ bleibt Text: CSS kann den beiden Zuständen kein eigenes Zeichen geben.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 4. Terms of use ===================== -->
+  <section class="group" id="bedingungen">
+    <div class="group-head">
+      <h2>4. Nutzungsbedingungen</h2>
+      <span class="lines">Login-Theme · messages_de.properties, messages_en.properties · termsTitle, termsText (#268)</span>
+    </div>
+
+    <div class="boards">
+      <figure class="board" style="--w: 1440px">
+        <figcaption class="board-title">Nutzungsbedingungen <span class="w">Desktop</span>
+          <span class="chg chg--chg">Text</span>
+          <span class="chg chg--fixed">Knöpfe</span>
+        </figcaption>
+        <div class="frame">
+          <div class="route">auth.hallucinai.de/realms/hallucinai/login-actions/required-action?execution=TERMS_AND_CONDITIONS…</div>
+          <div class="hai login">
+            <div class="grid"></div>
+            <div class="glow glow-1"></div>
+            <div class="glow glow-2"></div>
+
+            <p class="wordmark" data-text="Hallucinai">Hallucinai</p>
+
+            <div class="card">
+              <div class="card-head">
+                <h1>Nutzungsbedingungen</h1>
+                <span class="lang">Deutsch <svg class="ic sm"><use href="#i-down"/></svg></span>
+              </div>
+              <p class="terms">Für alle Apps von hallucinai gelten dieselben <a class="lnk" href="https://hallucinai.de/nutzungsbedingungen" target="_blank" rel="nofollow">Nutzungsbedingungen</a>. Bitte lesen Sie sie. Mit „Annehmen“ stimmen Sie ihnen zu; wir speichern den Zeitpunkt. Wenn Sie ablehnen, werden Sie nicht angemeldet.</p>
+              <div class="btnrow">
+                <span class="btn primary">Annehmen</span>
+                <span class="btn secondary">Ablehnen</span>
+              </div>
+              <p class="legal"><span>Impressum</span><span>Datenschutz</span></p>
+            </div>
+          </div>
+        </div>
+      </figure>
+      <figure class="board" style="--w: 390px">
+        <figcaption class="board-title">Nutzungsbedingungen <span class="w">Telefon 390 px</span>
+        </figcaption>
+        <div class="frame">
+          <div class="route">auth.hallucinai.de/realms/hallucinai/login-actions/required-action?execution=TERMS_AND_CONDITIONS…</div>
+          <div class="hai login" style="--minh: 640px">
+            <div class="grid"></div>
+            <div class="glow glow-1"></div>
+            <div class="glow glow-2"></div>
+
+            <p class="wordmark" data-text="Hallucinai">Hallucinai</p>
+
+            <div class="card">
+              <div class="card-head">
+                <h1>Nutzungsbedingungen</h1>
+                <span class="lang">Deutsch <svg class="ic sm"><use href="#i-down"/></svg></span>
+              </div>
+              <p class="terms">Für alle Apps von hallucinai gelten dieselben <a class="lnk" href="https://hallucinai.de/nutzungsbedingungen" target="_blank" rel="nofollow">Nutzungsbedingungen</a>. Bitte lesen Sie sie. Mit „Annehmen“ stimmen Sie ihnen zu; wir speichern den Zeitpunkt. Wenn Sie ablehnen, werden Sie nicht angemeldet.</p>
+              <div class="btnrow">
+                <span class="btn primary">Annehmen</span>
+                <span class="btn secondary">Ablehnen</span>
+              </div>
+              <p class="legal"><span>Impressum</span><span>Datenschutz</span></p>
+            </div>
+          </div>
+        </div>
+      </figure>
+      <figure class="board" style="--w: 390px">
+        <figcaption class="board-title">Terms of use <span class="w">Telefon 390 px, Englisch (Vorschlag)</span>
+          <span class="chg chg--new">Wortlaut: Freigabe</span>
+        </figcaption>
+        <div class="frame">
+          <div class="route">auth.hallucinai.de/realms/hallucinai/login-actions/required-action?execution=TERMS_AND_CONDITIONS…</div>
+          <div class="hai login" style="--minh: 640px">
+            <div class="grid"></div>
+            <div class="glow glow-1"></div>
+            <div class="glow glow-2"></div>
+
+            <p class="wordmark" data-text="Hallucinai">Hallucinai</p>
+
+            <div class="card">
+              <div class="card-head">
+                <h1>Terms of use</h1>
+                <span class="lang">English <svg class="ic sm"><use href="#i-down"/></svg></span>
+              </div>
+              <p class="terms">All hallucinai apps share one set of <a class="lnk" href="https://hallucinai.de/nutzungsbedingungen" target="_blank" rel="nofollow">terms of use</a> (in German). Please read them. By clicking “Accept” you agree to them; we store the time. If you decline, you will not be signed in.</p>
+              <div class="btnrow">
+                <span class="btn primary">Accept</span>
+                <span class="btn secondary">Decline</span>
+              </div>
+              <p class="legal"><span>Imprint</span><span>Privacy</span></p>
+            </div>
+          </div>
+        </div>
+      </figure>
+    </div>
+
+    <div class="facts">
+      <div class="changes">
+        <h3>Ändert sich gegenüber Keycloak</h3>
+        <ul>
+          <li>Nur die Schlüssel <code>termsTitle</code> und <code>termsText</code>, deutsch und englisch, in den Texten des Themes. Keycloak liefert dort „Bedingungen und Konditionen“ und „Zu definierende Bedingungen und Konditionen“.</li>
+          <li>Der deutsche Text ist N8 aus #268. Der Link steht im Text, öffnet in einem neuen Tab und führt auf <code>https://hallucinai.de/nutzungsbedingungen</code>; den ganzen Text gibt es nur dort und nur auf Deutsch.</li>
+          <li>Der englische Text (dritte Tafel, auch der Titel „Terms of use“) ist ein Vorschlag: eine Übersetzung des deutschen, die der Operator Wort für Wort freigibt.</li>
+        </ul>
+      </div>
+      <div class="stays">
+        <h3>Lässt Keycloak das Theme nicht ändern</h3>
+        <ul>
+          <li>Die Knöpfe: „Annehmen“ und „Ablehnen“ (englisch „Accept“ und „Decline“) sind Keycloaks Texte <code>doAccept</code> und <code>doDecline</code>, „Annehmen“ zuerst und hervorgehoben, „Ablehnen“ daneben. Die Seite <code>terms.ftl</code> gehört Keycloak.</li>
+          <li>Der Text läuft durch Keycloaks Bereinigung: erlaubt ist ein Link, und sie setzt <code>rel="nofollow"</code> selbst.</li>
+          <li>Ablehnen löscht den gespeicherten Zeitpunkt und beendet die Anmeldung ohne Sitzung; die App zeigt ihren Anmeldefehler.</li>
         </ul>
       </div>
     </div>

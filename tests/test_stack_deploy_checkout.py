@@ -7,20 +7,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import support.throwaway_home as throwaway_home
 from app_support import COMPOSE, URL, Origin, origin_at
 from git_support import plain_git
 
 from hal.stack import checkout, deploy_checkout
 
-
-@pytest.fixture(autouse=True)
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    monkeypatch.setenv("LC_ALL", "C")
-    return home
+home = throwaway_home.home
 
 
 @pytest.fixture

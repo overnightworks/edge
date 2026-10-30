@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import support.throwaway_home as throwaway_home
 from git_support import (
     advance,
     checkout_state,
@@ -21,19 +22,10 @@ from git_support import (
 
 from hal.version import NO_CHECKOUT
 
+home = throwaway_home.home
+
 READ_VERBS = {"rev-parse", "symbolic-ref", "status", "rev-list"}
 MARKER = "planted-environment-marker"
-
-
-@pytest.fixture(autouse=True)
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway HOME and XDG_CONFIG_HOME: no global config but the one a test writes."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    monkeypatch.setenv("LC_ALL", "C")
-    return home
 
 
 @dataclass(frozen=True)

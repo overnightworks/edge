@@ -1,5 +1,6 @@
 """`hal stop <unit>` (#513): one row, the barrier and the stop as it observed them, and hal's exits.
-Cells run in process through `hal.cli.main` on the fixtures of `test_hal_stack_commands`."""
+Cells run in process through `hal.cli.main` on the fixtures of
+`tests/support/hal_stack_commands.py`."""
 
 import functools
 from datetime import UTC, datetime
@@ -8,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from app_support import FLEET, KEY
-from test_hal_stack_commands import (
+from support.hal_stack_commands import (
     UNIT,
     Fakes,
     Result,
@@ -18,11 +19,10 @@ from test_hal_stack_commands import (
     system_commands,  # noqa: F401 the autouse guard that no real system command runs
     systemd,  # noqa: F401 the fixture, used by `fakes`
 )
-from test_stack_apply import (
+from support.stack_apply import (
     PROBE_ENABLED,
     STEP_CA_SERVICES,
     ZONE,
-    InterruptedWaitForLock,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     ingress,  # noqa: F401 the fixture, requested by name below
     marker,
@@ -35,16 +35,19 @@ from test_stack_apply import (
     switch,  # noqa: F401 the fixture, used by `app_world`
     write_fleet,
 )
-from test_stack_apply_apps import (
+from support.stack_apply_apps import (
     app_world,  # noqa: F401 the fixture, requested by name below
     deployed,
 )
-from test_stack_apply_publish import repository  # noqa: F401 the fixture, requested by name below
-from test_stack_external import (
+from support.stack_apply_fakes import (
+    InterruptedWaitForLock,
+)
+from support.stack_apply_publish import repository  # noqa: F401 the fixture, requested by name below
+from support.stack_external import (
     home,  # noqa: F401 the fixture, requested by name below
     live_checkout,  # noqa: F401 the fixture, requested by name below
 )
-from test_stack_global_stop import hosts_asked  # noqa: F401 the fixture, used by `fakes`
+from support.stack_global_stop import hosts_asked  # noqa: F401 the fixture, used by `fakes`
 
 from hal.grammar import ExitCode
 from hal.output import EVENT_WIDTH

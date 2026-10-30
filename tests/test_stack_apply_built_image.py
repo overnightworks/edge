@@ -1,26 +1,29 @@
 """`hal apply` swaps the image of agent-service, the one service whose unit has `run.build`, in one
-recreate under the one yes, on the scripted boundaries of `test_stack_apply` (#482, E1-E5)."""
+recreate under the one yes, on the scripted boundaries of `tests/support/stack_apply.py`
+(#482, E1-E5)."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-import test_stack_apply as base
+import support.stack_apply as base
 import yaml
-from test_stack_apply import (
+from support.stack_apply import (
     ENABLED,
-    LABELLED_IMAGE_ID,
     OLD_IMAGE,
     RECREATE_TRAEFIK,
     STEP_CA_BUMP,
     SWITCHED_OFF_AT,
     ZONE,
-    ScriptedCompose,
     switch_off,
     up_calls,
     write_fleet,
 )
-from test_stack_plan_rows import find_row, plain
+from support.stack_apply_fakes import (
+    LABELLED_IMAGE_ID,
+    ScriptedCompose,
+)
+from support.stack_plan_rows import find_row, plain
 
 from hal.stack import switches
 from hal.stack.plan_rows import PlanEvent
@@ -35,7 +38,7 @@ DEFINITION_FACT = "definition changed"
 SWITCHED_OFF_SINCE = f"switched off since {switches.describe_since(SWITCHED_OFF_AT)}"
 
 
-# The fixtures of `test_stack_apply` this module's tests request by name.
+# The fixtures of `tests/support/stack_apply.py` this module's tests request by name.
 agent_service_unit = base.agent_service_unit
 at_terminal = base.at_terminal
 core_files = base.core_files

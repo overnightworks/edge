@@ -7,13 +7,12 @@ import sys
 from dataclasses import dataclass
 
 import pytest
-from test_stack_apply import (
+from support.stack_apply import (
     DISABLED,
     ENABLED,
+    KEYCLOAK_ENABLED,
     PROBE_ENABLED,
     TWO_SETUPS,
-    ScriptedGit,
-    Setup,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     docker_group,
     home,  # noqa: F401 the fixture, requested by name below
@@ -32,8 +31,12 @@ from test_stack_apply import (
     write_fleet,
     writing_environment,
 )
-from test_stack_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
-from test_stack_plan_rows import (
+from support.stack_apply_fakes import (
+    ScriptedGit,
+    Setup,
+)
+from support.stack_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
+from support.stack_plan_rows import (
     DIGEST_A,
     DIGEST_B,
     KEYCLOAK,
@@ -201,6 +204,7 @@ def test_a_plan_that_only_cannot_read_the_realm_asks_nothing_and_refuses(
 
     assert exit_code == 1
     assert "Type yes" not in out
+    assert "the plan" not in out
     assert "realm skipped" in plain(out)
     assert lines_of(err) == [
         "error: realm: Keycloak could not be read; not checked "
@@ -208,6 +212,25 @@ def test_a_plan_that_only_cannot_read_the_realm_asks_nothing_and_refuses(
         "next: hal apply",
     ]
     assert scripted.changing_verbs() == ["run"]  # only the failed realm read
+
+
+@pytest.mark.usefixtures("realm_unit")
+def test_an_unreadable_realm_beside_another_change_is_skipped_after_the_one_yes(
+    switch,  # noqa: F811
+    repository,  # noqa: F811
+    scripted,  # noqa: F811
+):
+    write_fleet(repository, KEYCLOAK_ENABLED + ENABLED.removeprefix("services:\n"))
+    scripted.failing_verb = "run"
+
+    exit_code, out, err = switch()
+
+    assert exit_code == 1
+    assert plain(out).count("Type yes") == 1
+    assert re.search(r"^  ! keycloak +realm skipped +the realm observer failed", plain(out), re.M)
+    assert "step-ca is on" not in out
+    assert lines_of(err) == ["error: partial, keycloak realm skipped", "next: hal apply"]
+    assert "up" in scripted.changing_verbs()
 
 
 def test_a_dirty_tree_is_a_failed_checkout_row_with_its_paths_then_one_error(

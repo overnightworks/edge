@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import support.throwaway_home as throwaway_home
 from git_support import (
     SOURCE,
     assert_quiet_run,
@@ -26,7 +27,10 @@ from git_support import (
 
 from hal import backup_commands, check_commands, cli, legal_commands, stack_commands
 from hal.grammar import Asks, Command, ExitCode
+from hal.output import is_verbose
 from hal.output.command import Verb
+
+home = throwaway_home.home
 
 LOCK = SOURCE.parent / "uv.lock"
 DEADLINE_SECONDS = 30
@@ -36,17 +40,6 @@ class Forbidden:
         raise AssertionError("stdin was touched")
 sys.stdin = Forbidden()
 """
-
-
-@pytest.fixture(autouse=True)
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway HOME and XDG_CONFIG_HOME: no global config but the one a test writes."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    monkeypatch.setenv("LC_ALL", "C")
-    return home
 
 
 def error_lines(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -247,6 +240,71 @@ def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypat
     assert captured.err.splitlines()[0] == "error: unrecognized arguments: --apply"
 
 
+def _seeing_verbose(monkeypatch, command, outcome=ExitCode.OK):
+    seen = []
+
+    def recording(arguments):
+        seen.append(is_verbose())
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    recorded = tuple(replace(one, run=recording) if one is command else one for one in cli.COMMANDS)
+    monkeypatch.setattr(cli, "COMMANDS", recorded)
+    return seen
+
+
+def _line(command, *flags):
+    return [command.name, *VALID_ARGUMENTS.get(command.name, ()), *flags]
+
+
+@pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
+def test_every_command_lists_the_verbose_flag_once_in_its_help(command, capsys):
+    with pytest.raises(SystemExit) as stop:
+        cli.main([command.name, "--help"])
+
+    assert stop.value.code == ExitCode.OK
+    assert capsys.readouterr().out.count("-v, --verbose") == 1
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"), [((), False), (("-v",), True), (("--verbose",), True)]
+)
+@pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
+def test_a_run_sees_the_verbose_flag_only_when_given(command, flags, expected, monkeypatch):
+    seen = _seeing_verbose(monkeypatch, command)
+
+    assert cli.main(_line(command, *flags)) == ExitCode.OK
+    assert seen == [expected]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code"),
+    [
+        (ExitCode.OK, ExitCode.OK),
+        (KeyboardInterrupt(), ExitCode.INTERRUPTED),
+        (RuntimeError("boom"), ExitCode.FAILURE),
+    ],
+    ids=["success", "ctrl-c", "unexpected-error"],
+)
+def test_verbose_ends_with_its_run_after_success_ctrl_c_or_an_error(outcome, code, monkeypatch):
+    command = cli.COMMANDS[-1]
+    seen = _seeing_verbose(monkeypatch, command, outcome)
+
+    assert cli.main(_line(command, "-v")) == code
+    assert seen == [True]
+    assert not is_verbose()
+
+
+def test_the_verbose_flag_before_the_command_is_a_usage_error_that_names_the_help(capsys):
+    with pytest.raises(SystemExit) as stop:
+        cli.main(["-v", "version"])
+
+    captured = capsys.readouterr()
+    assert (stop.value.code, captured.out) == (ExitCode.USAGE, "")
+    assert captured.err.splitlines()[1:] == ["next: hal --help"]
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -262,11 +320,11 @@ def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypat
 )
 def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     """G-11. The stack's commands are left out: run here they would reach the real system manager;
-    their stdin cells run on fakes in test_hal_stack_commands. The backup commands would reach the
-    real repository; their stdin cell runs on the fake host in test_backup_runner. `hal check` would
-    run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal` needs a key;
-    its stdin cell runs with its own arguments in test_hal_legal. `hal secrets` runs `--by-service`,
-    the one form that reads no home and starts no probe."""
+    their stdin cells run on fakes in tests/test_hal_stack_commands.py. The backup commands would
+    reach the real repository; their stdin cell runs on the fake host in test_backup_runner. `hal
+    check` would run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal`
+    needs a key; its stdin cell runs with its own arguments in test_hal_legal. `hal secrets` runs
+    `--by-service`, the one form that reads no home and starts no probe."""
     tree = main_checkout(tmp_path)
 
     arguments = VALID_ARGUMENTS.get(command.name, ())

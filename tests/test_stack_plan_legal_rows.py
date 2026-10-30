@@ -1,28 +1,23 @@
 """The rows `hal apply` prints for the legal pages and the appkit files: what each kind of change
 says, from typed fields."""
 
-from pathlib import Path
-
 import pytest
-from test_stack_plan_rows import (
-    REPOSITORY,
+from support.stack_plan_legal_rows import (
+    ALL_LABELS,
+    appkit_plan,
+    legal_plan,
+)
+from support.stack_plan_rows import (
     app_plan,
     groups_of,
     plain,
 )
 
 from hal.output import EVENT_WIDTH, Glyph, Row, counted, write_groups
-from hal.stack.appkit_step import TARGETS, AppkitPlan
+from hal.stack.appkit_step import AppkitPlan
 from hal.stack.apps import AppKind
 from hal.stack.legal_step import BlockChange, Change, LegalPlan, PageChange
 from hal.stack.plan_rows import LegalEvent, PlanEvent, PlanGroup
-
-
-def legal_plan(
-    changed: dict[str, PageChange], blocks: dict[str, tuple[BlockChange, ...]] | None = None
-) -> LegalPlan:
-    return LegalPlan(Path(), Path(), {page: "" for page in changed}, changed, blocks or {})
-
 
 SECTION = "legal/sections/agent-service/datenschutz.html"
 FRAME = "legal/frame/datenschutz.html"
@@ -113,16 +108,6 @@ def test_the_legal_rows_stand_first_in_a_group_without_a_heading() -> None:
     groups = groups_of(legal=legal_plan({"datenschutz": PageChange.NEW}))
 
     assert [group.heading for group in groups] == [None, *PlanGroup]
-
-
-def appkit_plan(changed_labels: tuple[str, ...] = (), stale: tuple[str, ...] = ()) -> AppkitPlan:
-    changed = tuple(
-        target.served(REPOSITORY, "0.5.0") for target in TARGETS if target.label in changed_labels
-    )
-    return AppkitPlan("0.5.0", Path(), REPOSITORY, changed, tuple(Path(path) for path in stale))
-
-
-ALL_LABELS = tuple(target.label for target in TARGETS)
 
 
 @pytest.mark.parametrize(

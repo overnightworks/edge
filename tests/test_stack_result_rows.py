@@ -91,6 +91,17 @@ def test_no_changes_is_said_as_such() -> None:
     assert row.fact.startswith("no changes · ")
 
 
+def test_a_skipped_realm_is_one_needs_you_row_with_the_reason_and_no_detail() -> None:
+    (row,) = result_rows(StepResult(skipped="the realm observer failed"))
+
+    assert (row.glyph, row.subject, str(row.event)) == (
+        Glyph.NEEDS_YOU,
+        "keycloak",
+        "realm skipped",
+    )
+    assert (row.fact, row.details) == ("the realm observer failed", ())
+
+
 @pytest.mark.parametrize("result", [StepResult(), StepResult(failure="realm: broke")])
 def test_a_step_that_applied_nothing_has_no_row(result: StepResult) -> None:
     assert result_rows(result) == ()

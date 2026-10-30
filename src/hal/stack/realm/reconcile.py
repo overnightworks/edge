@@ -397,6 +397,7 @@ class StepResult:
 
     applied: RealmApplied | None = None
     failure: str | None = None
+    skipped: str | None = None  # why Keycloak could not be read, so the step did not act
 
 
 @dataclass(frozen=True)
@@ -418,9 +419,7 @@ class Realm:
         if plan.settled:
             return StepResult()
         if plan.action is RealmAction.UNREADABLE:
-            return StepResult(
-                failure=f"realm: Keycloak could not be read; not checked ({plan.error})"
-            )
+            return StepResult(skipped=plan.error)
         progress = _Progress()
         try:
             return self._apply(plan, progress)
