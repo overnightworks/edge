@@ -20,6 +20,7 @@ from importlib import import_module, metadata
 from pathlib import Path
 from types import ModuleType
 
+from hal.output import Stream, write_line
 from hal.stack.unit_plans import Progress
 
 DISTRIBUTION = "overnightworks-appkit"
@@ -193,10 +194,10 @@ def main(arguments: list[str]) -> int:
     try:
         failure = plan_appkit(Path(repository)).write(Progress())
     except AppkitError as error:
-        print(f"appkit: cannot plan, {error}", file=sys.stderr)
+        write_line(f"appkit: cannot plan, {error}", stream=Stream.STDERR)
         return 2
     if failure:
-        print(failure, file=sys.stderr)
+        write_line(failure, stream=Stream.STDERR)
     return 1 if failure else 0
 
 
