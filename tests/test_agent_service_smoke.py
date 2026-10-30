@@ -213,12 +213,19 @@ def test_a_frame_of_the_wrong_shape_ends_the_run_as_broken_off(answer):
     assert out.splitlines()[-1] == "the run broke off: ValueError"
 
 
-def test_a_succeeded_run_with_files_exits_0():
-    succeeded = ("succeeded", {"text": "ok", "files": [{"name": "report.txt"}]})
+def test_a_succeeded_run_with_files_prints_no_line_for_them_and_exits_0():
+    files = [{"name": "report.txt", "content": "b2s="}]
+    succeeded = ("succeeded", {"text": "ok", "files": files})
 
-    exit_code, _, _ = drive(run_events(SUCCESS[0], succeeded))
+    exit_code, out, _ = drive(run_events(SUCCESS[0], succeeded))
 
     assert exit_code == 0
+    assert out.splitlines() == [
+        "event: run_started",
+        "served by anthropic/opus on route cli",
+        "event: succeeded",
+        "ok",
+    ]
 
 
 def test_a_succeeded_run_without_files_ends_the_run_as_broken_off():
