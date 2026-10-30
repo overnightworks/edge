@@ -327,6 +327,35 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     assert [urlsplit(page).netloc for page in terminal.opened] == ["github.com"]
 
 
+LOGIN_MANIFEST = """
+[[secret]]
+name = "agent-service/codex"
+kind = "tool-login"
+paths = ["~/.secrets/agent-service/codex/auth.json"]
+read_by = ["agent-service"]
+create = { run = ["codex", "login"], home = ["CODEX_HOME"], label = "Codex" }
+purpose = "the agent service runs Codex for the apps"
+"""
+
+
+def test_a_link_at_a_login_files_place_counts_as_missing_so_the_walk_signs_in_and_replaces_it_unfollowed(
+    home: Path, tmp_path: Path, terminal: FakeTerminal, boundaries: Boundaries, cli: FakeCli, use_manifest
+) -> None:
+    use_manifest(LOGIN_MANIFEST)
+    place = private_directory(home, ".secrets/agent-service/codex") / "auth.json"
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    place.symlink_to(victim)
+
+    end = run_wizard(home, boundaries)
+
+    assert end is WalkEnd.DONE
+    assert len(cli.calls) == 1
+    assert place.read_text() == cli.content
+    assert not place.is_symlink()
+    assert victim.read_text() == "untouched"
+
+
 @pytest.mark.parametrize("present", [False, True], ids=["absent", "present at 0644"])
 def test_setup_never_writes_the_passwords_step_ca_init_and_keycloak_go_live_generate(
     home: Path, use_manifest, boundaries: Boundaries, present: bool

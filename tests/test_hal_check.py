@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
+from workstation_support import RunnerWithCleanLogs, home_check
 
 from hal import check_commands, cli, exposure_rows
 from hal.exposure import inspection
@@ -511,3 +512,18 @@ def test_the_exposure_area_reads_no_cloudflare(fake_host, hosts_home, monkeypatc
 
     assert cli.main(["check", "exposure", "--allow-list", str(allow_list)]) == 0
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.usefixtures("quiet_pc")
+def test_a_link_at_a_declared_secret_file_is_a_finding_in_the_daily_report(clean_home):
+    place = clean_home / ".secrets" / "gitlab"
+    target = clean_home / "elsewhere"
+    target.write_text("FAKE-LINK-TARGET")
+    place.unlink()
+    place.symlink_to(target)
+
+    code = home_check(clean_home, RunnerWithCleanLogs())
+
+    assert code == 1
+    report = Layout(clean_home).check_report_file.read_text()
+    assert "| symlinked-folder | ~/.secrets/gitlab |" in report

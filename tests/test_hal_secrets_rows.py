@@ -105,6 +105,27 @@ def test_a_loose_file_is_a_row_with_its_command_bare_under_it(clean_home: Path, 
     ]
 
 
+def test_a_link_at_a_declared_file_is_missing_and_a_finding(clean_home: Path, run) -> None:
+    place = clean_home / ".secrets" / "gitlab"
+    target = clean_home / "elsewhere"
+    target.write_text(FAKE_SECRET_VALUE)
+    place.unlink()
+    place.symlink_to(target)
+
+    code, lines = run()
+
+    assert code == 1
+    assert lines == [
+        "  ! gitlab | missing | token",
+        "    https://gitlab.example/-/user_settings/personal_access_tokens",
+        "  ! gitlab | symlink | is a symlink",
+        "    rm ~/.secrets/gitlab",
+        "  ✓ 2 entries | present | gh checked: valid; the rest not checked",
+        f"! 2 findings · {HINT}",
+    ]
+    assert target.read_text() == FAKE_SECRET_VALUE
+
+
 def test_a_missing_entry_the_wizard_writes_points_at_hal_setup(add_entries, run) -> None:
     home = add_entries(entry("svc/password", kind="service-password"))
     (home / ".secrets" / "svc" / "password").unlink()
