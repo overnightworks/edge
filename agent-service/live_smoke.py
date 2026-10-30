@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The live smoke of the agent service in one command (docs/agent-service.md, "Proofs").
 
-    cd ~/git/edge && python3 agent-service/live_smoke.py
+    cd ~/srv/hal && python3 agent-service/live_smoke.py
 
 You sign in as yourself (the `songmaker` client's device grant, `device_sign_in.py`): open the
 printed link, sign in and confirm the code; the run then carries on by itself, nothing is pasted.

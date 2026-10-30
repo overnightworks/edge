@@ -77,7 +77,7 @@ class Layout:
     @property
     def live_checkout(self) -> Path:
         """The checkout the timers' units run hal from, wherever `hal setup` itself runs."""
-        return self.git / "edge"
+        return self.home / "srv" / "hal"
 
     @property
     def edge_tunnel_dir(self) -> Path:
