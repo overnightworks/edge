@@ -13,7 +13,7 @@ from edge_copy import GUARDED_COMPOSE_VERBS, expect, publish
 from step_ca_names import COMPOSE_FILE, INTERMEDIATE_IN_VOLUME, NOTHING_TO_CHANGE
 
 from hal.output import write_line
-from hal.stack import core
+from hal.stack import checkout, core
 
 FOLLOWER = "traefik-mcp"
 STEP_CA_PROFILE = "step-ca"
@@ -64,7 +64,8 @@ class TraefikMcpFollows:
             for name in core.followers(config)
             if STEP_CA_PROFILE in config["services"][name]["profiles"]
         )
-        binds = core.file_binds(config["services"][FOLLOWER], copy)
+        tracked = core.Checkout.read(config, checkout.Git(copy))
+        binds = core.file_binds(config["services"][FOLLOWER], tracked)
         expect(followers == (FOLLOWER,), f"P13a: the followers are {followers}")
         expect(binds == (copy / FOLLOWER_FILE,), f"P13a: traefik-mcp's file binds are {binds}")
         write_line(f"P13a held: followers {followers}, file bind {binds[0]}")

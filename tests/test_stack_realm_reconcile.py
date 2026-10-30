@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from support.stack_core import tracked
 
 from hal.stack import compose, core, switches
 from hal.stack import realm as realm_lines
@@ -67,8 +68,7 @@ def flow(*, top_level: bool = True, built_in: bool | None = None) -> dict:
 
 @dataclass
 class World:
-    """The repository, the record, the switches and every fake the step drives, with one log of
-    what they were asked in order."""
+    """The repository, the record, the switches and every fake the step drives, in one event log."""
 
     root: Path
     events: list[str] = field(default_factory=list)
@@ -87,14 +87,14 @@ class World:
         self.write_file("entrypoint.sh", "#!/bin/sh\n")
         self.record = core.Record(self.root / "state")
         self.marks = switches.Switches(self.root / "state")
+        self.checkout = tracked(self.config, self.root)
 
     def write_file(self, name: str, text: str) -> None:
         (self.root / "keycloak" / name).write_text(text)
 
     @property
     def config(self) -> dict:
-        """config-cli as compose.yaml resolves it: its entrypoint is a file bind, `keycloak/` a
-        directory bind."""
+        """config-cli as compose.yaml resolves it: an entrypoint file bind, a `keycloak/` tree."""
         binds = [
             {"type": "bind", "source": str(self.root / "keycloak/entrypoint.sh")},
             {"type": "bind", "source": str(self.root / "keycloak")},
@@ -144,7 +144,7 @@ class World:
     def plan(
         self, gate: core.Gate | None = core.Gate.ON, restart: RealmRestart | None = None
     ) -> RealmPlan:
-        return reconcile.plan_realm(self, self.record, self.config, self.root, gate, restart)
+        return reconcile.plan_realm(self, self.record, self.config, self.checkout, gate, restart)
 
     def run(self, plan: RealmPlan, mark: switches.Mark | None = None) -> reconcile.StepResult:
         realm = reconcile.Realm(
@@ -153,7 +153,7 @@ class World:
             self,
             self.record,
             self.config,
-            self.root,
+            self.checkout,
             self.marks,
             mark,
             clock=lambda: 0.0,
