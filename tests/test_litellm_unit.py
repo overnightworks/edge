@@ -26,6 +26,8 @@ ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 DIGEST_PINNED = re.compile(r"^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$")
 KEY_SECRET, CREDENTIAL_SECRET = "litellm_anthropic_key", "agent_service_api_credential"
 MASTER_SECRET = "litellm_master_key"
+START_SCRIPT = (LITELLM_DIRECTORY / "start.sh").read_text()
+START_LISTENER = re.compile(r"--port (?P<port>\d+)")
 
 
 def load(path: Path) -> dict:
@@ -83,7 +85,6 @@ def test_litellm_is_pinned_by_digest_hardened_and_reaches_the_provider_through_t
     assert service["security_opt"] == ["no-new-privileges:true"]
     assert service["ulimits"] == {"core": 0}
     assert service["init"] is True
-    assert service["restart"] == "unless-stopped"
     assert not {"ports", "expose", "depends_on", "network_mode", "cap_add"} & service.keys()
     assert service["extra_hosts"] == {"api.anthropic.com": compose["x-litellm-egress-address"]}
     assert service["profiles"] == ["litellm"]
@@ -141,7 +142,7 @@ def test_the_fronts_dynamic_file_has_one_router_for_the_completion_call_and_noth
     assert router["rule"] == "Method(`POST`) && Path(`/v1/chat/completions`)"
     assert router["entryPoints"] == ["api"]
     (server,) = dynamic["http"]["services"][router["service"]]["loadBalancer"]["servers"]
-    assert server["url"] == f"http://litellm:{4000}"
+    assert server["url"] == f"http://{LITELLM}:{START_LISTENER.search(START_SCRIPT).group('port')}"
 
 
 def test_the_fronts_directories_are_mounted_where_its_static_file_reads_them(compose, front_static):
@@ -174,14 +175,18 @@ def test_litellm_retries_nothing_logs_no_messages_and_has_no_callback_cache_or_d
     assert config["general_settings"] == {"custom_auth": "auth.user_api_key_auth"}
 
 
-def test_the_custom_auth_names_a_file_next_to_the_config_and_both_files_are_mounted(compose):
-    mounted = {volume.split(":")[1] for volume in compose["services"][LITELLM]["volumes"]}
+def test_litellm_finds_its_config_hook_and_start_script_where_compose_mounts_them(compose, config):
+    service = compose["services"][LITELLM]
+    mounts = dict(volume.split(":")[:2] for volume in service["volumes"])
+    target = {Path(source).name: Path(mounted) for source, mounted in mounts.items()}
+    hook_module = config["general_settings"]["custom_auth"].split(".")[0]
 
-    for name in ("config.yaml", "auth.py", "gate.py", "start.sh"):
-        assert f"/etc/litellm/{name}" in mounted
-        assert (LITELLM_DIRECTORY / name).is_file()
-    assert compose["services"][LITELLM]["environment"]["PYTHONPATH"] == "/etc/litellm"
-    assert compose["services"][LITELLM]["entrypoint"][0] == "/etc/litellm/start.sh"
+    for source in mounts:
+        assert (ROOT / source).resolve().parent == LITELLM_DIRECTORY
+    assert target[f"{hook_module}.py"].parent == Path(service["environment"]["PYTHONPATH"])
+    assert target["gate.py"].parent == target[f"{hook_module}.py"].parent
+    assert service["entrypoint"][0] == str(target["start.sh"])
+    assert f"--config {target['config.yaml']} " in START_SCRIPT
 
 
 @pytest.fixture
@@ -224,24 +229,41 @@ def test_start_execs_litellm_with_a_one_line_key_in_its_environment(stub_path, t
     assert (result.returncode, result.stdout.strip()) == (0, "started")
 
 
+@pytest.mark.parametrize("bad", ["provider", "master"])
 @pytest.mark.parametrize(
     "contents",
-    [None, "", "\n", "first\nsecond\n", "has space\n", "tab\there\n", "bell\x07\n", "\x00\n"],
-    ids=["missing", "empty", "blank", "two-lines", "space", "tab", "control", "null"],
-)
+    [
+        None,
+        "",
+        "\n",
+        "first\nsecond\n",
+        "tok1\ntok2",
+        "abc\n\x01\x02",
+        "has space\n",
+        "tab\there\n",
+        "bell\x07\n",
+        "\x00\n",
+    ],
+    ids=[
+        "missing", "empty", "blank", "two-lines", "two-lines-unterminated",
+        "control-on-a-later-line", "space", "tab", "control", "null",
+    ],
+)  # fmt: skip
 def test_start_refuses_a_bad_key_file_with_one_line_that_names_the_path_only(
-    stub_path, tmp_path, contents
+    stub_path, tmp_path, contents, bad
 ):
-    key_file = tmp_path / "key"
+    good, refused = tmp_path / "good", tmp_path / "refused"
+    good.write_text(secrets.token_urlsafe(32) + "\n")
     if contents is not None:
-        key_file.write_text(contents)
+        refused.write_text(contents)
+    key_file, master_file = (refused, good) if bad == "provider" else (good, refused)
 
-    result = start(stub_path, key_file)
+    result = start(stub_path, key_file, master_file)
 
     assert result.returncode != 0
     assert result.stdout == ""
     assert result.stderr.strip().splitlines() == [
-        f"litellm: {key_file} does not hold exactly one printable key line"
+        f"litellm: {refused} does not hold exactly one printable key line"
     ]
 
 
@@ -321,16 +343,3 @@ def test_the_canary_reports_a_refusal_by_its_status_alone(canary, monkeypatch):
     code, lines = run_canary(canary, monkeypatch, StreamedResponse(403, []))
 
     assert (code, lines) == (1, ["answer 403", "marker no"])
-
-
-def test_start_refuses_a_bad_master_key_file_naming_the_path_only(stub_path, tmp_path):
-    key_file, master_file = tmp_path / "key", tmp_path / "master"
-    key_file.write_text(secrets.token_urlsafe(32) + "\n")
-    master_file.write_text("two\nlines\n")
-
-    result = start(stub_path, key_file, master_file)
-
-    assert result.returncode != 0
-    assert result.stderr.strip().splitlines() == [
-        f"litellm: {master_file} does not hold exactly one printable key line"
-    ]

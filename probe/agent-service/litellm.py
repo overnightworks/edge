@@ -52,6 +52,11 @@ DEFAULT_APP, REMAPPED_APP, REMAPPED_MODEL = "songmaker", "hopin", "nonesuch"
 ACCESS_LINE = re.compile(r'"(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) \S+ HTTP/\d(?:\.\d)?"')
 ADMITTED_LINE = re.compile(r'"POST /v1/chat/completions HTTP/\d(?:\.\d)?" 200')
 ROUTE = "/v1/chat/completions"
+FRONT_STATIC = "/etc/traefik/traefik.yml"
+ENTRYPOINT_ADDRESS = re.compile(r'address:\s*"([^"]+)"')
+START_LISTENER = re.compile(r"--host (\S+) --port (\d+)")
+WILDCARD_HOSTS = ("", "0.0.0.0")
+WILDCARD_SOCKETS = ("0.0.0.0", "[::]")
 HTTP_PROGRAM = """\
 import json, socket, sys
 method, path, bearer, body = sys.argv[1:5]
@@ -78,6 +83,21 @@ subject = dict(pair[0] for pair in certificate["subject"])
 issuer = dict(pair[0] for pair in certificate["issuer"])
 print(json.dumps({"subject": subject["commonName"], "issuer": issuer["commonName"]}))
 """
+
+
+def mounted_file(service: dict, target: str) -> Path:
+    """The host file the resolved compose `service` binds at `target`."""
+    (source,) = [m["source"] for m in service["volumes"] if m["target"] == target]
+    return Path(source)
+
+
+def bound_names(declared: str) -> list[list[str]]:
+    """The TCP listener lists that bind the declared `host:port`, as `listeners_of` names them: the
+    declared address alone, or for an empty or any-address host one IPv4 or IPv6 wildcard."""
+    host, port = declared.rsplit(":", 1)
+    if host not in WILDCARD_HOSTS:
+        return [[declared]]
+    return [[f"{wildcard}:{port}"] for wildcard in WILDCARD_SOCKETS]
 
 
 class LitellmProbe(IssuerProbe):
@@ -383,19 +403,22 @@ class LitellmProbe(IssuerProbe):
 
     def cell_n1(self) -> None:
         resolved = json.loads(self.compose("config", "--format", "json").stdout)
-        declared = {
-            service: {n for n in resolved["services"][service]["networks"] if n in NEW_NETWORKS}
-            for service in (SERVICE, FRONT, LITELLM, GATEWAY)
-        }
-        for service, networks in declared.items():
+        members = (SERVICE, FRONT, LITELLM, GATEWAY)
+        for service in members:
             container = json.loads(self.run(["docker", "inspect", self.container(service)]).stdout)[
                 0
             ]
-            joined = {
-                n.removeprefix(f"{PROJECT}_") for n in container["NetworkSettings"]["Networks"]
+            joined = set(container["NetworkSettings"]["Networks"])
+            wanted = {
+                resolved["networks"][key]["name"]
+                for key in resolved["services"][service]["networks"]
             }
-            expect(joined >= networks, f"N1: {service} is on {sorted(joined)}")
+            expect(joined == wanted, f"N1: {service} is on {sorted(joined)}, not {sorted(wanted)}")
             expect(not container["HostConfig"]["PortBindings"], f"N1: {service} publishes a port")
+        declared = {
+            service: {n for n in resolved["services"][service]["networks"] if n in NEW_NETWORKS}
+            for service in members
+        }
         expect(
             declared[FRONT] == {"litellm-api", "litellm-backend"}, f"N1: front {declared[FRONT]}"
         )
@@ -421,16 +444,23 @@ class LitellmProbe(IssuerProbe):
         return found["Name"].removeprefix("/")
 
     def cells_listeners(self) -> None:
-        addresses = re.findall(r'address:\s*"([^"]+)"', self.static_file.read_text())
+        addresses = ENTRYPOINT_ADDRESS.findall(self.static_file.read_text())
         gateway_listeners(self, GATEWAY, addresses)
         self.hold(
             "L1", f"the gateway listens on {', '.join(addresses)}/tcp and holds no UDP socket"
         )
+        resolved = json.loads(self.compose("config", "--format", "json").stdout)["services"]
+        front_static = mounted_file(resolved[FRONT], FRONT_STATIC).read_text()
+        start = mounted_file(resolved[LITELLM], resolved[LITELLM]["entrypoint"][0]).read_text()
+        (front_address,) = ENTRYPOINT_ADDRESS.findall(front_static)
+        declared = {FRONT: front_address, LITELLM: ":".join(START_LISTENER.search(start).groups())}
         for cell, service in (("L2", FRONT), ("L3", LITELLM)):
             found = listeners_of(self, service)
-            ports = {name.rsplit(":", 1)[1] for name in found["tcp"]}
-            expect(ports == {"4000"} and found["udp"] == [], f"{cell}: {found}")
-            self.hold(cell, f"{service} listens on :4000/tcp only")
+            expect(
+                found["tcp"] in bound_names(declared[service]) and found["udp"] == [],
+                f"{cell}: {service} declares {declared[service]} and listens on {found}",
+            )
+            self.hold(cell, f"{service} declares {declared[service]} and listens on {found['tcp']}")
 
     def cells_r1_r2(self) -> None:
         for cell, name in (("R1", PROVIDER_HOST), ("R2", ISSUER_HOST)):

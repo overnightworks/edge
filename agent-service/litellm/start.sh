@@ -4,7 +4,7 @@
 # one line that names the path only; a key never reaches argv or a log.
 set -eu
 read_key() {
-  if [ ! -f "$1" ] || [ "$(wc -l < "$1")" -gt 1 ] || ! grep -Eq '^[!-~]+$' "$1"; then
+  if [ ! -f "$1" ] || [ "$(grep -c '' "$1")" -ne 1 ] || LC_ALL=C grep -Evq '^[!-~]+$' "$1"; then
     echo "litellm: $1 does not hold exactly one printable key line" >&2
     exit 1
   fi

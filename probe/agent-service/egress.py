@@ -7,18 +7,18 @@ the real `agent-service` of compose.yaml, in a throwaway compose project of thei
 
 Measured teardown: 2 s (K 50 s, CAP 1780 s).
 
-The stack runs from a copy of compose.yaml and of the gateway's static file with the egress
-network moved to a free /24 of its own (the gateway's address and the subject's `extra_hosts`
-follow through the anchors), so it never collides with the live stack's `edge_egress`
-(172.31.252.0/24). E3-E5 and E10 are observed through the packet windows of capture.py, each with a
-control; a window that dropped a frame, held a frame it could not decode, or in which the control
-did not show, is NOT DRIVEN and fails the run. The service target runs the image of the pull
-request's compose.yaml with a dummy login in the scratch HOME (never a real token) and adds E11 and
-E14. The probe always removes its containers and networks, and never touches the live stack: the
-project name is its own and is set on every command, its copy of compose.yaml names the fixed
-`hal_*` networks `<project>_...` (edge_copy.py), and every call that starts or removes something
-resolves only the project's networks first (P26). Needs an existing, empty, writable --scratch
-directory. Exit 0: every cell held, 1: a cell failed or was not driven.
+The stack runs from a copy of compose.yaml and of the gateway's static file with each network that
+pins the gateway's address (`egress`, `litellm-egress`; edge_copy.GATEWAY_NETWORKS) moved to a free
+/24 of its own (the gateway's addresses and the `extra_hosts` follow through the anchors), so it
+never collides with the live stack's. E3-E5 and E10 are observed through the packet windows of
+capture.py, each with a control; a window that dropped a frame, held a frame it could not decode,
+or in which the control did not show, is NOT DRIVEN and fails the run. The service target runs the
+image of the pull request's compose.yaml with a dummy login in the scratch HOME (never a real
+token) and adds E11 and E14. The probe always removes its containers and networks, and never
+touches the live stack: the project name is its own and is set on every command, its copy of
+compose.yaml names the fixed `hal_*` networks `<project>_...` (edge_copy.py), and every call that
+starts or removes something resolves only the project's networks first (P26). Needs an existing,
+empty, writable --scratch directory. Exit 0: every cell held, 1: a cell failed or was not driven.
 
 The subject runs the `Client` class below: the driver sends its source to `python -I -` inside
 the container, so the client needs nothing but the standard library of the pinned image.

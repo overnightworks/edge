@@ -19,6 +19,8 @@ async def user_api_key_auth(request: Request, api_key: str) -> UserAPIKeyAuth:
         path=request.url.path,
         query=request.url.query,
         authorization=request.headers.get("authorization"),
+        content_types=request.headers.getlist("content-type"),
+        header_names=request.headers.keys(),
         body=await request.body(),
         credential_file=CREDENTIAL_FILE,
     )

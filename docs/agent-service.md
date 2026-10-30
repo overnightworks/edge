@@ -215,8 +215,10 @@ has no `[api]` table.
   `POST /v1/chat/completions` (`agent-service/litellm/front/`); every other method and path ends in
   the front itself, so LiteLLM's own unauthenticated routes are unreachable. LiteLLM's hook
   (`agent-service/litellm/auth.py`, deciding in `gate.py`) allows that one route with the service
-  credential as bearer, no query string and exactly the body keys `model`, `messages` and
-  `tools`, which agent-runtime's one posting function sends. LiteLLM has no database and no limiter and
+  credential as bearer, no query string, the body sent as exactly `application/json` (LiteLLM also
+  parses form bodies), no `x-litellm-` header (LiteLLM reads per-request retries and timeouts from
+  them) and exactly the body keys `model`, `messages` and `tools`, which agent-runtime's one posting
+  function sends. LiteLLM has no database and no limiter and
   messages are not logged; it needs a master key to boot, a third file secret that no client
   holds, so its admin routes stay closed.
 - **What stays reachable.** The front sees every message and the service credential in memory; a
@@ -224,8 +226,8 @@ has no `[api]` table.
   route has no concurrency cap until agent-runtime#634. LiteLLM reaches only the front and, through
   the gateway's `litellm` entrypoint, the provider's name.
 - **A change reaches LiteLLM only through a recreate** of its container: `config.yaml` (model
-  remapping included), `auth.py`, `gate.py` and `start.sh` are read once at start, and the two
-  secrets are files mounted at create time.
+  remapping included), `auth.py`, `gate.py` and `start.sh` are read once at start, and the three
+  secrets (provider key, master key and service credential) are files mounted at create time.
 - **Proof:** `probe/agent-service/litellm.py` runs the whole path on a fake-only stack (its
   docstring gives the command line): the fake Anthropic and a fake issuer sit on `internet`, made
   internal, and the probe refuses to start otherwise. Re-run it for every LiteLLM, Traefik or Docker

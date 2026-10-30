@@ -39,6 +39,8 @@ def request(gate, credential_file, key, **changes):
         "path": PATH,
         "query": "",
         "authorization": f"Bearer {key}",
+        "content_types": ["application/json"],
+        "header_names": ["host", "authorization", "content-type", "content-length"],
         "body": json.dumps(GOOD_BODY).encode(),
         "credential_file": credential_file,
     }
@@ -87,10 +89,47 @@ def test_a_missing_or_malformed_bearer_is_refused(gate, credential_file, key, au
     assert not request(gate, credential_file, key, authorization=header).allowed
 
 
-@pytest.mark.parametrize("wrong", ["{key}x", "x{key}", "{key}".swapcase(), "other"])
+@pytest.mark.parametrize("wrong", ["{key}x", "x{key}", "swapcase", "other"])
 def test_a_wrong_bearer_is_refused(gate, credential_file, key, wrong):
-    token = wrong.replace("{key}", key)
+    token = key.swapcase() if wrong == "swapcase" else wrong.replace("{key}", key)
     assert not request(gate, credential_file, key, authorization=f"Bearer {token}").allowed
+
+
+@pytest.mark.parametrize(
+    "content_types",
+    [
+        [],
+        ["application/json", "application/json"],
+        ["application/x-www-form-urlencoded"],
+        ["multipart/form-data; boundary=x"],
+        ["text/plain"],
+        ["application/json; charset=utf-8"],
+        ["Application/JSON"],
+        [" application/json"],
+        ["application/json, application/x-www-form-urlencoded"],
+    ],
+)
+def test_a_valid_json_body_not_sent_as_exactly_one_application_json_is_refused(
+    gate, credential_file, key, content_types
+):
+    assert not request(gate, credential_file, key, content_types=content_types).allowed
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "x-litellm-num-retries",
+        "x-litellm-timeout",
+        "x-litellm-stream-timeout",
+        "X-LiteLLM-Num-Retries",
+        "X-LITELLM-TIMEOUT",
+        "x-LiteLLM-stream-timeout",
+        "x-litellm-api-key",
+    ],
+)
+def test_any_x_litellm_header_in_any_letter_case_is_refused(gate, credential_file, key, header):
+    names = ["host", "authorization", "content-type", header]
+    assert not request(gate, credential_file, key, header_names=names).allowed
 
 
 @pytest.mark.parametrize(
@@ -119,7 +158,19 @@ def test_a_body_without_one_of_the_three_keys_is_refused(gate, credential_file, 
     assert not request(gate, credential_file, key, body=body).allowed
 
 
-@pytest.mark.parametrize("body", [b"", b"{", b"[]", b'"x"', b"null", b"\xff"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"",
+        b"{",
+        b"[]",
+        b'"x"',
+        b"null",
+        b"\xff",
+        b"[" * 100_000,
+        json.dumps(GOOD_BODY).encode("utf-16"),
+    ],
+)
 def test_a_body_that_is_no_json_object_is_refused(gate, credential_file, key, body):
     assert not request(gate, credential_file, key, body=body).allowed
 
@@ -136,6 +187,16 @@ def test_a_body_that_is_no_json_object_is_refused(gate, credential_file, key, bo
         '{"shared_key": 1}',
         '{"shared_key": "{key}", "other": "x"}',
         '{"app_keys": {"songmaker": "{key}"}}',
+        '{"shared_key": "{key}", "app_keys": []}',
+        '{"shared_key": "{key}", "app_keys": "x"}',
+        '{"shared_key": "{key}", "app_keys": null}',
+        '{"shared_key": "{key}", "app_keys": {"songmaker": ""}}',
+        '{"shared_key": "{key}", "app_keys": {"songmaker": {"nested": "x"}}}',
+        '{"shared_key": "{key}", "shared_key": "{key}"}',
+        '{"shared_key": "{key}", "app_keys": {"songmaker": "x", "songmaker": "y"}}',
+        '{"shared_key": " {key}"}',
+        '{"shared_key": "bad\\nkey"}',
+        '{"shared_key": "key=middle"}',
     ],
 )
 def test_a_missing_or_malformed_credential_refuses_everything(gate, tmp_path, key, contents):

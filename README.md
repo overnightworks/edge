@@ -106,5 +106,6 @@ root is `external/`, the probes that prove each service on a throwaway stack are
 
 ## Checks
 
-`.github/workflows/ci.yml` names each CI step by what it proves; none of them starts containers. The
-shared gate `quality / verdict` follows (see `AGENTS.md`, "Checks").
+`.github/workflows/ci.yml` names each CI step by what it proves. Only the job `front` starts
+containers: the pinned front of LiteLLM against a stand-in. The shared gate `quality / verdict`
+follows (see `AGENTS.md`, "Checks").
