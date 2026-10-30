@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from hal.workstation import system_step
-from hal.workstation.system_step import PlaybookRun
+from hal.workstation.system_step import PlaybookFinished, PlaybookRun, PlaybookUnfinished
 from workstation_support import StubSudo
 
 COUNTS = system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 3, "failed": 0, "unreachable": 0})
@@ -19,22 +19,54 @@ FAILED_RESULT = system_step.EVENT_MARK + json.dumps({"event": "result", "status"
 UNREACHABLE_RESULT = system_step.EVENT_MARK + json.dumps({"event": "result", "status": "unreachable", "msg": "no route"})
 
 
+def counts_event(**counts: object) -> str:
+    return system_step.EVENT_MARK + json.dumps({"event": "counts", **counts})
+
+
+MALFORMED_COUNTS = [
+    counts_event(changed=0, failed=0.5, unreachable=0),
+    counts_event(changed=0, failed=False, unreachable=0),
+    counts_event(changed=0, failed="0", unreachable=0),
+    counts_event(changed=-1, failed=0, unreachable=0),
+    system_step.EVENT_MARK + '{"event": "counts", "changed": 0, "failed": 1e309, "unreachable": 0}',
+    system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 0, "failed": 0}),
+]
+
+
 @pytest.mark.parametrize(
     ("returncode", "events", "expected"),
     [
-        (0, [COUNTS], PlaybookRun(True, 3)),
-        (2, [FAILED_RESULT, FAILED_COUNTS], PlaybookRun(False, 1, "names no `tunnel:`; nothing was written")),
-        (4, [UNREACHABLE_RESULT, UNREACHABLE_COUNTS], PlaybookRun(False, 0, "no route")),
-        (0, [FAILED_RESULT, COUNTS, COUNTS], PlaybookRun(False, 0)),
-        (0, [], PlaybookRun(False, 0)),
-        (0, [system_step.EVENT_MARK + json.dumps({"event": "task"}), COUNTS], PlaybookRun(False, 0)),
-        (0, [system_step.EVENT_MARK + "not json", COUNTS], PlaybookRun(False, 0)),
-        (1, [COUNTS], PlaybookRun(False, 3)),
+        (0, [COUNTS], PlaybookFinished(3)),
+        (2, [FAILED_RESULT, FAILED_COUNTS], PlaybookUnfinished("names no `tunnel:`; nothing was written")),
+        (4, [UNREACHABLE_RESULT, UNREACHABLE_COUNTS], PlaybookUnfinished("no route")),
+        (0, [FAILED_RESULT, COUNTS, COUNTS], PlaybookUnfinished()),
+        (0, [], PlaybookUnfinished()),
+        (0, [system_step.EVENT_MARK + json.dumps({"event": "task"}), COUNTS], PlaybookUnfinished()),
+        (0, [system_step.EVENT_MARK + "not json", COUNTS], PlaybookUnfinished()),
+        (1, [COUNTS], PlaybookUnfinished()),
+        (0, [FAILED_RESULT, COUNTS], PlaybookFinished(3)),
+        *[(0, [event], PlaybookUnfinished()) for event in MALFORMED_COUNTS],
     ],
-    ids=["clean counts", "failed task", "unreachable", "two counts events", "no counts event", "unknown event", "unreadable event", "nonzero exit"],
+    ids=[
+        "clean counts",
+        "failed task",
+        "unreachable",
+        "two counts events",
+        "no counts event",
+        "unknown event",
+        "unreadable event",
+        "nonzero exit",
+        "rescued failure",
+        "float count",
+        "bool count",
+        "string count",
+        "negative count",
+        "count beyond float range",
+        "missing count",
+    ],
 )
-def test_a_run_succeeds_only_with_exit_0_and_one_counts_event_without_failures(returncode: int, events: list[str], expected: PlaybookRun) -> None:
-    """Rule 4 and rule 7: a root run that cannot be read as finished never counts as done."""
+def test_a_run_finishes_only_with_exit_0_and_one_counts_event_without_failures(returncode: int, events: list[str], expected: PlaybookRun) -> None:
+    """Rule 4 and rule 7: a root run that cannot be read as finished never counts as done, and a handled message is no cause."""
     assert system_step.read_events(returncode, events) == expected
 
 
@@ -56,7 +88,7 @@ def test_the_runner_shows_ansibles_output_and_reads_its_events(tmp_path: Path, s
 
     run = system_step.run_playbook_as_root([str(playbook)])
 
-    assert run == PlaybookRun(True, 3)
+    assert run == PlaybookFinished(3)
     assert capfd.readouterr().out == "TASK [Write edge files]\n"
 
 
@@ -101,7 +133,7 @@ def test_sudo_forgets_the_ticket_after_a_failing_play(tmp_path: Path, stub_sudo:
 
     run = system_step.run_playbook_as_root([str(playbook)])
 
-    assert not run.succeeded
+    assert isinstance(run, PlaybookUnfinished)
     assert stub_sudo.calls()[-1][0] == "-k"
 
 

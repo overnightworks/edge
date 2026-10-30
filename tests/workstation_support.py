@@ -422,7 +422,9 @@ class FakePlaybook:
         changed = 0 if self.applied else 1
         if self.succeeds and "--check" not in argv:
             self.applied = True
-        return system_step.PlaybookRun(self.succeeds, changed, self.failure)
+        if not self.succeeds:
+            return system_step.PlaybookUnfinished(self.failure)
+        return system_step.PlaybookFinished(changed)
 
 
 @dataclass

@@ -69,22 +69,36 @@ class TaskStatus(Enum):
 
 
 @dataclass(frozen=True)
-class PlaybookRun:
-    succeeded: bool
+class PlaybookFinished:
     changed: int
-    failure: str = ""
 
 
+@dataclass(frozen=True)
+class PlaybookUnfinished:
+    """A run that did not finish; `reason` is empty unless the play itself failed, then it is the message of its last failed result."""
+
+    reason: str = ""
+
+
+PlaybookRun = PlaybookFinished | PlaybookUnfinished
 PlaybookRunner = Callable[[Sequence[str]], PlaybookRun]
 
 
-def read_events(returncode: int, event_lines: Sequence[str]) -> PlaybookRun:
-    """A run succeeded when Ansible exited 0 and the callback reported exactly one count without a failed or unreachable host.
+def _count(event: dict[str, object], name: str) -> int:
+    count = event[name]
+    if type(count) is not int or count < 0:
+        raise ValueError(f"{name} is no count")
+    return count
 
-    `failure` is the message of the last failed or unreachable result: inside a rescue it is the rescue's own failure that ended the play.
-    An event that is no known event is a run that did not finish.
+
+def read_events(returncode: int, event_lines: Sequence[str]) -> PlaybookRun:
+    """A run finished when Ansible exited 0 and the callback reported exactly one count without a failed or unreachable host.
+
+    The reason is the message of the last failed or unreachable result, given only when the counts name a failed or unreachable host:
+    inside a rescue it is the rescue's own failure that ended the play, and a rescued failure is no cause.
+    An event that is no known event, or a count that is no non-negative integer, is a run that did not finish.
     """
-    failure = ""
+    message = ""
     counts: list[tuple[int, int, int]] = []
     for line in event_lines:
         try:
@@ -92,15 +106,17 @@ def read_events(returncode: int, event_lines: Sequence[str]) -> PlaybookRun:
             match EventKind(event["event"]):
                 case EventKind.RESULT:
                     TaskStatus(event["status"])
-                    failure = str(event["msg"])
+                    message = str(event["msg"])
                 case EventKind.COUNTS:
-                    counts.append((int(event["changed"]), int(event["failed"]), int(event["unreachable"])))
+                    counts.append((_count(event, "changed"), _count(event, "failed"), _count(event, "unreachable")))
         except (ValueError, KeyError, TypeError):
-            return PlaybookRun(False, 0)
+            return PlaybookUnfinished()
     if len(counts) != 1:
-        return PlaybookRun(False, 0)
+        return PlaybookUnfinished()
     changed, failed, unreachable = counts[0]
-    return PlaybookRun(returncode == 0 and failed == 0 and unreachable == 0, changed, failure)
+    if failed or unreachable:
+        return PlaybookUnfinished(message)
+    return PlaybookFinished(changed) if returncode == 0 else PlaybookUnfinished()
 
 
 def _forget_the_sudo_ticket() -> None:
@@ -195,16 +211,18 @@ class SystemStep:
         """At a terminal, Ansible's check mode asks for sudo once and shows the diff; without what it needs nothing is read."""
         if self.needs_first():
             return CheckState.NOT_CHECKED
-        if not (run := self._run_playbook(check=True)).succeeded:
-            raise StepFailed(run.failure or "Ansible's check did not finish · its output above says why")
-        if run.changed:
-            return CheckState.WOULD_CHANGE
-        return CheckState.UNCHANGED
+        match self._run_playbook(check=True):
+            case PlaybookUnfinished(reason):
+                raise StepFailed(reason or "Ansible's check did not finish · its output above says why")
+            case PlaybookFinished(changed):
+                return CheckState.WOULD_CHANGE if changed else CheckState.UNCHANGED
 
     def apply(self) -> Applied:
-        if not (run := self._run_playbook(check=False)).succeeded:
-            raise StepFailed(run.failure or "Ansible did not finish · its output above says why")
-        return Applied.CHANGED if run.changed else Applied.UNCHANGED
+        match self._run_playbook(check=False):
+            case PlaybookUnfinished(reason):
+                raise StepFailed(reason or "Ansible did not finish · its output above says why")
+            case PlaybookFinished(changed):
+                return Applied.CHANGED if changed else Applied.UNCHANGED
 
     def _run_playbook(self, check: bool) -> PlaybookRun:
         argv = [
