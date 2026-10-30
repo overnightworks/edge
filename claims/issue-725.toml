@@ -1,8 +1,0 @@
-claim_id = "439b40b97d1b4972a3d8f22b152c00de"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "418fe91dab6b997c7ceca762bc98bcdb1d98fb7c"
-branch = "claude/issue-725-agent-runtime-0-11-0-protocol-4"
-scope = ["agent-service/image/requirements.txt", "agent-service/smoke.py", "compose.yaml", "docs/agent-service.md", "probe/agent-service/refusals.py", "tests/test_agent_service_smoke.py"]
-opened_commit = "bbe0a7175435cfe3bd48f9e3549e0829d6a9a0ab"
-whole_reason = "The lock, the compose tag, the smoke and its tests switch to protocol 4 together; a state of main with a protocol-3 smoke against the 0.11.0 lock is wrong."
