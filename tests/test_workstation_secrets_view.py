@@ -357,7 +357,7 @@ def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path:
     run_hal_secrets(home, probe, now=NOW)
 
     output = report_of(home)
-    for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder"):
+    for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder", "symlinked-file"):
         assert findings_of(output, rule) == {}
     assert not [name for name in findings_of(output, "missing") if name.startswith(("step-ca/", "keycloak/"))]
 

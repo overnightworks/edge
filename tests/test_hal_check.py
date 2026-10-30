@@ -515,7 +515,7 @@ def test_the_exposure_area_reads_no_cloudflare(fake_host, hosts_home, monkeypatc
 
 
 @pytest.mark.usefixtures("quiet_pc")
-def test_a_link_at_a_declared_secret_file_is_a_finding_in_the_daily_report(clean_home):
+def test_a_link_at_a_declared_secret_file_is_a_finding_in_the_daily_report(clean_home, capsys):
     place = clean_home / ".secrets" / "gitlab"
     target = clean_home / "elsewhere"
     target.write_text("FAKE-LINK-TARGET")
@@ -526,4 +526,5 @@ def test_a_link_at_a_declared_secret_file_is_a_finding_in_the_daily_report(clean
 
     assert code == 1
     report = Layout(clean_home).check_report_file.read_text()
-    assert "| symlinked-folder | ~/.secrets/gitlab |" in report
+    assert "| symlinked-file | ~/.secrets/gitlab |" in report
+    assert "A secret file is a link" in capsys.readouterr().out

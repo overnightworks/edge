@@ -39,7 +39,7 @@ Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Re
 | `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `job-failed`, `systemd-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
 | `hook` | `hooks-path`, `hook-file`, `quality`, `mise`, `engines` | `hidden-hook` |
-| `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
+| `secrets` | `loose-mode`, `symlinked-folder`, `symlinked-file`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
 | `exposure` | `reachable-beyond-loopback` (Veröffentlichung oder Listener jenseits von Loopback, ein Fund je Prozess oder Container), `routing-name-unusable` (`routed-without-edge-name`, `invalid-edge-name`, `duplicate-edge-name`) | – |
 
@@ -294,7 +294,7 @@ den sein Besitzer nicht lesen, betreten oder beschreiben kann („closed-folder�
 was darin liegt, ist „unknown“), ein Symlink
 auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn durch
 den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt), ein Symlink
-an der Stelle eines Eintrags unter `~/.secrets` (er zählt als fehlend; „symlinked-folder“; die
+an der Stelle eines Eintrags unter `~/.secrets` (er zählt als fehlend; „symlinked-file“; die
 Empfehlung entfernt mit `rm` nur den Link und lässt sein Ziel unangetastet) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
 `<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der

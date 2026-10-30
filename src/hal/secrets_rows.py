@@ -64,6 +64,7 @@ EVENTS = {
     FindingRule.UNKNOWN_FILE: Event.UNKNOWN,
     FindingRule.LOOSE_MODE: Event.TOO_OPEN,
     FindingRule.SYMLINKED_FOLDER: Event.SYMLINK,
+    FindingRule.SYMLINKED_FILE: Event.SYMLINK,
     FindingRule.NOT_A_FOLDER: Event.NOT_A_FOLDER,
     FindingRule.CLOSED_FOLDER: Event.CLOSED,
     FindingRule.REVOCATION_UNCONFIRMED: Event.RETIRED,
@@ -75,6 +76,7 @@ TREE_RULES = frozenset(
         FindingRule.UNKNOWN_FILE,
         FindingRule.LOOSE_MODE,
         FindingRule.SYMLINKED_FOLDER,
+        FindingRule.SYMLINKED_FILE,
         FindingRule.NOT_A_FOLDER,
         FindingRule.CLOSED_FOLDER,
     }

@@ -273,6 +273,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "hidden-hook"): RuleReport(NOTE, "A repo's own commit step is hidden.", area_note="a repo's own commit step is hidden"),
     ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", SECRETS_VIEW, resolved="A secret is no longer readable by others."),
     ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", SECRETS_VIEW, resolved="A secret no longer sits behind a link."),
+    ("secrets", FindingRule.SYMLINKED_FILE.value): RuleReport(ACTION, "A secret file is a link.", SECRETS_VIEW, resolved="A secret file is no longer a link."),
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
         ACTION, "A retired key is not yet confirmed as revoked.", SECRETS_VIEW, resolved="A retired key is confirmed as revoked."
     ),
