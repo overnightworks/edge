@@ -353,10 +353,12 @@ def write_child_configuration(
     tree: Path,
     tools: Path,
     fake_check_exit: int | None,
-    guards: tuple[bool, bool, bool, tuple[str, int] | None],
+    resolver_stub: bool,
+    real_ready_prober: bool,
+    ready_hangs: bool,
+    connect_attempt: tuple[str, int] | None,
 ) -> None:
     """The settings `CHILD_PROGRAM` reads from `child.json`."""
-    resolver_stub, real_ready_prober, ready_hangs, connect_attempt = guards
     (scratch / "child.json").write_text(
         json.dumps(
             {
@@ -428,7 +430,10 @@ def terminal(home, fake_tofu, live_checkout, tmp_path):
             tree=tree or live_checkout,
             tools=fake_tofu.directory,
             fake_check_exit=None if real_check else check_exit,
-            guards=(resolver_stub, real_ready_prober, ready_hangs, connect_attempt),
+            resolver_stub=resolver_stub,
+            real_ready_prober=real_ready_prober,
+            ready_hangs=ready_hangs,
+            connect_attempt=connect_attempt,
         )
         process = subprocess.Popen(
             [sys.executable, "-c", CHILD_PROGRAM, str(scratch / "child.json")],

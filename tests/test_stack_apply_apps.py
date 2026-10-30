@@ -52,7 +52,7 @@ from support.stack_plan_rows import plain
 
 from hal.stack import apps, barrier, checkout, compose, emergency, switches
 
-(app_world) = (stack_apply_apps_support.app_world)  # fmt: skip
+app_world = stack_apply_apps_support.app_world
 
 APP = "github: {{org: overnightworks}}\nservices:\n  hopin:\n    repo: {repo}\n    run: {run}\n"
 

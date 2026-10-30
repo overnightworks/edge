@@ -45,7 +45,7 @@ from support.stack_external import (
     home,  # noqa: F401 the fixture, requested by name below
     live_checkout,  # noqa: F401 the fixture, requested by name below
 )
-from support.stack_global_stop import FakeSystemd, hosts_asked  # noqa: F401 the fixture, used by `fakes`
+from support.stack_global_stop import hosts_asked  # noqa: F401 the fixture, used by `fakes`
 
 from hal import cli, stack_commands
 from hal.grammar import ExitCode
