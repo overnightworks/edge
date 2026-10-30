@@ -1,0 +1,7 @@
+claim_id = "0ca939193bd34839b03e25aaa3262889"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "a1a0b7bfe76d82d77ef35c5a999c7b7e5f937c39"
+branch = "docs/terms-frame"
+scope = ["docs/design/keycloak-theme.html"]
+opened_commit = "00563c25d02715582652a4c6f1c3a01715ef8eae"
