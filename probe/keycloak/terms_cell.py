@@ -1,4 +1,4 @@
-"""Cells P1 and TC1-TC6 of probe.py (#775): the hallucinai realm asks every new account once to
+"""Cells P1 and TC1-TC6 of probe.py: the hallucinai realm asks every new account once to
 accept the terms of use. A user made through the admin API carries the pending action, the page
 shows the theme's words in the browser's language, Decline signs nobody in and removes the stored
 time, Accept stores the time only the admin sees, and the other apps ask no second time. Users
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlsplit
 
+import yaml
 from test_rp import token_claims
 
 REALM = "hallucinai"
@@ -32,7 +33,6 @@ MESSAGES = REPOSITORY / "keycloak" / "themes" / "hallucinai" / "login" / "messag
 AUTH_PATH = f"/realms/{REALM}/protocol/openid-connect/auth"
 TOKEN_PATH = f"/realms/{REALM}/protocol/openid-connect/token"
 ACCOUNT_PATH = f"/realms/{REALM}/account"
-LANGUAGES = (("de", "de"), ("", "en"))  # the browser's Accept-Language and the page's locale
 
 
 class Answer(Protocol):
@@ -144,13 +144,18 @@ def page_of(html: str) -> TermsPage:
     return page
 
 
-def declared_priority() -> int:
-    found = re.search(
-        rf"alias: {ACTION}\n(?:    .*\n)*?    priority: (\d+)\n", REALM_FILE.read_text()
-    )
-    if not found:
-        raise ValueError(f"realm.yaml declares no priority for {ACTION}")
-    return int(found.group(1))
+def declared_realm() -> dict[str, Any]:
+    return yaml.safe_load(REALM_FILE.read_text())
+
+
+def declared_action() -> dict[str, Any]:
+    (action,) = (a for a in declared_realm()["requiredActions"] if a["alias"] == ACTION)
+    return action
+
+
+def languages() -> tuple[tuple[str, str], ...]:
+    """The browser's Accept-Language and the page's locale; no language gets the default locale."""
+    return (("de", "de"), ("", declared_realm()["defaultLocale"]))
 
 
 @dataclass(frozen=True)
@@ -275,13 +280,11 @@ class TermsCell:
 
     def action_is_default(self) -> None:
         action = self.admin.get(f"/{REALM}/authentication/required-actions/{ACTION}")
-        priority = declared_priority()
-        self.expect(
-            action["enabled"] and action["defaultAction"] and action["priority"] == priority,
-            f"{ACTION} is enabled {action['enabled']}, default {action['defaultAction']}, "
-            f"priority {action['priority']} (declared {priority})",
-        )
-        self.probe.held("P1", f"{ACTION} is enabled, default and priority {priority} as declared")
+        fields = ("enabled", "defaultAction", "priority")
+        observed = {field: action[field] for field in fields}
+        declared = {field: declared_action()[field] for field in fields}
+        self.expect(observed == declared, f"{ACTION} is {observed}, declared {declared}")
+        self.probe.held("P1", f"{ACTION} is {observed} as declared")
 
     def new_user(self) -> User:
         password = self.probe.keep_secret(f"{USERNAME} password", secrets.token_urlsafe(16))
@@ -317,7 +320,7 @@ class TermsCell:
 
     def page_shows_the_theme_words(self, user: User) -> None:
         kept = []
-        for language, locale in LANGUAGES:
+        for language, locale in languages():
             step = self.asks(user, language)
             title, text = message(locale, "termsTitle"), message(locale, "termsText")
             page, wanted = page_of(step.page.text), page_of(f"<div>{text}</div><form>")
@@ -364,10 +367,12 @@ class TermsCell:
             },
         )
         shown = [account.status, ATTRIBUTE in account.text]
+        console = account.json() if account.status == 200 else {}
         carried = [ATTRIBUTE in token_claims(tokens[kind]) for kind in ("id_token", "access_token")]
         self.expect(
-            shown == [200, False] and not any(carried),
-            f"the account REST answered {shown[0]}, time shown {shown[1]}; tokens carry {carried}",
+            console.get("username") == user.name and shown == [200, False] and not any(carried),
+            f"the account REST answered {shown[0]} for {console.get('username')!r}, "
+            f"time shown {shown[1]}; tokens carry {carried}",
         )
         known = self.user(user)
         forged = {**known.get("attributes", {}), ATTRIBUTE: [str(started + 1000)]}
@@ -382,13 +387,16 @@ class TermsCell:
 
     def asked_again_forgets_the_old_time(self, user: User, first: int) -> None:
         self.ask_again(user)
-        self.answer(self.asks(user), "cancel")
+        step = self.asks(user)
+        kept = self.stored_time(user)
+        self.answer(step, "cancel")
         forgotten = self.stored_time(user)
         self.answer(self.asks(user), "accept")
         later = self.stored_time(user)
         self.expect(
-            forgotten is None and later is not None and later >= first,
-            f"the old time {first}: after decline {forgotten}, after accept {later}",
+            kept == first and forgotten is None and later is not None and later >= first,
+            f"the old time {first}: while asked {kept}, after decline {forgotten}, "
+            f"after accept {later}",
         )
         self.probe.held("TC6", f"asked again, decline removed {first} and accept stored {later}")
 
