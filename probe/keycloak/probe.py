@@ -64,6 +64,7 @@ from hal.output import write_line  # noqa: E402
 from hal.stack import compose, core, switches  # noqa: E402
 from hal.stack.realm import OBSERVER_SERVICE, change_lines, new_digest_key, reconcile  # noqa: E402
 from hal.stack.realm.observe import CLIENT, FLOW, GROUP, IMPORT_CHECKSUM, Inventory  # noqa: E402
+from hal.stack.result_rows import SNAPSHOT_SHORT_ID, result_rows  # noqa: E402
 
 PROJECT = "edge-kc-probe"
 KEYCLOAK_PROFILE = "keycloak"
@@ -198,7 +199,7 @@ STEP_CONSOLE_MAPPER = "probe-step-mapper"  # a console change proof 12's step re
 STEP_CONSOLE_GROUP = "probe-step-console-group"  # console objects proof 12's step leaves alone
 STEP_CONSOLE_CLIENT = "probe-step-console-client"
 STEP_CONSOLE_FLOW = "probe-step-console-flow"
-ONLY_IN_KEYCLOAK = "realm: only in Keycloak: "
+ONLY_IN_KEYCLOAK = "only in Keycloak: "
 COMPOSE_PREFIX_LENGTH = 6  # docker compose --project-directory D --file F
 RESIDUE_OF_THE_APPLY = [
     # the service account a console turned off and the apply turns back on: Keycloak drops its
@@ -2386,10 +2387,10 @@ class Probe:
         stand = RealmStepStand.at(self.stack)
         realm = stand.realm
         inventory = realm.observer.inventory()
-        lines = realm.only_in_keycloak_lines(inventory)
+        leftovers = realm.leftovers(inventory)
         expect(
-            lines[0] == reconcile.NOTHING_ONLY_IN_KEYCLOAK,
-            f"a fresh import lists {[line for line in lines if ONLY_IN_KEYCLOAK in line]}",
+            leftovers.files_read and not leftovers.found and not leftovers.absent,
+            f"a fresh import lists {leftovers.found} and misses {leftovers.absent}",
         )
         missing = [
             f"{realm_name} {kind} {identity}"
@@ -2414,10 +2415,8 @@ class Probe:
             == [BACKUP_ASKED, RESTORE_TEST_ASKED],
             f"it asked {stand.asked}",
         )
-        first_snapshot = re.search(r"pre-apply snapshot (\S+)", baseline.lines[0])
-        expect(first_snapshot is not None, f"no snapshot named in {baseline.lines[0]!r}")
         expect(
-            stand.asked[-1] == [*RESTORE_TEST_ASKED, first_snapshot[1]],
+            stand.asked[-1] == [*RESTORE_TEST_ASKED, baseline.applied.snapshot],
             f"the restore test was asked {stand.asked[-1]}, not for the snapshot just made",
         )
         expect(stand.plan().settled, "the step is planned again right after it finished")
@@ -2444,10 +2443,11 @@ class Probe:
         console_made = self.make_console_objects()
         applied = stand.apply()
         expect(applied.failure is None, f"the changed realm step failed: {applied.failure}")
-        for line in applied.lines:
+        (row,) = result_rows(applied)
+        for line in (row.fact, *row.details):
             self.say(f"realm step: {line}")
-        self.step_lists_what_is_only_in_keycloak(applied.lines, console_made)
-        changes = [line for line in applied.lines if not line.startswith("realm: ")]
+        self.step_lists_what_is_only_in_keycloak(applied, row.details, console_made)
+        changes = [line for line in row.details if not line.startswith(ONLY_IN_KEYCLOAK)]
         expected = [
             f"{REALM}: addition group /{STEP_GROUP} (0 members)",
             f"{REALM}: change realm {REALM} accessTokenLifespan: "
@@ -2496,13 +2496,11 @@ class Probe:
         expect(
             reset.failure is None, f"the step that resets a console change failed: {reset.failure}"
         )
-        snapshot = re.search(r"pre-apply snapshot (\S+)", reset.lines[0])
-        expect(snapshot is not None, f"no snapshot named in {reset.lines[0]!r}")
         removal = (
             f"{REALM}: removal protocol mapper scope groups/{STEP_CONSOLE_MAPPER}: "
-            f"reset to the file, pre-apply snapshot {snapshot[1]}"
+            f"reset to the file, pre-apply snapshot {reset.applied.snapshot[:SNAPSHOT_SHORT_ID]}"
         )
-        expect(removal in reset.lines, f"the reset is not listed as such: {reset.lines}")
+        expect(removal in result_rows(reset)[0].details, "the reset is not listed as such")
         self.held(
             "12d",
             "a console mapper on the scope groups is listed as reset to the file with "
@@ -2567,9 +2565,11 @@ class Probe:
             f"{ONLY_IN_KEYCLOAK}{REALM} {FLOW.name} {STEP_CONSOLE_FLOW}",
         ]
 
-    def step_lists_what_is_only_in_keycloak(self, lines: tuple[str, ...], made: list[str]) -> None:
+    def step_lists_what_is_only_in_keycloak(
+        self, step: reconcile.StepResult, lines: tuple[str, ...], made: list[str]
+    ) -> None:
         """#248, cells 1 and 3: the console objects survive the step, are listed and have no
-        removal line; one line names the kinds that cannot be read."""
+        removal line; the step carries the kinds that cannot be read."""
         missing = [line for line in made if line not in lines]
         expect(not missing, f"the step does not list {missing}")
         made_names = (STEP_CONSOLE_GROUP, STEP_CONSOLE_CLIENT, STEP_CONSOLE_FLOW)
@@ -2585,10 +2585,10 @@ class Probe:
             ),
             "a console object did not survive the step",
         )
-        unread = [line for line in lines if line.startswith(reconcile.NOT_READ)]
+        unread = step.applied.leftovers.unread
         expect(
-            len(unread) == 1 and "defaultGroups" in unread[0] and "workflows" in unread[0],
-            f"the unread kinds are said as {unread}",
+            "defaultGroups" in unread and "workflows" in unread,
+            f"the unread kinds are {unread}",
         )
 
     def the_observer_door(self, admin: Admin) -> None:
