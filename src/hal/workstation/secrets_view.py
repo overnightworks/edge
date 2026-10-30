@@ -34,7 +34,7 @@ from pathlib import Path, PurePosixPath
 from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
 from hal.workstation.manifest_fields import ManifestError, fail, string, strings
-from hal.workstation.report import findings_count, markdown_table, write_state_file
+from hal.workstation.report import findings_count, markdown_table
 from hal.workstation.secrets_create import CreateCommand, left_by_cli, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
 
@@ -768,7 +768,7 @@ def places(entry: SecretEntry) -> str:
     return f"{listed}; {entry.elsewhere}" if entry.elsewhere else listed
 
 
-def _status_row(status: SecretStatus) -> list[str]:
+def status_row(status: SecretStatus) -> list[str]:
     entry = status.entry
     if entry.retired:
         revocation = REVOCATION_CONFIRMED.format(date=entry.revocation_confirmed) if entry.revocation_confirmed else REVOCATION_UNCONFIRMED
@@ -780,7 +780,7 @@ def _status_row(status: SecretStatus) -> list[str]:
 def render_view(view: SecretsView, now: datetime) -> str:
     header = f"# {command(Verb.SECRETS)} {now:%d.%m.%Y %H:%M} | {findings_count(len(view.findings))}"
     status_headers = ["Name", "Kind", "File", "Check", "Expiry", "Place", "Recreate"]
-    lines = [header, "", *markdown_table(status_headers, [_status_row(status) for status in view.statuses]), ""]
+    lines = [header, "", *markdown_table(status_headers, [status_row(status) for status in view.statuses]), ""]
     if view.findings:
         rows = [[f.rule.value, f.subject, f.detail, f.recommendation] for f in view.findings]
         lines += ["## Findings", "", *markdown_table(["Rule", "Subject", "Finding", "Fix"], rows), ""]
@@ -820,13 +820,6 @@ def inspect(layout: Layout, probe: ExitCodeProbe, now: datetime) -> tuple[Secret
     manifest = load_manifest(MANIFEST_PATH)
     view = build_view(manifest, observe(manifest, layout, probe))
     return view, render_view(view, now)
-
-
-def show(layout: Layout, probe: ExitCodeProbe, now: datetime) -> int:
-    view, report = inspect(layout, probe, now)
-    write_state_file(layout.home, layout.secrets_report_file, report)
-    sys.stdout.write(report)
-    return 1 if view.findings else 0
 
 
 def show_by_service() -> int:

@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 import pytest
 from workstation_secrets_support import never_run, run_wizard
 from workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
-from support.workstation_secrets_report import cells_of, findings_of
+from support.workstation_secrets_report import cells_of, findings_of, report_of
 
 
 from hal.workstation import secrets_view
@@ -61,7 +61,7 @@ def finding_subjects(output: str) -> set[str]:
 def test_a_complete_home_lists_every_entry_and_writes_only_its_report(clean_home: Path, probe: FakeProbe, capsys) -> None:
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     rows = rows_of(output)
     assert code == 0
     assert set(rows) == {"gitlab", "cloudflared", "gh"}
@@ -71,7 +71,6 @@ def test_a_complete_home_lists_every_entry_and_writes_only_its_report(clean_home
     }
     assert all(row[4] == "expiry unknown" for row in rows.values())
     assert "No findings." in output
-    assert Layout(clean_home).secrets_report_file.read_text() == output
     assert probe.calls == [("gh", "auth", "status")]
 
 
@@ -83,7 +82,8 @@ def test_no_secret_value_reaches_the_output_or_the_report_and_no_secret_file_is_
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out + Layout(clean_home).secrets_report_file.read_text()
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + report_of(clean_home)
     assert code == 0
     assert not any(part in output for part in FAKE_SECRET_VALUE.split())
     assert all(stat.S_IMODE(path.stat().st_mode) == 0 for path in unreadable)
@@ -186,7 +186,7 @@ def test_each_entry_shows_present_missing_or_unknown_and_every_gap_is_a_finding(
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     rows = rows_of(output)
     assert code == 1
     assert {name: rows[name][2] for name in expected} == expected
@@ -210,7 +210,7 @@ def test_only_github_is_verified_and_its_outcome_is_shown(
 
     run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     assert rows_of(output)["gh"][3] == shown
     verification_findings = {rule: findings_of(output, rule) for rule in ("verification-failed", "verification-unreachable")}
     assert {rule for rule, found in verification_findings.items() if "gh" in found} == ({finding} if finding else set())
@@ -224,7 +224,7 @@ def test_a_file_no_entry_names_is_reported_as_unknown_and_left_alone(clean_home:
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     assert code == 1
     unknown = findings_of(output, "unknown-file")
     assert list(unknown) == ["~/.secrets/latest", "~/.secrets/old-backup.env"]
@@ -240,10 +240,9 @@ def test_a_newline_or_pipe_in_a_file_name_keeps_the_table_intact(clean_home: Pat
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     assert code == 1
     assert list(findings_of(output, "unknown-file")) == ["~/.secrets/weird\\nna\\|me.txt"]
-    assert Layout(clean_home).secrets_report_file.read_text() == output
 
 
 def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: FakeProbe, capsys) -> None:
@@ -254,7 +253,7 @@ def test_loose_modes_are_reported_and_never_changed(clean_home: Path, probe: Fak
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    loose = findings_of(capsys.readouterr().out, "loose-mode")
+    loose = findings_of(report_of(clean_home), "loose-mode")
     assert code == 1
     assert loose == {
         "~/.secrets/gitlab": ["has mode 644; at most 600 allowed", "`chmod 600 ~/.secrets/gitlab`"],
@@ -309,7 +308,7 @@ def test_a_file_is_judged_against_the_mode_its_entry_declares(
 
     run_hal_secrets(home, probe, now=NOW)
 
-    assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
+    assert findings_of(report_of(home), "loose-mode") == loose_findings
 
 
 @pytest.mark.parametrize(
@@ -333,7 +332,7 @@ def test_only_the_pending_root_certificate_may_be_0644(
 
     run_hal_secrets(home, probe, now=NOW)
 
-    assert findings_of(capsys.readouterr().out, "loose-mode") == loose_findings
+    assert findings_of(report_of(home), "loose-mode") == loose_findings
 
 
 def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path: Path, probe: FakeProbe, capsys) -> None:
@@ -357,7 +356,7 @@ def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path:
 
     run_hal_secrets(home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(home)
     for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder"):
         assert findings_of(output, rule) == {}
     assert not [name for name in findings_of(output, "missing") if name.startswith(("step-ca/", "keycloak/"))]
@@ -369,7 +368,7 @@ def test_a_home_where_neither_unit_is_set_up_has_no_finding_about_their_files(tm
     (home / ".secrets").mkdir(parents=True, mode=0o700)
 
     run_hal_secrets(home, probe, now=NOW)
-    subjects = finding_subjects(capsys.readouterr().out)
+    subjects = finding_subjects(report_of(home))
     assert not {subject for subject in subjects if subject.startswith(("step-ca/", "keycloak/", "~/.secrets/step-ca", "~/.secrets/keycloak"))}
 
 
@@ -386,7 +385,7 @@ def test_a_retired_entry_shows_its_revoke_link_and_whether_its_revocation_is_con
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     retired = rows_of(output)["github/token"]
     assert code == (1 if findings else 0)
     assert retired[2:5] == ["retired", shown, "expiry unknown"]
@@ -433,7 +432,7 @@ def test_known_non_secret_files_show_their_kind_and_a_missing_optional_entry_is_
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     rows = rows_of(output)
     assert code == 0
     assert {name: rows[name][1:3] for name in ("secrets/README", "runtime.env", "ppk")} == {
@@ -532,7 +531,7 @@ def test_a_folder_on_the_way_that_cannot_hold_a_secret_is_a_finding_with_its_fix
 
     code = run_hal_secrets(clean_home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(clean_home)
     assert code == 1
     assert findings_of(output, rule) == {place: finding}
     assert rows_of(output)["cloudflared"][2] == held
@@ -581,7 +580,7 @@ def test_the_files_edge_external_leaves_under_opentofu_are_known_and_only_a_loos
 
     code = run_hal_secrets(home, probe, now=NOW)
 
-    output = capsys.readouterr().out
+    output = report_of(home)
     assert findings_of(output, "unknown-file") == {}
     assert findings_of(output, "loose-mode") == loose_findings
     assert code == (1 if loose_findings else 0)
@@ -595,7 +594,7 @@ def test_a_stray_copy_of_the_state_beside_it_is_still_an_unknown_file(tmp_path: 
     stray.write_text("plaintext state")
     stray.chmod(0o600)
     run_hal_secrets(home, probe, now=NOW)
-    assert set(findings_of(capsys.readouterr().out, "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
+    assert set(findings_of(report_of(home), "unknown-file")) == {"~/.secrets/opentofu/fleet.tfstate.json"}
 
 
 def test_every_file_the_packaged_manifest_plants_is_known(tmp_path: Path, probe: FakeProbe, capsys) -> None:
@@ -603,7 +602,7 @@ def test_every_file_the_packaged_manifest_plants_is_known(tmp_path: Path, probe:
     home = tmp_path / "home"
     plant_secrets(home)
     run_hal_secrets(home, probe, now=NOW)
-    assert findings_of(capsys.readouterr().out, "unknown-file") == {}
+    assert findings_of(report_of(home), "unknown-file") == {}
 
 
 def never_asked(*_: object) -> object:
@@ -621,7 +620,8 @@ def test_a_missing_restic_password_is_named_with_its_recreate_line_and_setup_nev
     operator_absent = Boundaries(Terminal(lambda: True, never_asked, never_asked, never_asked), never_asked, os.fsync, never_run)
 
     view_code = run_hal_secrets(home, probe, now=NOW)
-    view = capsys.readouterr().out
+    view = report_of(home)
+    capsys.readouterr()
     setup_end = run_wizard(home, operator_absent)
     setup = capsys.readouterr().out.splitlines()
 

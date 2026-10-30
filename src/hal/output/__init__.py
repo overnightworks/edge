@@ -1,6 +1,6 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
-to show, and the form of a row, a verdict, an error, the indented detail lines under a row and the
-`yes` that confirms an action.
+to show, and the form of a row, a verdict, an error, the indented detail lines under a row, an
+aligned table and the `yes` that confirms an action.
 `hal.output.command` owns the program name. It imports nothing else of this repository."""
 
 # ruff: noqa: T201 - this is the one output owner of the hal program
@@ -18,7 +18,7 @@ DETAIL_INDENT = "    "
 SUBJECT_WIDTH = 14
 EVENT_WIDTH = 14
 HEADING_THRESHOLD = 6
-"""From this many printed rows a plan shows its groups under headings."""
+"""From this many rows a view groups."""
 
 _RESET = "\x1b[0m"
 _DIM = "2"
@@ -186,6 +186,16 @@ def printable(text: str) -> str:
     )
 
 
+VOWELS = "aeiou"
+
+
+def _plural(word: str) -> str:
+    """`app` becomes `apps`, `entry` becomes `entries`, `day` becomes `days`."""
+    if word.endswith("y") and word[-2:-1] not in VOWELS:
+        return f"{word[:-1]}ies"
+    return f"{word}s"
+
+
 def counted(count: int, noun: StrEnum) -> str:
     """`1 app`, `3 apps`: the count before the label, which takes the plural when it is a `Noun`
     (after its first word) or a `TrailingNoun` (after its last)."""
@@ -193,9 +203,9 @@ def counted(count: int, noun: StrEnum) -> str:
     if count != 1:
         if isinstance(noun, Noun):
             first, separator, rest = text.partition(" ")
-            text = f"{first}s{separator}{rest}"
+            text = f"{_plural(first)}{separator}{rest}"
         elif isinstance(noun, TrailingNoun):
-            text = f"{text}s"
+            text = _plural(text)
     return f"{count} {text}"
 
 
@@ -229,6 +239,20 @@ def write_groups(groups: Sequence[Group]) -> None:
             print(_styled(printable(str(group.heading)), _BOLD, sys.stdout))
         for row in group.rows:
             write_row(row)
+
+
+def write_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    """The table on stdout: each cell escaped before it is padded, each column as wide as its widest
+    cell, two spaces apart, the last column unpadded; on a terminal the header is bold."""
+    lines = [[printable(cell) for cell in line] for line in (headers, *rows)]
+    widths = [max(len(line[column]) for line in lines) for column in range(len(headers))]
+    printed = [
+        "  ".join(cell.ljust(width) for cell, width in zip(line, widths, strict=True)).rstrip()
+        for line in lines
+    ]
+    print(_styled(printed[0], _BOLD, sys.stdout))
+    for line in printed[1:]:
+        print(line)
 
 
 def write_verdict(verdict: Verdict) -> None:
