@@ -53,6 +53,7 @@ from hal.workstation.secrets_view import (
     SecretFinding,
     SecretKind,
     TokenSource,
+    linked_place,
     load_manifest,
     presence,
     stat_matches,
@@ -273,13 +274,15 @@ def _private_directories(home: Path, directory: Path) -> None:
 _OWNER_SEARCH_BIT = 0o100
 
 
-def _store_refusal(layout: Layout, place: PurePosixPath, *, unless_unsearchable: bool = False) -> StoreRefused | None:
-    """Read-only, before a provider page is opened: what an existing directory on the way would refuse the store for.
+def _store_refusal(layout: Layout, entry: SecretEntry, *, unless_unsearchable: bool = False) -> StoreRefused | None:
+    """Read-only, before a provider page is opened: what an existing directory on the way, or a link at the place, would
+    refuse the store for. A login's rename replaces such a link unfollowed, so for a login only the directories count.
 
     With `unless_unsearchable`, a directory its owner cannot search (no owner x bit) ends the look with None: the walk
     cannot read below it, so it reports the entry as not checked instead of naming a refusal it cannot see through.
     """
-    for relative in _levels(layout.home, (layout.home / place).parent):
+    place = layout.home / entry.place
+    for relative in _levels(layout.home, place.parent):
         try:
             mode = (layout.home / relative).lstat().st_mode
         except FileNotFoundError:
@@ -288,7 +291,11 @@ def _store_refusal(layout: Layout, place: PurePosixPath, *, unless_unsearchable:
             if unless_unsearchable and stat.S_ISDIR(mode) and not mode & _OWNER_SEARCH_BIT:
                 return None
             return _refused_below(unfit)
-    return None
+    try:
+        linked = None if entry.create else linked_place(entry.place, place.lstat().st_mode)
+    except FileNotFoundError:
+        return None
+    return _refused_below(linked) if linked else None
 
 
 @contextlib.contextmanager
@@ -674,7 +681,7 @@ def _set_up(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: dat
     if not entry.written_by_setup:
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.BY_HAND, f"no wizard yet: {entry.renewal}")
         return Step.BY_HAND
-    if refusal := _store_refusal(layout, entry.place):
+    if refusal := _store_refusal(layout, entry):
         raise refusal
     if entry.source:
         stored = _set_up_token(entry, entry.source, layout, boundaries, now)
@@ -696,7 +703,7 @@ def _visit(entry: SecretEntry, layout: Layout, boundaries: Boundaries, now: date
             _write_entry_row(Glyph.UNCHANGED, entry.name, WizardEvent.SKIPPED, "optional")
         return None
     if found is Presence.UNKNOWN:
-        if entry.written_by_setup and (refusal := _store_refusal(layout, entry.place, unless_unsearchable=True)):
+        if entry.written_by_setup and (refusal := _store_refusal(layout, entry, unless_unsearchable=True)):
             raise EntryRefused(entry.name, refusal)
         _write_entry_row(Glyph.NEEDS_YOU, entry.name, WizardEvent.NOT_CHECKED, "its folder cannot be read")
         return Step.STILL_MISSING

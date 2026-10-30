@@ -293,7 +293,9 @@ Eintrag nennt („unknown“; bleibt unangetastet), und Rechte lockerer als
 den sein Besitzer nicht lesen, betreten oder beschreiben kann („closed-folder“;
 was darin liegt, ist „unknown“), ein Symlink
 auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn durch
-den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
+den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt), ein Symlink
+an der Stelle eines Eintrags unter `~/.secrets` (er zählt als fehlend; „symlinked-folder“; die
+Empfehlung entfernt mit `rm` nur den Link und lässt sein Ziel unangetastet) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
 `<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der
 der Assistent das Speichern verweigert. `hal` setzt nie Rechte und ersetzt nichts;

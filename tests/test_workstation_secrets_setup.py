@@ -481,6 +481,26 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets", "home/.secrets/cloudflare"}
 
 
+def test_a_link_at_a_token_place_is_refused_with_its_rm_before_any_page_opens_and_its_target_stays_untouched(
+    home: Path, tmp_path: Path, terminal: FakeTerminal, boundaries: Boundaries, capsys
+) -> None:
+    place = private_directory(home, ".secrets/cloudflare") / "read"
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    place.symlink_to(victim)
+    terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
+
+    end = run_wizard(home, boundaries)
+
+    captured = capsys.readouterr()
+    assert end is WalkEnd.STORE_REFUSED
+    assert [line for line in squeezed(captured.out) if "not stored" in line] == ["✗ cloudflare/read not stored ~/.secrets/cloudflare/read is a symlink"]
+    assert captured.err.splitlines() == ["error: setup stopped at secrets · nothing stored for cloudflare/read", "next: rm ~/.secrets/cloudflare/read"]
+    assert (terminal.opened, terminal.prompts) == ([], [])
+    assert place.is_symlink()
+    assert victim.read_text() == "untouched"
+
+
 def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retired_ones_are_left_alone(
     home: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:

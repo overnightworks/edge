@@ -126,6 +126,35 @@ def test_a_link_at_a_declared_file_is_missing_and_a_finding(clean_home: Path, ru
     assert target.read_text() == FAKE_SECRET_VALUE
 
 
+@pytest.mark.parametrize(
+    ("link", "code", "expected"),
+    [
+        (".config/gh", 0, [HEALTHY.format(count=3), f"✓ no findings · 3 entries · {HINT}"]),
+        (
+            ".secrets/stray-link",
+            1,
+            [
+                "  ! stray-link | unknown | not in the manifest",
+                "    add ~/.secrets/stray-link to the manifest or delete it",
+                HEALTHY.format(count=3),
+                f"! 1 finding · {HINT}",
+            ],
+        ),
+    ],
+    ids=["a stowed login outside ~/.secrets is present", "an undeclared link is only unknown"],
+)
+def test_a_link_that_is_no_declared_secret_place_is_no_symlink_finding(
+    clean_home: Path, run, link: str, code: int, expected: list[str]
+) -> None:
+    place = clean_home / link
+    target = clean_home / "elsewhere"
+    target.write_text(FAKE_SECRET_VALUE)
+    place.unlink(missing_ok=True)
+    place.symlink_to(target)
+
+    assert run() == (code, expected)
+
+
 def test_a_missing_entry_the_wizard_writes_points_at_hal_setup(add_entries, run) -> None:
     home = add_entries(entry("svc/password", kind="service-password"))
     (home / ".secrets" / "svc" / "password").unlink()

@@ -402,20 +402,15 @@ def scan_secrets_tree(layout: Layout) -> tuple[PathFact, ...]:
     return tuple(sorted(_lstat_from(layout.secrets_dir, layout.home), key=lambda fact: fact.relative))
 
 
-def _mode_at(layout: Layout, relative: PurePosixPath) -> int:
-    """The mode by stat; below ~/.secrets a link is not followed, since only the secret itself is present there."""
-    place = layout.home / relative
-    return place.stat(follow_symlinks=not place.is_relative_to(layout.secrets_dir)).st_mode
-
-
 def stat_matches(layout: Layout, pattern: PurePosixPath) -> tuple[PathFact, ...] | None:
-    """The paths a manifest pattern names, by stat, links below ~/.secrets left out; None when the filesystem or the tunnel config refuses to say."""
+    """The paths a pattern names by stat, a link below ~/.secrets left out; None when the filesystem or the tunnel config refuses to say."""
     try:
         pattern = with_tunnel_id(pattern)
         wildcard = _has_wildcard(pattern.name)
         names = sorted(os.listdir(layout.home / pattern.parent)) if wildcard else []
         matched = [pattern.parent / name for name in names if fnmatch.fnmatchcase(name, pattern.name)] if wildcard else [pattern]
-        facts = (PathFact(relative, _mode_at(layout, relative)) for relative in matched)
+        follow = not (layout.home / pattern).is_relative_to(layout.secrets_dir)
+        facts = (PathFact(relative, (layout.home / relative).stat(follow_symlinks=follow).st_mode) for relative in matched)
         return tuple(fact for fact in facts if not stat.S_ISLNK(fact.mode))
     except FileNotFoundError:
         return ()
@@ -636,7 +631,7 @@ def mode_fix(relative: PurePosixPath, allowed: int) -> str:
 
 
 def symlinked_folder_fix(relative: PurePosixPath) -> str:
-    """Moves the folder the link points to into the link's place; nothing is deleted but the link, and a link with no target leaves an empty folder."""
+    """Moves the folder the link points to into its place; only the link is deleted, and a link with no target leaves an empty folder."""
     place = _in_shell(relative)
     real_folder = f'if [ -e "$t" ]; then mv -T "$t" {place}; else mkdir {place}; fi'
     return f"`t=$(readlink -m {place}) && rm {place} && {real_folder} && chmod {LOOSEST_DIRECTORY_MODE:o} {place}`"
@@ -673,7 +668,8 @@ def _loose(relative: PurePosixPath, mode: int, declaring: tuple[SecretEntry, ...
     allowed = too_loose(mode, loosest)
     if allowed is None:
         return None
-    reason = next((f" ({entry.loosest_mode_reason})" for entry in declaring if entry.loosest_mode == allowed and entry.loosest_mode_reason), "")
+    reasons = [entry.loosest_mode_reason for entry in declaring if entry.loosest_mode == allowed and entry.loosest_mode_reason]
+    reason = f" ({reasons[0]})" if reasons else ""
     return _Flaw(f"has mode {stat.S_IMODE(mode):o}; at most {allowed:o} allowed{reason}", mode_fix(relative, allowed))
 
 
@@ -703,11 +699,15 @@ def unfit_folder(relative: PurePosixPath, mode: int) -> SecretFinding | None:
     return None
 
 
-def _file_finding(fact: PathFact, declaring: tuple[SecretEntry, ...]) -> SecretFinding | None:
-    """A link at a declared place is no secret, and `rm` takes away only the link; any other file is judged by its mode."""
-    if declaring and stat.S_ISLNK(fact.mode):
-        return _flaw_finding(FindingRule.SYMLINKED_FOLDER, fact.relative, _Flaw("is a symlink", f"`rm {_in_shell(fact.relative)}`"))
-    return _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, _loose(fact.relative, fact.mode, declaring))
+def linked_place(relative: PurePosixPath, mode: int) -> SecretFinding | None:
+    """A link at a declared place is no secret, and `rm` takes away only the link; None for any other file."""
+    linked = _Flaw("is a symlink", f"`rm {_in_shell(relative)}`") if stat.S_ISLNK(mode) else None
+    return _flaw_finding(FindingRule.SYMLINKED_FOLDER, relative, linked)
+
+
+def _file_finding(fact: PathFact, manifest: tuple[SecretEntry, ...]) -> SecretFinding | None:
+    linked = linked_place(fact.relative, fact.mode) if (declaring := _declaring_entries(fact.relative, manifest)) else None
+    return linked or _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, _loose(fact.relative, fact.mode, declaring))
 
 
 def _tree_findings(
@@ -716,7 +716,7 @@ def _tree_findings(
     """A folder or a place on the way to a manifest place is judged as a folder; any other path by its mode and the loosest one its entry declares."""
     for fact in tree:
         is_folder = stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns)
-        finding = unfit_folder(fact.relative, fact.mode) if is_folder else _file_finding(fact, _declaring_entries(fact.relative, manifest))
+        finding = unfit_folder(fact.relative, fact.mode) if is_folder else _file_finding(fact, manifest)
         if finding:
             yield finding
 
