@@ -26,6 +26,7 @@ from git_support import (
 
 from hal import backup_commands, check_commands, cli, legal_commands, stack_commands
 from hal.grammar import Asks, Command, ExitCode
+from hal.output import is_verbose
 from hal.output.command import Verb
 
 LOCK = SOURCE.parent / "uv.lock"
@@ -245,6 +246,72 @@ def test_no_command_accepts_apply_and_none_runs_on_it(command, capsys, monkeypat
     captured = capsys.readouterr()
     assert (stop.value.code, captured.out) == (ExitCode.USAGE, "")
     assert captured.err.splitlines()[0] == "error: unrecognized arguments: --apply"
+
+
+def _seeing_verbose(monkeypatch, command, outcome=ExitCode.OK):
+    """`command` replaced by one that records what the run sees and then ends as `outcome`."""
+    seen = []
+
+    def recording(arguments):
+        seen.append(is_verbose())
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+    recorded = tuple(replace(one, run=recording) if one is command else one for one in cli.COMMANDS)
+    monkeypatch.setattr(cli, "COMMANDS", recorded)
+    return seen
+
+
+def _line(command, *flags):
+    return [command.name, *VALID_ARGUMENTS.get(command.name, ()), *flags]
+
+
+@pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
+def test_every_command_lists_the_verbose_flag_once_in_its_help(command, capsys):
+    with pytest.raises(SystemExit) as stop:
+        cli.main([command.name, "--help"])
+
+    assert stop.value.code == ExitCode.OK
+    assert capsys.readouterr().out.count("-v, --verbose") == 1
+
+
+@pytest.mark.parametrize(
+    ("flags", "expected"), [((), False), (("-v",), True), (("--verbose",), True)]
+)
+@pytest.mark.parametrize("command", cli.COMMANDS, ids=lambda command: command.name)
+def test_a_run_sees_the_verbose_flag_only_when_given(command, flags, expected, monkeypatch):
+    seen = _seeing_verbose(monkeypatch, command)
+
+    assert cli.main(_line(command, *flags)) == ExitCode.OK
+    assert seen == [expected]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "code"),
+    [
+        (ExitCode.OK, ExitCode.OK),
+        (KeyboardInterrupt(), ExitCode.INTERRUPTED),
+        (RuntimeError("boom"), ExitCode.FAILURE),
+    ],
+    ids=["success", "ctrl-c", "unexpected-error"],
+)
+def test_a_run_after_a_verbose_run_sees_verbose_off(outcome, code, monkeypatch):
+    command = cli.COMMANDS[-1]
+    seen = _seeing_verbose(monkeypatch, command, outcome)
+
+    assert cli.main(_line(command, "-v")) == code
+    cli.main(_line(command))
+    assert seen == [True, False]
+
+
+def test_the_verbose_flag_before_the_command_is_a_usage_error_that_names_the_help(capsys):
+    with pytest.raises(SystemExit) as stop:
+        cli.main(["-v", "version"])
+
+    captured = capsys.readouterr()
+    assert (stop.value.code, captured.out) == (ExitCode.USAGE, "")
+    assert captured.err.splitlines()[1:] == ["next: hal --help"]
 
 
 @pytest.mark.parametrize(
