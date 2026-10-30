@@ -1,0 +1,7 @@
+claim_id = "5e0df2f76ead4b699380692e15e07a51"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "2dd396b97d819990d641b7fa079a97e998875ead"
+branch = "dependabot/images-9db2eaac70"
+scope = ["compose.yaml", "src/hal/backup/images/Dockerfile"]
+opened_commit = "bbcb8a08cee8b0aaea2944ecd7c155f9a7b319a2"
