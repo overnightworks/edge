@@ -580,6 +580,8 @@ class NewsOutcome:
     delivery: Delivery
     settled: bool
     """Whether the run counts as having told the operator, so the remembered findings may advance."""
+    told: bool
+    """Whether the news reached the operator once: the mail was delivered, or with no mail set up a popup was attempted. A failed popup beside a delivered mail does not make a caller resend the mail."""
 
 
 def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
@@ -598,14 +600,15 @@ def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozen
     desktop = _desktop_delivered(ctx, summary, notification_body(current, report_file))
     mail_outcome = _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, facts))
     set_up = [outcome for outcome in (desktop, mail_outcome) if outcome is not None]
-    return NewsOutcome(_delivery_of(desktop, mail_outcome), bool(set_up) and all(set_up))
+    told = mail_outcome if mail_outcome is not None else desktop is not None
+    return NewsOutcome(_delivery_of(desktop, mail_outcome), bool(set_up) and all(set_up), told)
 
 
 def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
     if not ctx.settings.notify:
-        return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True)
+        return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True, True)
     if not _is_news(current, previous):
-        return NewsOutcome(Delivery.NOTHING_NEW, True)
+        return NewsOutcome(Delivery.NOTHING_NEW, True, True)
     return _news_delivered(ctx, current, previous, facts)
 
 

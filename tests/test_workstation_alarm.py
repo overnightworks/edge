@@ -89,6 +89,60 @@ def test_a_mailed_finding_that_goes_is_mailed_as_done_once(alarm, runner, mail_s
     assert [RECOVERED in body for body in bodies(mail_stub)] == [False, True]
 
 
+def test_a_mailed_finding_absent_for_one_run_and_back_sends_no_mail(alarm, runner, mail_stub) -> None:
+    restarting_containers(runner, "presentator-live")
+    alarm()
+    alarm()
+    no_container_restarts(runner)
+    alarm()
+    restarting_containers(runner, "presentator-live")
+
+    alarm()
+    alarm()
+
+    assert len(mail_stub.sent) == 1
+
+
+def test_a_mailed_finding_absent_for_the_configured_runs_is_mailed_as_done_once(alarm, clean_home, runner, mail_stub) -> None:
+    write_hal_config(clean_home, "[alarm]\nruns = 3\n")
+    restarting_containers(runner, "presentator-live")
+    for _ in range(3):
+        alarm()
+    no_container_restarts(runner)
+
+    counts = []
+    for _ in range(4):
+        alarm()
+        counts.append(len(mail_stub.sent))
+
+    assert counts == [1, 1, 2, 2]
+    assert RECOVERED in bodies(mail_stub)[-1]
+
+
+def test_a_delivered_mail_is_not_sent_again_while_the_popup_keeps_failing(alarm, runner, mail_stub) -> None:
+    restarting_containers(runner, "presentator-live")
+    runner.notify_delivers = False
+
+    alarm()
+    alarm()
+    alarm()
+    alarm()
+
+    assert len(mail_stub.sent) == 1
+
+
+def test_the_daily_check_after_an_alarm_remembers_the_findings_of_other_areas(alarm, clean_home, runner, mail_stub) -> None:
+    (clean_home / ".secrets" / "gitlab").chmod(0o644)
+    home_check(clean_home, runner)
+    mails_after_daily_check = len(mail_stub.sent)
+    alarm()
+    alarm()
+
+    home_check(clean_home, runner)
+
+    assert (mails_after_daily_check, len(mail_stub.sent)) == (1, 1)
+
+
 def test_the_daily_check_after_an_alarm_mail_sends_nothing_new(alarm, clean_home, runner, mail_stub) -> None:
     restarting_containers(runner, "presentator-live")
     alarm()
@@ -175,11 +229,12 @@ def test_an_unknown_key_or_a_wrong_type_in_the_alarm_table_fails_loud_before_any
     assert not Layout(clean_home).check_findings_file.exists()
 
 
-def test_a_counter_file_that_hal_did_not_write_stops_the_run_without_a_mail(alarm, clean_home, runner, mail_stub, capsys) -> None:
+@pytest.mark.parametrize("content", ["[1, 2]", '{"seen": {"a": "x"}, "absent": {}}'])
+def test_a_counter_file_that_hal_did_not_write_stops_the_run_without_a_mail(alarm, clean_home, runner, mail_stub, capsys, content) -> None:
     restarting_containers(runner, "presentator-live")
     alarm()
     counter = next(Layout(clean_home).hal_state_dir.glob("alarm*"))
-    counter.write_text("[1, 2]")
+    counter.write_text(content)
 
     code = alarm()
 

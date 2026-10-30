@@ -760,7 +760,7 @@ weiterzulaufen. Die Datei enthält kein Geheimnis; das SMTP-Konto bleibt unter
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
+| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` und `hal alarm` ab |
 
 ### `[alarm]`
 
