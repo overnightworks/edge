@@ -3,5 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "b85f53d590e16ae600580fdda6010879856fd87f"
 branch = "claude/issue-796-secrets-view-symlink-not-present"
-scope = ["src/hal/workstation/secrets_view.py", "tests/test_workstation_secrets_view.py"]
+scope = ["src/hal/workstation/secrets_view.py", "tests/test_hal_check.py", "tests/test_hal_secrets_rows.py", "tests/test_workstation_secrets_setup.py"]
 opened_commit = "19271d6cf921226439a89f2406d21825b3c2f86e"
+whole_reason = "The one decision in the secrets view is proven at each surface that reads it (hal secrets, hal check, hal setup), whose tests live in their own modules because the view's own test module is at its size baseline."
