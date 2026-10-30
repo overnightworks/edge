@@ -536,6 +536,7 @@ class FindingRule(Enum):
     UNKNOWN_FILE = "unknown-file"
     LOOSE_MODE = "loose-mode"
     SYMLINKED_FOLDER = "symlinked-folder"
+    SYMLINKED_FILE = "symlinked-file"
     NOT_A_FOLDER = "not-a-folder"
     CLOSED_FOLDER = "closed-folder"
     REVOCATION_UNCONFIRMED = "revocation-unconfirmed"
@@ -701,8 +702,7 @@ def unfit_folder(relative: PurePosixPath, mode: int) -> SecretFinding | None:
 
 def linked_place(relative: PurePosixPath, mode: int) -> SecretFinding | None:
     """A link at a declared place is no secret, and `rm` takes away only the link; None for any other file."""
-    linked = _Flaw("is a symlink", f"`rm {_in_shell(relative)}`") if stat.S_ISLNK(mode) else None
-    return _flaw_finding(FindingRule.SYMLINKED_FOLDER, relative, linked)
+    return _flaw_finding(FindingRule.SYMLINKED_FILE, relative, _Flaw("is a symlink", f"`rm {_in_shell(relative)}`") if stat.S_ISLNK(mode) else None)
 
 
 def _file_finding(fact: PathFact, manifest: tuple[SecretEntry, ...]) -> SecretFinding | None:
