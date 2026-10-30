@@ -209,7 +209,7 @@ def diagnostic(severity: object = "error", summary: object = "boom", detail: obj
 
 
 def test_the_warning_of_a_real_empty_plan_is_read_with_its_summary_and_detail():
-    stream = tofu.read_plan_stream("\n".join(REAL_EMPTY_PLAN_WITH_WARNING))
+    stream = tofu.read_plan_stream("\n".join(REAL_EMPTY_PLAN_WITH_WARNING), {})
     assert stream.diagnostics == (
         tofu.Diagnostic(tofu.Severity.WARNING, "Check block assertion failed", "input differs"),
     )
@@ -217,20 +217,20 @@ def test_the_warning_of_a_real_empty_plan_is_read_with_its_summary_and_detail():
 
 
 def test_the_error_of_a_real_failed_plan_is_read_and_a_plan_with_changes_has_no_diagnostic():
-    failed = tofu.read_plan_stream("\n".join(REAL_FAILED_PLAN))
+    failed = tofu.read_plan_stream("\n".join(REAL_FAILED_PLAN), {})
     (error,) = failed.diagnostics
     assert (error.severity, error.summary) == (tofu.Severity.ERROR, "Invalid function argument")
     assert error.detail.startswith('Invalid value for "path" parameter')
-    assert tofu.read_plan_stream("\n".join(REAL_PLAN_WITH_CHANGES)).diagnostics == ()
+    assert tofu.read_plan_stream("\n".join(REAL_PLAN_WITH_CHANGES), {}).diagnostics == ()
 
 
 def test_a_line_that_is_not_a_json_object_is_kept_apart_and_other_types_are_ignored():
     output = "\n".join(
         ["panic: tofu crashed", "42", "", json.dumps({"type": "planned_change"}), "[1]"]
     )
-    stream = tofu.read_plan_stream(output)
+    stream = tofu.read_plan_stream(output, {})
     assert stream.diagnostics == ()
-    assert stream.unparsed == ("panic: tofu crashed", "42", "", "[1]")
+    assert stream.unparsed == ("panic: tofu crashed", "42", "[1]")
 
 
 @pytest.mark.parametrize(
@@ -248,12 +248,13 @@ def test_a_line_that_is_not_a_json_object_is_kept_apart_and_other_types_are_igno
 )
 def test_a_diagnostic_without_severity_or_summary_is_refused_not_guessed(broken):
     with pytest.raises(tofu.MalformedPlanStream):
-        tofu.read_plan_stream(stream_lines(diagnostic(), broken))
+        tofu.read_plan_stream(stream_lines(diagnostic(), broken), {})
 
 
 def test_a_missing_detail_reads_as_empty():
     stream = tofu.read_plan_stream(
-        stream_lines({"type": "diagnostic", "diagnostic": {"severity": "warning", "summary": "w"}})
+        stream_lines({"type": "diagnostic", "diagnostic": {"severity": "warning", "summary": "w"}}),
+        {},
     )
     assert stream.diagnostics == (tofu.Diagnostic(tofu.Severity.WARNING, "w", ""),)
 
@@ -265,7 +266,9 @@ def test_the_empty_plan_is_one_current_row():
 
 
 def test_a_warning_is_a_row_with_the_detail_lines_under_it():
-    stream = tofu.read_plan_stream(stream_lines(diagnostic("warning", "careful", "one\n\ntwo\n")))
+    stream = tofu.read_plan_stream(
+        stream_lines(diagnostic("warning", "careful", "one\n\ntwo\n")), {}
+    )
     assert publish_rows.warning_rows(stream, {}) == (
         Row(Glyph.NEEDS_YOU, SUBJECT, PublishEvent.WARNING, "careful", details=("one", "two")),
     )
@@ -277,7 +280,8 @@ def test_each_error_of_a_failed_plan_is_a_row_and_a_warning_is_not():
             diagnostic("error", "first", "why"),
             diagnostic("warning", "side note"),
             diagnostic("error", "second"),
-        )
+        ),
+        {},
     )
     assert publish_rows.failed_plan_rows(stream, {}) == (
         Row(Glyph.FAILED, SUBJECT, PublishEvent.NOT_PLANNED, "first", details=("why",)),
@@ -286,13 +290,13 @@ def test_each_error_of_a_failed_plan_is_a_row_and_a_warning_is_not():
 
 
 def test_a_non_json_line_of_a_failed_plan_is_a_detail_under_its_last_error():
-    stream = tofu.read_plan_stream(stream_lines(diagnostic("error", "first", "why")) + "\nSEGV")
+    stream = tofu.read_plan_stream(stream_lines(diagnostic("error", "first", "why")) + "\nSEGV", {})
     (row,) = publish_rows.failed_plan_rows(stream, {})
     assert row.details == ("why", "SEGV")
 
 
 def test_a_failed_plan_without_an_error_still_prints_one_row_with_the_crash_text():
-    stream = tofu.read_plan_stream("panic: tofu crashed")
+    stream = tofu.read_plan_stream("panic: tofu crashed", {})
     assert publish_rows.failed_plan_rows(stream, {}) == (
         Row(
             Glyph.FAILED,
@@ -307,9 +311,10 @@ def test_a_failed_plan_without_an_error_still_prints_one_row_with_the_crash_text
 def test_a_token_in_any_text_of_a_row_is_redacted():
     tokens = {"write": TOKEN}
     failed = tofu.read_plan_stream(
-        stream_lines(diagnostic("error", f"bad {TOKEN}", f"line {TOKEN}")) + f"\ncrash {TOKEN}"
+        stream_lines(diagnostic("error", f"bad {TOKEN}", f"line {TOKEN}")) + f"\ncrash {TOKEN}",
+        tokens,
     )
-    warned = tofu.read_plan_stream(stream_lines(diagnostic("warning", TOKEN, TOKEN)))
+    warned = tofu.read_plan_stream(stream_lines(diagnostic("warning", TOKEN, TOKEN)), tokens)
     shown = [
         *publish_rows.failed_plan_rows(failed, tokens),
         *publish_rows.warning_rows(warned, tokens),
@@ -610,6 +615,30 @@ def test_a_passphrase_with_a_newline_in_a_diagnostic_detail_is_not_printed(
     printed = capsys.readouterr()
     for part in ("alpha", "beta"):
         assert part not in printed.out + printed.err
+
+
+JSON_LINE_PASSPHRASE = "alpha\n{}\nbeta"
+
+
+@pytest.mark.parametrize(
+    ("plan_exit", "plan_text"),
+    [
+        pytest.param(1, f"panic: {JSON_LINE_PASSPHRASE} leaked", id="failed-plan"),
+        pytest.param(0, f"truncated {JSON_LINE_PASSPHRASE} text", id="empty-plan-warning"),
+    ],
+)
+def test_a_passphrase_with_a_json_looking_line_is_not_printed_wherever_its_lines_parse(
+    fake, capsys, publish_answering, request, plan_exit, plan_text
+):
+    """#754 gate finding 2: the `{}` line of the secret parses as JSON; the text is masked whole."""
+    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
+        JSON_LINE_PASSPHRASE + "\n"
+    )
+    configure_plan(fake, plan=plan_exit, plan_lines=[plan_text])
+    publish_answering()
+    printed = capsys.readouterr()
+    for leaked in ("alpha", "beta", "{}"):
+        assert leaked not in printed.out + printed.err
 
 
 @pytest.mark.parametrize("plan_exit", [0, 2])

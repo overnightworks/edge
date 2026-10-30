@@ -110,22 +110,27 @@ def show_arguments(plan_file: Path) -> list[str]:
     return ["show", "-no-color", str(plan_file)]
 
 
-def read_plan_stream(output: str) -> PlanStream:
+def read_plan_stream(output: str, token_values: dict[str, str]) -> PlanStream:
     """The diagnostics of the stream; every other message type is ignored. Only severity, summary
-    and detail are read: the snippet and difference objects of a diagnostic can carry values."""
+    and detail are read: the snippet and difference objects of a diagnostic can carry values.
+
+    The lines outside the stream come from the output redacted as a whole, so a secret is masked
+    wherever its own lines would parse (a passphrase line `{}` is a JSON object)."""
     diagnostics = []
-    unparsed = []
-    for line in output.splitlines():
-        if not line.strip():
-            if unparsed:  # a blank line inside crash text can sit inside a secret
-                unparsed.append(line)
-            continue
-        message = _json_object(line.strip())
-        if message is None:
-            unparsed.append(line)
-        elif message.get("type") == "diagnostic":
+    for line in _lines_of(output):
+        message = _json_object(line)
+        if message is not None and message.get("type") == "diagnostic":
             diagnostics.append(_diagnostic_of(message.get("diagnostic")))
-    return PlanStream(tuple(diagnostics), tuple(unparsed))
+    unparsed = tuple(
+        line
+        for line in _lines_of(secrets.redact(output, token_values))
+        if _json_object(line) is None
+    )
+    return PlanStream(tuple(diagnostics), unparsed)
+
+
+def _lines_of(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def _json_object(line: str) -> dict | None:

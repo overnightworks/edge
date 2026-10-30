@@ -344,14 +344,14 @@ def _print_plan(
     """The plan as rows and, with changes, tofu's rendering of the written file. The exit when the
     run ends here (nothing to publish, or a plan that cannot be shown); None when changes wait."""
     try:
-        stream = tofu.read_plan_stream(planned.output)
+        stream = tofu.read_plan_stream(planned.output, token_values)
     except tofu.MalformedPlanStream:
         write_row(publish_rows.malformed_stream_row())
         return ApplyExit.CANNOT_PLAN
     for row in publish_rows.warning_rows(stream, token_values):
         write_row(row)
     if planned.exit_code in (tofu.PlanExit.NO_CHANGES, tofu.PlanExit.CHANGES):
-        for row in publish_rows.unparsed_rows(stream, token_values):
+        for row in publish_rows.unparsed_rows(stream):
             write_row(row)
     if planned.exit_code == tofu.PlanExit.NO_CHANGES:
         progress.plan_was_empty = True
