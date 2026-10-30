@@ -38,7 +38,7 @@ first and runs with or without the legal unit: it writes the installed appkit's 
 to `appkit-<version>/` in `legal/assets/` and in both Keycloak themes; a missing appkit is exit 2.
 
 Before any of that it guards, in this order, each refusing with its own lines and nothing else
-(#95): a terminal (exit 1); the live checkout `~/git/edge`, since from any other tree it would bind
+(#95): a terminal (exit 1); the live checkout `~/srv/hal`, since from any other tree it would bind
 the live compose project to that tree (#79, exit 2); `apply.lock` in the state directory, held
 non-blocking for the whole run, so a second apply is refused (exit 1) while `hal stop` and
 `hal start` never wait for it; HEAD on `main` (exit 2); a clean tree, every changed path named

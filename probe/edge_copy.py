@@ -3,7 +3,7 @@ it, at a pty or without a terminal (#52 proof 10, #60 proof 11, #61 probe c).
 
 A probe works in the copy so that it flips `fleet.yaml` and lets `hal` write `dynamic/` and the
 state under its throwaway HOME without ever touching the checkout it runs from. The copy is the
-live checkout of that HOME, `<HOME>/git/edge` with a `.git` directory, so that its `hal apply`
+live checkout of that HOME, `<HOME>/srv/hal` with a `.git` directory, so that its `hal apply`
 runs there and never against the operator's HOME (#79 rule 3). It is a clean `main` with a bare
 remote `<scratch>/origin.git`, as `hal apply --local` requires (its ignored `.env` is written by
 that apply, #136); a probe publishes every edit it makes there (commit and push) before it
