@@ -3,6 +3,6 @@ agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
 role = "builder"
 base = "53b533174717f7b93cbee8d634051a61ea0363df"
 branch = "claude/issue-737-probe-lock-fleet-form"
-scope = ["docs/agent-service.md", "docs/internal-ca.md", "probe/agent-service/cells_12b.py", "probe/agent-service/egress.py", "probe/agent-service/image.py", "probe/agent-service/login_checks.py", "probe/agent-service/unit.py", "probe/apps/probe.py", "probe/keycloak/README.md", "probe/keycloak/probe.py", "probe/step-ca/probe.py", "probe/switches/built_image.py", "probe/switches/probe.py", "tests/test_agent_service_cells_12b.py", "tests/test_agent_service_login_checks.py"]
+scope = ["docs/agent-service.md", "docs/internal-ca.md", "probe/agent-service/cells_12b.py", "probe/agent-service/egress.py", "probe/agent-service/image.py", "probe/agent-service/login_checks.py", "probe/agent-service/unit.py", "probe/apps/probe.py", "probe/edge_copy.py", "probe/keycloak/README.md", "probe/keycloak/probe.py", "probe/step-ca/probe.py", "probe/switches/built_image.py", "probe/switches/probe.py", "tests/test_agent_service_cells_12b.py", "tests/test_agent_service_login_checks.py"]
 opened_commit = "f7ee197143217020fc2a4bc437c725c5aa25cb58"
 whole_reason = "One lock command line is pinned in nine probe docstrings, a README and two docs, and the one probe that took the lock in code leaves it with its tests; split, some probes would sit on the old form or a test would pin a lock that is gone."
