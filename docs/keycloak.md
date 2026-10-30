@@ -234,7 +234,8 @@ config-cli, observes again and prints one line per change, with the seconds the 
 restore test took. A failed backup or restore test applies nothing and ends the run partial with
 exit 1. A Keycloak that should run and cannot be read is skipped: the step prints a `!` row,
 `keycloak  realm skipped` with the reason, and the run ends partial (`error: partial, keycloak realm
-skipped`, `next: hal apply`) with exit 1; when that is the only change, hal asks no yes.
+skipped`, `next: hal apply`) with exit 1; when that is the only change, hal asks no yes and ends
+`error: realm: Keycloak could not be read; not checked (…)`, `next: hal apply`, exit 1.
 `hal backup` runs in a process group of its own, so Ctrl-C does not reach it. A step
 that outlives its time or is interrupted sends it SIGTERM, as a systemd stop does, and waits two
 minutes for its cleanup, which a further Ctrl-C does not shorten; only then it kills the group. A
