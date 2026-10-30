@@ -8,7 +8,8 @@ import json
 import time
 from pathlib import Path
 
-from edge_copy import GUARDED_COMPOSE_VERBS, copy_compose_command, expect, publish
+import edge_copy
+from edge_copy import GUARDED_COMPOSE_VERBS, expect, publish
 from step_ca_names import COMPOSE_FILE, INTERMEDIATE_IN_VOLUME, NOTHING_TO_CHANGE
 
 from hal.output import write_line
@@ -27,7 +28,7 @@ LABEL_AFTER = {  # where the probe label goes in compose.yaml: after each servic
 
 class TraefikMcpFollows:
     def copy_compose(self, copy: Path, *arguments: str) -> str:
-        command = copy_compose_command(copy)
+        command = edge_copy.copy_compose_command(copy)
         if arguments[0] in GUARDED_COMPOSE_VERBS:
             self.guard.expect(command, once=False)
         return self.run([*command, *arguments]).stdout.decode()
