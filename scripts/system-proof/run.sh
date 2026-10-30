@@ -21,10 +21,10 @@ set -euo pipefail
 
 edge_checkout=${1:?the edge checkout to read tunnel/ from}
 evidence=${2:?the directory for the evidence}
-part=${3:?the part to run: fresh or prepared}
+part=${3:?the part to run: fresh, prepared or shapes}
 case $part in
-    fresh | prepared) ;;
-    *) echo "usage: run.sh <edge checkout> <evidence dir> <fresh|prepared>" >&2; exit 2 ;;
+    fresh | prepared | shapes) ;;
+    *) echo "usage: run.sh <edge checkout> <evidence dir> <fresh|prepared|shapes>" >&2; exit 2 ;;
 esac
 edge_ref=${EDGE_REF:-origin/main}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -99,19 +99,22 @@ if [[ $part == fresh ]]; then
     stage "$container" after-marker-reboot
     reboot "$container"
     stage "$container" after-unmarked-reboot
-else
+elif [[ $part == prepared ]]; then
     stage "$container" prepared
     stage "$container" sudo-classic
     stage "$container" sudo-rs
+else
+    stage "$container" shapes
 fi
 
 judge() {  # judge <part> <cells file>: every cell of the part printed a held line and none printed a failed one
-    # fresh: cells 1 and 3-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b; prepared: cell 2 and P1-P10 under both sudos (suffix c and r)
+    # fresh: cells 1 and 3-13, S1, A1-1 and A1-2 and A1-4 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b; prepared: cell 2 and P1-P10 under both sudos (suffix c and r); shapes: A1-3
     local part=$1 cells=$2 cell missing=() expected
     case $part in
-        fresh) expected=({1,3,4,5,6,7,8,9,10,11,12,13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b) ;;
+        fresh) expected=({1,3,4,5,6,7,8,9,10,11,12,13} S1 A1-{1,2,4,5,6,7,8,9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b) ;;
         prepared) expected=(2 P{1..10}{c,r}) ;;
-        *) echo "unknown part: $part (expected fresh or prepared)" >&2; return 2 ;;
+        shapes) expected=(A1-3) ;;
+        *) echo "unknown part: $part (expected fresh, prepared or shapes)" >&2; return 2 ;;
     esac
     for cell in "${expected[@]}"; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")

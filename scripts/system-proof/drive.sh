@@ -1324,7 +1324,6 @@ SHIM
 }
 
 cells_agent() {
-    cell_a1_3
     put_operator_in_docker_group
     cell_a1_4_and_5
     cell_a1_6
@@ -1871,5 +1870,6 @@ case "${1:?stage}" in
     prepared) wait_for_engine; prepare_today; cell_2 ;;
     sudo-classic) cells_sudo c "$SUDO_CLASSIC" ;;
     sudo-rs) cells_sudo r "$SUDO_RS" ;;
+    shapes) at_terminal shapes-converge "$HAL_BIN setup"; cell_a1_3 ;;
     *) echo "unknown stage $1" >&2; exit 2 ;;
 esac

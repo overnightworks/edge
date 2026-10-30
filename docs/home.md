@@ -648,8 +648,10 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   with it, when the rescue's restart fails too; and a run interrupted between the write and the rescue with Docker down
   (a hanging restart skips the rescue on Ctrl-C) makes the next apply refuse, because Docker does not answer. Then remove
   `log-driver` from `/etc/docker/daemon.json` by hand; the backup holds the old bytes.
-- **Proof.** `flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>`, once with part `fresh` and once with `prepared`, each into its own evidence dir (`<evidence dir>/fresh`, `<evidence dir>/prepared`, since each run truncates `cells.txt`), drives
-  the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `hal check` there:
+- **Proof.** `flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>`, once per part, each into its own evidence dir (`<evidence dir>/fresh`, `<evidence dir>/prepared`, `<evidence dir>/shapes`, since each run truncates `cells.txt`), drives
+  the step in a throwaway systemd container, never on this PC. `fresh` is the first install with both reboots, `prepared` the
+  second install under both sudos, and `shapes` a third one that converges once and then refuses the foreign account shapes (A1-3);
+  each part is one container and stays well under the lock's 1800 s cap, so a part that outgrows it is cut, not given more time. Its cells D1-D8 also drive the mail of `hal check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
   a rejected login and a stalled server. Its cells R0-R7 drive rsyslog's removal there: the image carries rsyslog, an
   unconfigured postfix and kerneloops like the PC, the six files with archives are planted before the first refused run, and
