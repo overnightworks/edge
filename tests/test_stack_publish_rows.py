@@ -343,18 +343,18 @@ def test_a_broken_stream_is_one_row_that_names_no_tofu_text():
 # The publish cells below drive `apply_command` and `hal apply` on a pty against the fake tofu of
 # test_stack_external, whose fixtures they request by name.
 @pytest.fixture
-def fake(request) -> FakeTofu:
-    return request.getfixturevalue("fake_tofu")
+def fake(fake_tofu: FakeTofu) -> FakeTofu:  # noqa: F811
+    return fake_tofu
 
 
 @pytest.fixture
-def plans(request) -> Path:
-    return request.getfixturevalue("home") / PLANS_DIRECTORY
+def plans(home: Path) -> Path:  # noqa: F811
+    return home / PLANS_DIRECTORY
 
 
 @pytest.fixture
-def pty_apply(request) -> Callable:
-    return request.getfixturevalue("terminal")
+def pty_apply(terminal: Callable) -> Callable:  # noqa: F811
+    return terminal
 
 
 def configure_plan(fake: FakeTofu, *, plan_lines=(), show_lines=(), **exit_codes) -> None:
@@ -372,7 +372,7 @@ TOFU_TEXT = ("Acquiring state lock", "Reading...", "Refreshing state...", "No ch
 
 
 @pytest.fixture
-def publish_answering(monkeypatch, request) -> Callable[[str], int]:
+def publish_answering(monkeypatch, publish: Callable[[], int]) -> Callable[[str], int]:  # noqa: F811
     """`publish` with `answer` typed at the prompt; a cell that expects no prompt gives none."""
 
     def with_answer(answer: str | None = None) -> int:
@@ -381,7 +381,7 @@ def publish_answering(monkeypatch, request) -> Callable[[str], int]:
             return answer
 
         monkeypatch.setattr("builtins.input", asked)
-        return request.getfixturevalue("publish")()
+        return publish()
 
     return with_answer
 
@@ -421,7 +421,10 @@ def test_an_empty_plan_with_a_warning_prints_the_warning_row_then_the_current_ro
 
 
 def test_a_plan_with_changes_shows_tofus_rendering_of_the_written_plan_file_before_the_yes(
-    fake, capsys, monkeypatch, request
+    fake,
+    capsys,
+    monkeypatch,
+    publish,  # noqa: F811
 ):
     """`show` reads the file `plan` wrote, `apply` gets that file, after the diff."""
     configure_plan(
@@ -435,7 +438,7 @@ def test_a_plan_with_changes_shows_tofus_rendering_of_the_written_plan_file_befo
         "builtins.input",
         lambda _prompt: seen_before_asking.append(capsys.readouterr().out) or "yes",
     )
-    assert request.getfixturevalue("publish")() == 0
+    assert publish() == 0
     (before_the_prompt,) = seen_before_asking
     assert before_the_prompt == "  # terraform_data.a will be created\n"
     assert commands_of(fake) == ["version", "init", "plan", "show", "apply"]
@@ -557,7 +560,10 @@ def test_a_line_outside_the_stream_of_an_empty_plan_is_a_warning_before_the_curr
 
 
 def test_a_line_outside_the_stream_of_a_plan_with_changes_is_a_warning_before_the_diff(
-    fake, capsys, monkeypatch, request
+    fake,
+    capsys,
+    monkeypatch,
+    publish,  # noqa: F811
 ):
     """The warning stands before the diff and the prompt."""
     configure_plan(
@@ -571,7 +577,7 @@ def test_a_line_outside_the_stream_of_a_plan_with_changes_is_a_warning_before_th
         "builtins.input",
         lambda _prompt: seen_before_asking.append(capsys.readouterr().out) or "yes",
     )
-    assert request.getfixturevalue("publish")() == 0
+    assert publish() == 0
     (before_the_prompt,) = seen_before_asking
     assert [said(line) for line in before_the_prompt.splitlines()] == [
         "! cloudflare warning tofu printed text outside its stream",
@@ -585,10 +591,13 @@ MULTILINE_PASSPHRASE = "alpha\nbeta"
 
 
 @pytest.fixture
-def multiline_passphrase(request) -> None:
-    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
-        MULTILINE_PASSPHRASE + "\n"
-    )
+def passphrase_file(home: Path) -> Path:  # noqa: F811
+    return home / ".secrets/opentofu/state-passphrase"
+
+
+@pytest.fixture
+def multiline_passphrase(passphrase_file: Path) -> None:
+    passphrase_file.write_text(MULTILINE_PASSPHRASE + "\n")
 
 
 def test_a_passphrase_with_a_newline_in_crash_text_is_not_printed(
@@ -628,12 +637,10 @@ JSON_LINE_PASSPHRASE = "alpha\n{}\nbeta"
     ],
 )
 def test_a_passphrase_with_a_json_looking_line_is_not_printed_wherever_its_lines_parse(
-    fake, capsys, publish_answering, request, plan_exit, plan_text
+    fake, capsys, publish_answering, passphrase_file, plan_exit, plan_text
 ):
     """The `{}` line of the secret parses as JSON; the text is masked whole."""
-    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
-        JSON_LINE_PASSPHRASE + "\n"
-    )
+    passphrase_file.write_text(JSON_LINE_PASSPHRASE + "\n")
     configure_plan(fake, plan=plan_exit, plan_lines=[plan_text])
     publish_answering()
     printed = capsys.readouterr()
@@ -649,10 +656,10 @@ def test_a_passphrase_with_a_json_looking_line_is_not_printed_wherever_its_lines
     ],
 )
 def test_masking_a_secret_never_turns_a_stream_object_into_printed_text(
-    fake, capsys, publish_answering, request, plan_exit, plan_lines
+    fake, capsys, publish_answering, passphrase_file, plan_exit, plan_lines
 ):
     """A passphrase `false` is in the stream's booleans."""
-    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text("false\n")
+    passphrase_file.write_text("false\n")
     configure_plan(fake, plan=plan_exit, plan_lines=plan_lines)
     publish_answering()
     printed = capsys.readouterr()
@@ -661,14 +668,12 @@ def test_masking_a_secret_never_turns_a_stream_object_into_printed_text(
 
 
 def test_a_secret_spanning_a_stream_object_and_crash_lines_is_masked_in_each_part(
-    fake, capsys, publish_answering, request
+    fake, capsys, publish_answering, passphrase_file
 ):
     """The object line stays a diagnostic, the crash lines around it mask."""
     object_line = diagnostic_line("warning", "careful")
     secret = f"alpha\n{object_line}\nbeta"
-    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
-        secret + "\n"
-    )
+    passphrase_file.write_text(secret + "\n")
     configure_plan(fake, plan=0, plan_lines=["alpha", object_line, "beta"])
     assert publish_answering() == 0
     printed = capsys.readouterr()
