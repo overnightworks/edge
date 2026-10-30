@@ -24,7 +24,7 @@ DOCUMENTATION = """
 """
 
 # hal.workstation.system_step.EVENT_MARK states the same mark: this file runs in Ansible's interpreter and cannot import hal.
-EVENT_MARK = "\x1ehal "
+EVENT_MARK = "\x1ehal_events "
 
 
 class CallbackModule(DefaultCallbackModule):

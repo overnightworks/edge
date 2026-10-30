@@ -34,7 +34,7 @@ JOURNAL_VACUUM_DAYS = LOG_RETENTION_DAYS - 2
 RSYSLOG_FILE_NAMES = ("syslog", "auth.log", "kern.log", "mail.log", "mail.err", "ufw.log")
 # The line prefix the packaged `hal_events` callback writes before each event; the callback runs in Ansible's own
 # interpreter, which cannot import hal, so `system/callback_plugins/hal_events.py` states the same mark.
-EVENT_MARK = "\x1ehal "
+EVENT_MARK = "\x1ehal_events "
 
 
 class CheckState(Enum):
