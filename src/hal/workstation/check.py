@@ -203,6 +203,7 @@ def remember(layout: Layout, identities: frozenset[str]) -> None:
 
 
 NOTIFY_FAILED = "popup failed: notify-send did not run; the next run reports again"
+NOTIFY_FAILED_NOT_RETRIED = "popup failed: notify-send did not run; the mail was delivered, so the popup is not sent again"
 
 
 @dataclass(frozen=True)
@@ -541,13 +542,10 @@ def _mail_delivered(ctx: CheckContext, subject: str, body: str) -> bool | None:
 
 
 def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | None:
-    """None without a graphical session; False (after one stderr line) when the notification was not delivered."""
+    """None without a graphical session; False when the notification was not delivered."""
     if ctx.run(GRAPHICAL_SESSION_PROBE) is None:
         return None
-    delivered = _notify(ctx.run, summary, body, ctx.layout.check_report_file)
-    if not delivered:
-        sys.stderr.write(printable(NOTIFY_FAILED) + "\n")
-    return delivered
+    return _notify(ctx.run, summary, body, ctx.layout.check_report_file)
 
 
 def _mail_facts(ctx: CheckContext) -> MailFacts:
@@ -581,7 +579,7 @@ class NewsOutcome:
     settled: bool
     """Whether the run counts as having told the operator, so the remembered findings may advance."""
     told: bool
-    """Whether the news reached the operator once: the mail was delivered, or with no mail set up a popup was attempted. A failed popup beside a delivered mail does not make a caller resend the mail."""
+    """Whether the news reached the operator once: the mail was delivered, or with no mail set up the popup was delivered. A failed popup beside a delivered mail does not make a caller resend the mail."""
 
 
 def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
@@ -592,24 +590,31 @@ def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
     return Delivery.NEWS_SENT if desktop else Delivery.NO_MAIL
 
 
-def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
-    """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered."""
+def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts, *, mail_settles: bool) -> NewsOutcome:
+    """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered.
+
+    With `mail_settles`, a delivered mail ends the news, so a failed popup beside it is not tried again.
+    """
     home = ctx.layout.home
     report_file = f"~/{ctx.layout.check_report_file.relative_to(home)}"
     summary = title(current)
     desktop = _desktop_delivered(ctx, summary, notification_body(current, report_file))
     mail_outcome = _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, facts))
     set_up = [outcome for outcome in (desktop, mail_outcome) if outcome is not None]
-    told = mail_outcome if mail_outcome is not None else desktop is not None
-    return NewsOutcome(_delivery_of(desktop, mail_outcome), bool(set_up) and all(set_up), told)
+    settled = bool(set_up) and all(set_up)
+    told = mail_outcome if mail_outcome is not None else desktop is True
+    if desktop is False:
+        retried = not (told if mail_settles else settled)
+        sys.stderr.write(printable(NOTIFY_FAILED if retried else NOTIFY_FAILED_NOT_RETRIED) + "\n")
+    return NewsOutcome(_delivery_of(desktop, mail_outcome), settled, told)
 
 
-def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
+def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts, *, mail_settles: bool = False) -> NewsOutcome:
     if not ctx.settings.notify:
         return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True, True)
     if not _is_news(current, previous):
         return NewsOutcome(Delivery.NOTHING_NEW, True, True)
-    return _news_delivered(ctx, current, previous, facts)
+    return _news_delivered(ctx, current, previous, facts, mail_settles=mail_settles)
 
 
 OPEN_REPORT_ACTION = "open=Open report"
@@ -663,8 +668,8 @@ def _write_verdict(items: list[Item], area_count: int, outcome: NewsOutcome, rep
 
 
 def deliver_news(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None) -> NewsOutcome:
-    """The news of `current` against `previous` through every set-up channel, as the daily check delivers it; the caller remembers `current` when the outcome is settled."""
-    return _news_outcome(ctx, current, previous, _mail_facts(ctx))
+    """The news of `current` against `previous` through every set-up channel, with a delivered mail ending the news; the caller remembers `current` when the outcome is told."""
+    return _news_outcome(ctx, current, previous, _mail_facts(ctx), mail_settles=True)
 
 
 def check(ctx: CheckContext) -> int:

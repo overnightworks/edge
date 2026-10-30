@@ -131,6 +131,31 @@ def test_a_delivered_mail_is_not_sent_again_while_the_popup_keeps_failing(alarm,
     assert len(mail_stub.sent) == 1
 
 
+def test_a_failed_popup_without_a_mail_channel_is_tried_again_by_the_next_run(alarm, runner, capsys) -> None:
+    restarting_containers(runner, "presentator-live")
+    runner.notify_delivers = False
+    alarm()
+    alarm()
+    runner.notify_delivers = True
+
+    alarm()
+
+    output = capsys.readouterr()
+    assert "alarm: popup failed, retries next run" in output.out
+    assert len(runner.notifications) == 2
+
+
+def test_a_failed_popup_beside_a_delivered_mail_promises_no_retry(alarm, runner, mail_stub, capsys) -> None:
+    restarting_containers(runner, "presentator-live")
+    runner.notify_delivers = False
+    alarm()
+    alarm()
+
+    output = capsys.readouterr()
+    assert "retries" not in output.out + output.err
+    assert "next run" not in output.out + output.err
+
+
 def test_the_daily_check_after_an_alarm_remembers_the_findings_of_other_areas(alarm, clean_home, runner, mail_stub) -> None:
     (clean_home / ".secrets" / "gitlab").chmod(0o644)
     home_check(clean_home, runner)
