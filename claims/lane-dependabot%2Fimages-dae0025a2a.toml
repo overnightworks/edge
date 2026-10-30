@@ -1,8 +1,0 @@
-claim_id = "7ed7e620273949cc82b478cf3b368ded"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "47624c936095467fa0d0e2e2e11bfef45025e1da"
-branch = "dependabot/images-dae0025a2a"
-scope = ["agent-service/image/Dockerfile", "compose.yaml", "probe/agent-service/compose.probe.yaml", "probe/keycloak/compose.probe.yaml"]
-opened_commit = "34b1bd47f2f2931c4a4e4b46f478f229ca6a8f43"
-whole_reason = "One dependabot group bump: the image pins of one release line move together across compose and the probe composes."
