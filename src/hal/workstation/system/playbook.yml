@@ -102,11 +102,12 @@
         key: "{{ agent_user }}"
         fail_key: false
       loop: [passwd, shadow]
+      register: agent_entry
 
     - name: Note whether the agents' account exists, and which ids and group names are taken
       ansible.builtin.set_fact:
-        agent_account: "{{ getent_passwd[agent_user] }}"
-        agent_exists: "{{ getent_passwd[agent_user] is not none }}"
+        agent_account: "{{ agent_entry.results[0].ansible_facts.getent_passwd[agent_user] }}"
+        agent_exists: "{{ agent_entry.results[0].ansible_facts.getent_passwd[agent_user] is not none }}"
         every_user: "{{ every_entry.results[0].ansible_facts.getent_passwd }}"
         every_group: "{{ every_entry.results[1].ansible_facts.getent_group }}"
         agent_taken_ids: >-
@@ -194,7 +195,7 @@
              + (['a group beyond its own'] if agent_exists and agent_groups.rc == 0 and agent_groups.stdout.split() != [agent_user] else [])
              + (['a subuid or subgid entry'] if agent_user in subid_owners or (agent_uid | string) in subid_owners else [])
              + (['a shell other than ' ~ agent_nologin] if agent_exists and agent_account[5] != agent_nologin else [])
-             + (['a usable password'] if agent_exists and getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
+             + (['a usable password'] if agent_exists and agent_entry.results[1].ansible_facts.getent_shadow[agent_user][0][:1] not in ['!', '*'] else [])
              + (['linger'] if agent_linger.stat.exists else [])
              + (['a home other than ' ~ agent_home] if agent_exists and agent_account[4] != agent_home else [])
              + (['a home that is missing'] if agent_exists and not agent_home_stat.stat.exists else [])
@@ -417,14 +418,15 @@
       ansible.builtin.getent:
         database: passwd
         key: "{{ agent_user }}"
+      register: created_entry
       when: not agent_exists and not ansible_check_mode
 
     - name: Fail when the account did not get the ids chosen for it
       ansible.builtin.assert:
         that:
-          - getent_passwd[agent_user][1] == agent_uid | string
-          - getent_passwd[agent_user][2] == agent_gid | string
-        fail_msg: "{{ agent_user }} was created with uid {{ getent_passwd[agent_user][1] }} and gid {{ getent_passwd[agent_user][2] }}, not {{ agent_uid }}"
+          - created_entry.ansible_facts.getent_passwd[agent_user][1] == agent_uid | string
+          - created_entry.ansible_facts.getent_passwd[agent_user][2] == agent_gid | string
+        fail_msg: "{{ agent_user }} was created with uid {{ created_entry.ansible_facts.getent_passwd[agent_user][1] }} and gid {{ created_entry.ansible_facts.getent_passwd[agent_user][2] }}, not {{ agent_uid }}"
         quiet: true
       when: not agent_exists and not ansible_check_mode
 
