@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import re
 import secrets
 import time
@@ -92,40 +93,44 @@ def without_pending_terms(admin: Admin, user_id: str) -> str:
 
 
 class TermsPage(HTMLParser):
-    """The heading, the terms text and the links in it, from a Keycloak page or a message."""
+    """The heading, and the text and links of the block just before the form, from a Keycloak page
+    or from a message wrapped as `<div>message</div><form>`: keycloak.v2 marks that block by
+    nothing but its place."""
 
     def __init__(self) -> None:
         super().__init__()
         self.title = ""
         self.words: list[str] = []
         self.links: list[tuple[str | None, str | None]] = []
-        self.depth = 0
         self.in_title = False
+        self.open: list[tuple[list[str], list[tuple[str | None, str | None]]]] = []
+        self.closed: tuple[list[str], list[tuple[str | None, str | None]]] = ([], [])
+        self.found = False
 
     @property
     def text(self) -> str:
         return " ".join("".join(self.words).split())
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attributes = dict(attrs)
         self.in_title = self.in_title or tag == "h1"
-        if not self.depth and attributes.get("id") == "kc-terms-text":
-            self.depth = 1
-        elif self.depth:
-            self.depth += tag == "div"
-            if tag == "a":
-                self.links.append((attributes.get("href"), attributes.get("target")))
+        if tag == "div":
+            self.open.append(([], []))
+        elif tag == "a" and self.open:
+            self.open[-1][1].append((dict(attrs).get("href"), dict(attrs).get("target")))
+        elif tag == "form" and not self.found:
+            self.found = True
+            self.words, self.links = self.closed
 
     def handle_endtag(self, tag: str) -> None:
         self.in_title = self.in_title and tag != "h1"
-        if self.depth and tag == "div":
-            self.depth -= 1
+        if tag == "div" and self.open:
+            self.closed = self.open.pop()
 
     def handle_data(self, data: str) -> None:
         if self.in_title:
             self.title = " ".join(f"{self.title} {data}".split())
-        if self.depth:
-            self.words.append(data)
+        if self.open:
+            self.open[-1][0].append(data)
 
 
 def message(locale: str, key: str) -> str:
@@ -211,20 +216,35 @@ class TermsCell:
             opener=browser,
             headers=headers,
         )
+        location = page.headers.get("Location", "")
+        if page.status == 302 and not location.startswith(self.client.callback):
+            page = self.probe.through_tunnel_url("GET", location, opener=browser, headers=headers)
         return Step(browser, page, verifier, headers)
+
+    def button_form(self, page: Answer, button: str) -> str:
+        """The action of the form holding the named button, which keycloak.v2 renders as a
+        `<button>` that the probe's input-only form reader does not see."""
+        found = re.search(
+            rf'<form[^>]*\baction="([^"]*)"[^>]*>(?:(?!</form>).)*?\bname="{button}"',
+            page.text,
+            re.DOTALL,
+        )
+        self.expect(found is not None, f"page {page.status} has no form with a '{button}' button")
+        return html.unescape(found.group(1)) if found else ""
 
     def asks(self, user: User, language: str = "") -> Step:
         step = self.begin(user, language)
         self.expect(
-            step.page.status == 200 and "kc-terms-text" in step.page.text,
+            step.page.status == 200,
             f"the sign-in of {user.name} answered {step.page.status}, not the terms page",
         )
+        self.button_form(step.page, "accept")
         return step
 
     def answer(self, step: Step, button: str) -> dict[str, list[str]]:
-        action, inputs = self.form_with(step.page, button)
+        action = self.button_form(step.page, button)
         answer = self.probe.through_tunnel_url(
-            "POST", action, form={button: inputs[button]}, opener=step.browser, headers=step.headers
+            "POST", action, form={button: ""}, opener=step.browser, headers=step.headers
         )
         location = answer.headers.get("Location", "")
         self.expect(
@@ -300,14 +320,14 @@ class TermsCell:
         for language, locale in LANGUAGES:
             step = self.asks(user, language)
             title, text = message(locale, "termsTitle"), message(locale, "termsText")
-            page, wanted = page_of(step.page.text), page_of(f'<div id="kc-terms-text">{text}</div>')
+            page, wanted = page_of(step.page.text), page_of(f"<div>{text}</div><form>")
             self.expect(
                 (page.title, page.text, page.links) == (title, wanted.text, wanted.links),
                 f"{locale} page: title {page.title!r}, text {page.text!r}, links {page.links}; "
                 f"wanted {title!r}, {wanted.text!r}, {wanted.links}",
             )
             for button in ("accept", "cancel"):
-                self.form_with(step.page, button)
+                self.button_form(step.page, button)
             kept.append(f"{locale} {page.links}")
         self.probe.held("TC2", f"the page speaks the theme's words with accept and cancel: {kept}")
 

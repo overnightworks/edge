@@ -13,6 +13,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+import support.throwaway_home as throwaway_home
 from git_support import (
     advance,
     checkout_state,
@@ -27,6 +28,8 @@ from git_support import (
 from hal.stack import checkout
 from hal.workstation.layout import Layout
 
+home = throwaway_home.home
+
 # githooks(5): every hook git may run, so a sentinel catches whichever one would.
 HOOK_NAMES = (
     "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
@@ -35,17 +38,6 @@ HOOK_NAMES = (
     "post-update", "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite",
     "sendemail-validate", "fsmonitor-watchman", "post-index-change",
 )  # fmt: skip
-
-
-@pytest.fixture(autouse=True)
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway HOME and XDG_CONFIG_HOME: no global config but the one a test writes."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    monkeypatch.setenv("LC_ALL", "C")  # git's own lines in English, whatever the machine speaks
-    return home
 
 
 @pytest.fixture

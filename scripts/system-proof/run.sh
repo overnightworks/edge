@@ -6,25 +6,26 @@
 #   flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 \
 #       scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>
 #
-# <part> is `fresh` (the first container: install, fresh, both reboots and their stages) or `prepared` (the second:
-# install, prepared, both sudos); each call runs and judges only its own container's cells. <edge checkout> is a clone
-# whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it. Give each part its own evidence dir
-# (`<evidence dir>/fresh`, `<evidence dir>/prepared`): each call truncates cells.txt and containers.txt there.
+# <part> is `fresh` (the first container: install, fresh, both reboots and their stages), `prepared` (the second:
+# install, prepared, both sudos) or `shapes` (the third: one convergence, then the foreign account shapes of A1-3); each
+# call runs and judges only its own container's cells. <edge checkout> is a clone whose `origin/main` (or $EDGE_REF)
+# carries tunnel/; only `git archive` reads it. Give each part its own evidence dir (`<evidence dir>/fresh`,
+# `<evidence dir>/prepared`, `<evidence dir>/shapes`): each call truncates cells.txt and containers.txt there.
 # The script takes no lock: the fleet form above does. CAP 1800 plus K 30 stays within 1830, and K 30 is more than the
-# teardown of a cut run needs (it left no container within 30 s). Measured under that form on a loaded machine: wheel
-# and image build about 15 s, `fresh` about 1725 s; both parts in one call needed more than the cap, so the proof is
-# cut by its two containers. The wait for a low load and every stage run inside the cap, so the cap bounds them, and
-# the EXIT trap runs on its TERM.
+# teardown of a cut run needs (it left no container within 30 s). Measured under that form on a loaded machine, in
+# seconds after the lock was taken: `shapes` 881, `fresh` 924, `prepared` 383, each exit 0 with every cell held. The
+# slowest part keeps 876 s of the 1800 s cap, 576 s of the 1500 s a part may take. The wait for a low load and every
+# stage run inside the cap, so the cap bounds them, and the EXIT trap runs on its TERM.
 # It keeps the container ids in the evidence dir and removes its container, with its volumes and nothing else, on exit.
 # The sudo password is generated per run.
 set -euo pipefail
 
 edge_checkout=${1:?the edge checkout to read tunnel/ from}
 evidence=${2:?the directory for the evidence}
-part=${3:?the part to run: fresh or prepared}
+part=${3:?the part to run: fresh, prepared or shapes}
 case $part in
-    fresh | prepared) ;;
-    *) echo "usage: run.sh <edge checkout> <evidence dir> <fresh|prepared>" >&2; exit 2 ;;
+    fresh | prepared | shapes) ;;
+    *) echo "usage: run.sh <edge checkout> <evidence dir> <fresh|prepared|shapes>" >&2; exit 2 ;;
 esac
 edge_ref=${EDGE_REF:-origin/main}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -99,19 +100,22 @@ if [[ $part == fresh ]]; then
     stage "$container" after-marker-reboot
     reboot "$container"
     stage "$container" after-unmarked-reboot
-else
+elif [[ $part == prepared ]]; then
     stage "$container" prepared
     stage "$container" sudo-classic
     stage "$container" sudo-rs
+else
+    stage "$container" shapes
 fi
 
 judge() {  # judge <part> <cells file>: every cell of the part printed a held line and none printed a failed one
-    # fresh: cells 1 and 3-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b; prepared: cell 2 and P1-P10 under both sudos (suffix c and r)
+    # fresh: cells 1 and 3-13, S1, A1-1 and A1-2 and A1-4 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b; prepared: cell 2 and P1-P10 under both sudos (suffix c and r); shapes: A1-3
     local part=$1 cells=$2 cell missing=() expected
     case $part in
-        fresh) expected=({1,3,4,5,6,7,8,9,10,11,12,13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b) ;;
+        fresh) expected=({1,3,4,5,6,7,8,9,10,11,12,13} S1 A1-{1,2,4,5,6,7,8,9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b) ;;
         prepared) expected=(2 P{1..10}{c,r}) ;;
-        *) echo "unknown part: $part (expected fresh or prepared)" >&2; return 2 ;;
+        shapes) expected=(A1-3) ;;
+        *) echo "unknown part: $part (expected fresh, prepared or shapes)" >&2; return 2 ;;
     esac
     for cell in "${expected[@]}"; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")

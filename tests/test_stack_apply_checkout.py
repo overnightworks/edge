@@ -1,9 +1,9 @@
 """`hal apply --local` prints the live checkout against origin's `main` as one row (#612), in a
-real git repository on the scripted boundaries of `test_stack_apply`."""
+real git repository on the scripted boundaries of `tests/support/stack_apply.py`."""
 
 import pytest
 from git_support import advance, checkout_state, subjects
-from test_stack_apply import (
+from support.stack_apply import (
     DISABLED,
     ENABLED,
     ZONE,
@@ -24,7 +24,7 @@ from test_stack_apply import (
     state,  # noqa: F401 the fixture, requested by name below
     switch,  # noqa: F401 the fixture, requested by name below
 )
-from test_stack_plan_rows import detail_lines, find_row, plain
+from support.stack_plan_rows import detail_lines, find_row, plain
 
 from hal.stack import checkout
 from hal.stack.apply import ApplyExit

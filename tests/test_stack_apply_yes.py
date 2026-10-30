@@ -7,14 +7,12 @@ import sys
 from dataclasses import dataclass
 
 import pytest
-from test_stack_apply import (
+from support.stack_apply import (
     DISABLED,
     ENABLED,
     KEYCLOAK_ENABLED,
     PROBE_ENABLED,
     TWO_SETUPS,
-    ScriptedGit,
-    Setup,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     docker_group,
     home,  # noqa: F401 the fixture, requested by name below
@@ -33,8 +31,12 @@ from test_stack_apply import (
     write_fleet,
     writing_environment,
 )
-from test_stack_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
-from test_stack_plan_rows import (
+from support.stack_apply_fakes import (
+    ScriptedGit,
+    Setup,
+)
+from support.stack_plan_legal_rows import ALL_LABELS, appkit_plan, legal_plan
+from support.stack_plan_rows import (
     DIGEST_A,
     DIGEST_B,
     KEYCLOAK,

@@ -1,6 +1,6 @@
 """The appkit step of the closed apply (#514): the installed appkit's static files, written to
 `appkit-<version>/` in `legal/assets/` (served by the legal unit) and in each Keycloak theme's
-`resources/`, on the scripted boundaries of `test_stack_apply`."""
+`resources/`, on the scripted boundaries of `tests/support/stack_apply.py`."""
 
 import os
 import shutil
@@ -12,7 +12,7 @@ from importlib import metadata
 from pathlib import Path
 
 import pytest
-from test_stack_apply import (
+from support.stack_apply import (
     applied_core,  # noqa: F401 the fixture, requested by name below
     at_terminal,  # noqa: F401 the fixture, requested by name below
     core_files,  # noqa: F401 the fixture, requested by name below
@@ -27,7 +27,7 @@ from test_stack_apply import (
     state,  # noqa: F401 the fixture, requested by name below
     switch,  # noqa: F401 the fixture, requested by name below
 )
-from test_stack_plan_rows import find_row
+from support.stack_plan_rows import find_row
 
 from hal.stack import appkit_step
 from hal.stack.plan_rows import PlanEvent

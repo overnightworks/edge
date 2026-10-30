@@ -2,11 +2,11 @@
 
 from collections.abc import Callable
 
-from test_stack_apply import (
+from support.stack_apply import (
     at_terminal,  # noqa: F401 the fixture, requested by name below
     switch_off,
 )
-from test_stack_global_stop import (
+from support.stack_global_stop import (
     home,  # noqa: F401 the fixture, requested by name below
     ingress,  # noqa: F401 the fixture, requested by name below
     marks,  # noqa: F401 the fixture, requested by name below
