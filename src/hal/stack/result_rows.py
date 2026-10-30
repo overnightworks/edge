@@ -5,7 +5,7 @@ from enum import StrEnum
 
 from hal.output import Glyph, Noun, Row, counted, format_duration, printable
 from hal.stack import realm as realm_lines
-from hal.stack.plan_rows import ChangeNoun
+from hal.stack.plan_rows import ChangeNoun, PlanEvent
 from hal.stack.realm import Kind
 from hal.stack.realm.reconcile import REALM_UNIT, Leftovers, RealmApplied, StepResult
 
@@ -26,6 +26,8 @@ class UnreadNoun(Noun):
 
 def result_rows(result: StepResult) -> tuple[Row, ...]:
     """The rows of one step's result: none when the step applied nothing."""
+    if result.skipped is not None:
+        return (Row(Glyph.NEEDS_YOU, REALM_UNIT, PlanEvent.REALM_SKIPPED, result.skipped),)
     return (_realm_row(result.applied),) if result.applied else ()
 
 

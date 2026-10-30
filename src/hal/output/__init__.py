@@ -1,13 +1,14 @@
 """The one owner of how this repository's tools print to a terminal: text from outside made safe
 to show, and the form of a row, a verdict, an error, the indented detail lines under a row, an
-aligned table and the `yes` that confirms an action.
+aligned table and the `yes` that confirms an action, and whether the run is `-v`.
 `hal.output.command` owns the program name. It imports nothing else of this repository."""
 
 # ruff: noqa: T201 - this is the one output owner of the hal program
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
@@ -26,6 +27,27 @@ _BOLD_RED = "1;31"
 _CYAN = "36"
 _BOLD = "1"
 """The 16 base ANSI colours, so a terminal's own theme decides the shades."""
+
+
+_verbose = False
+
+
+@contextmanager
+def verbose_run(enabled: bool) -> Iterator[None]:
+    """`-v` for the length of one run, handed once by the door like `NO_COLOR`; a producer below it
+    reads `is_verbose` without a parameter through every call. A plain module value, not a
+    `ContextVar`: a reader thread does not inherit that."""
+    global _verbose
+    previous = _verbose
+    _verbose = enabled
+    try:
+        yield
+    finally:
+        _verbose = previous
+
+
+def is_verbose() -> bool:
+    return _verbose
 
 
 def _colour_on(stream: TextIO) -> bool:

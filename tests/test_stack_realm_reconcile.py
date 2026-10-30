@@ -278,14 +278,14 @@ def test_a_catalog_without_keycloak_plans_nothing(world: World) -> None:
     assert world.plan(None) == RealmPlan()
 
 
-def test_a_keycloak_that_cannot_be_read_is_planned_as_a_partial_step(world: World) -> None:
+def test_a_keycloak_that_cannot_be_read_is_planned_as_a_skipped_step(world: World) -> None:
     world.failing.add("checksums")
     plan = world.plan()
-    failure = world.run(plan).failure
+    result = world.run(plan)
 
     assert (plan.action, plan.settled) == (RealmAction.UNREADABLE, False)
     assert plan.error == "checksums broke"
-    assert failure == "realm: Keycloak could not be read; not checked (checksums broke)"
+    assert (result.skipped, result.failure) == ("checksums broke", None)
     assert "backup" not in world.events
 
 
