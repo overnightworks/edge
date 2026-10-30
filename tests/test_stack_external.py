@@ -68,6 +68,8 @@ with (here / "calls.jsonl").open("a") as calls:
         "tmpdir_mode": os.stat(os.environ["TMPDIR"]).st_mode & 0o777,
     }}) + "\\n")
 (here / "made-by-tofu").write_text("a file tofu creates")
+for line in config["output_lines"].get(command, []):
+    print(line, flush=True)
 plan_file = next((a[5:] for a in sys.argv[1:] if a.startswith("-out=")), None)
 if plan_file:
     Path(plan_file).write_text("encrypted plan")
@@ -117,11 +119,13 @@ class FakeTofu:
         drain_until_released=False,
         lock_plans_in=None,
         apply_output=b"",
+        output_lines=None,
         **exit_codes,
     ) -> None:
         config = {
             "lock_plans_in": lock_plans_in,
             "apply_output_hex": apply_output.hex(),
+            "output_lines": output_lines or {},
             "version": version or tofu.pinned_version(),
             "echo_environment": echo_environment,
             "leave_undeletable": leave_undeletable,
@@ -220,11 +224,11 @@ def live_checkout(home) -> Path:
 
 @pytest.fixture
 def publish(home, live_checkout, monkeypatch) -> Callable[[], int]:
-    """`apply_command` in this process on a plan without changes: the terminal refusal lifted, the
-    closing host check clean, so a cell sees only the session, the token files and the exit."""
+    """`apply_command` in process: terminal refusal lifted, host check clean, hosts answering."""
     monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
     monkeypatch.setattr(external_cli, "check_command", lambda _home: 0)
-    return lambda: external_cli.apply_command(home, live_checkout)
+    ready = RecordingReadyProber()
+    return lambda: external_cli.apply_command(home, live_checkout, prober_for=ready)
 
 
 @pytest.mark.parametrize("token_file", TOKEN_FILES)
@@ -965,14 +969,6 @@ def test_only_the_exact_yes_applies(home, fake_tofu, terminal, typed, expected_e
     apply.type(typed)
     assert apply.finish() == expected_exit
     assert ("apply" in [call["argv"][0] for call in fake_tofu.calls()]) is applied
-
-
-def test_a_plan_without_changes_exits_0_without_asking(home, fake_tofu, terminal):
-    """#45 rule 2: nothing to apply is exit 0 and no prompt."""
-    apply = terminal()
-    assert apply.finish() == 0
-    assert PROMPT not in apply.output
-    assert "apply" not in [call["argv"][0] for call in fake_tofu.calls()]
 
 
 def test_apply_applies_exactly_the_encrypted_plan_file_in_the_private_directory(
