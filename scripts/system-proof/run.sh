@@ -8,7 +8,8 @@
 #
 # <part> is `fresh` (the first container: install, fresh, both reboots and their stages) or `prepared` (the second:
 # install, prepared, both sudos); each call runs and judges only its own container's cells. <edge checkout> is a clone
-# whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it.
+# whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it. Give each part its own evidence dir
+# (`<evidence dir>/fresh`, `<evidence dir>/prepared`): each call truncates cells.txt and containers.txt there.
 # The script takes no lock: the fleet form above does. CAP 1800 plus K 30 stays within 1830, and K 30 is more than the
 # teardown of a cut run needs (it left no container within 30 s). Measured under that form on a loaded machine: wheel
 # and image build about 15 s, `fresh` about 1725 s; both parts in one call needed more than the cap, so the proof is
@@ -110,6 +111,7 @@ judge() {  # judge <part> <cells file>: every cell of the part printed a held li
     case $part in
         fresh) expected=({1,3,4,5,6,7,8,9,10,11,12,13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b) ;;
         prepared) expected=(2 P{1..10}{c,r}) ;;
+        *) echo "unknown part: $part (expected fresh or prepared)" >&2; return 2 ;;
     esac
     for cell in "${expected[@]}"; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
