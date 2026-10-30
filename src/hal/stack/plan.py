@@ -30,7 +30,7 @@ class Plan:
     @property
     def changes_nothing(self) -> bool:
         return (
-            self.realm.settled
+            self.realm.action is not reconcile.RealmAction.RUN
             and all(plan.action is Action.STAYS_STOPPED for plan in self.plans)
             and all(plan.action is core.CoreAction.NOT_STARTED for plan in self.core)
             and all(plan.action is core.FollowerAction.HELD for plan in self.followers)

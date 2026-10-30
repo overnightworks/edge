@@ -80,6 +80,7 @@ from hal.stack.legal_step import RECORD_FILE, plan_legal
 from hal.stack.plan import Plan
 from hal.stack.plan_rows import (
     ChangeNoun,
+    PlanEvent,
     changes_in,
     checkout_row,
     environment_row,
@@ -333,6 +334,12 @@ def _plan_and_apply(
         return ApplyExit.CANNOT_PLAN
     if planned.changes_nothing:
         _write_plan(planned)
+        if (realm := planned.realm).action is reconcile.RealmAction.UNREADABLE:
+            write_error(
+                f"realm: Keycloak could not be read; not checked ({realm.error})",
+                command(Verb.APPLY),
+            )
+            return ApplyExit.REFUSED
         write_verdict(
             Verdict(
                 Glyph.DONE,
@@ -683,9 +690,12 @@ def _apply_realm(
     result = _realm_step(engine, planned, marks, core_phase, backup).run(planned.realm)
     for row in result_rows(result):
         write_row(row)
-    if result.failure:
-        write_error(f"partial, {result.failure}", command(Verb.APPLY))
-    return bool(result.failure)
+    failure = result.failure
+    if result.skipped is not None:
+        failure = f"{reconcile.REALM_UNIT} {PlanEvent.REALM_SKIPPED}"
+    if failure:
+        write_error(f"partial, {failure}", command(Verb.APPLY))
+    return bool(failure)
 
 
 def _apply_apps(planned: Plan, marks: switches.Switches, progress: Progress) -> bool:
@@ -738,15 +748,10 @@ def _confirm_and_switch(
 ) -> int:
     print("the plan")
     _write_plan(planned)
-    if not (changes := changes_in(planned)):  # only an unreadable realm: no step would act
-        result = _realm_step(engine, planned, marks, core_phase, realm_backup).run(planned.realm)
-        write_error(str(result.failure), command(Verb.APPLY))
-        return ApplyExit.REFUSED
-    if not confirmed(f"apply {counted(changes, ChangeNoun.CHANGE)}"):
+    if not confirmed(f"apply {counted(changes_in(planned), ChangeNoun.CHANGE)}"):
         _say_aborted(completed_setups)
         return ApplyExit.REFUSED
-    plans, read = planned.plans, planned.read
-    changes = [plan for plan in plans if plan.action is not Action.STAYS_STOPPED]
+    changes = [plan for plan in planned.plans if plan.action is not Action.STAYS_STOPPED]
     progress = Progress()
     withheld: dict[str, str] = {}
     try:
@@ -758,7 +763,7 @@ def _confirm_and_switch(
             write_error(f"partial, {failure}; no unit switched", command(Verb.APPLY))
             return ApplyExit.REFUSED
         for plan in changes:
-            if since := switch(engine, plan, progress, marks, read):
+            if since := switch(engine, plan, progress, marks, planned.read):
                 withheld[plan.unit.key] = since
         started = [plan for plan in changes if plan.unit.key not in withheld]
         mismatched = _observe_and_record(engine, planned, core_phase, started, progress)

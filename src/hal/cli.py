@@ -16,7 +16,7 @@ from hal import (
     version,
 )
 from hal.grammar import Command, ExitCode
-from hal.output import write_error
+from hal.output import verbose_run, write_error
 from hal.output.command import PROGRAM
 from hal.workstation import secrets_view
 
@@ -54,6 +54,9 @@ def build_parser(commands: Sequence[Command]) -> argparse.ArgumentParser:
     for command in commands:
         subparser = registry.add_parser(command.name.value, help=command.summary)
         command.configure(subparser)
+        subparser.add_argument(
+            "-v", "--verbose", action="store_true", help="more detail, where the command has it"
+        )
         if command.json:
             subparser.add_argument("--json", action="store_true", help="print the result as JSON")
         subparser.set_defaults(run=command.run)
@@ -68,7 +71,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return ExitCode.OK
     try:
         parsed = parser.parse_args(arguments)
-        return parsed.run(parsed)
+        with verbose_run(parsed.verbose):
+            return parsed.run(parsed)
     except KeyboardInterrupt:
         return ExitCode.INTERRUPTED
     except secrets_view.ManifestError as error:

@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from hal.grammar import Asks, Command, ExitCode
-from hal.output import Stream, printable, write_error, write_line
+from hal.output import Stream, is_verbose, printable, write_error, write_line
 from hal.output.command import PROGRAM, Verb, command
 from hal.stack import checkout
 
@@ -19,9 +19,7 @@ NO_CHECKOUT = "no checkout (installed from a wheel)"
 
 
 def configure(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="print each git call on stderr"
-    )
+    parser.description = "Name the code that runs. -v prints each git call on stderr."
 
 
 def run(arguments: argparse.Namespace) -> ExitCode:
@@ -29,7 +27,7 @@ def run(arguments: argparse.Namespace) -> ExitCode:
     if not (tree / ".git").exists():
         write_line(NO_CHECKOUT)
         return ExitCode.OK
-    runner = _echoing(checkout.run_git) if arguments.verbose else checkout.run_git
+    runner = _echoing(checkout.run_git) if is_verbose() else checkout.run_git
     try:
         line = describe(checkout.Git(tree, runner))
     except checkout.GitError as error:
