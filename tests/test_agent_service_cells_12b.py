@@ -18,6 +18,7 @@ import pytest
 from support.probe_support import CONFIGURATION, TOKEN, login_probe_modules, make_login, resolved
 
 MARKER = "SECRET-MARKER-NOT-TO-BE-PRINTED"
+TEMPORARY_MOUNT = "/tmp"  # noqa: S108 - a mount path the scenario names and never a file this test creates
 
 
 @pytest.fixture(scope="module")
@@ -380,7 +381,13 @@ def s00_run(probe, mounts):
 @pytest.mark.parametrize(
     ("mounts", "held", "failed", "not_driven", "line"),
     [
-        ({"/tmp": ((), 0)}, ["S00 (roots)", "S00 (token)"], [], [], "S00 (token) held: 0 files"),
+        (
+            {TEMPORARY_MOUNT: ((), 0)},
+            ["S00 (roots)", "S00 (token)"],
+            [],
+            [],
+            "S00 (token) held: 0 files",
+        ),
         (
             {"n-0": ((("replaced", 1),), 0)},
             [],
@@ -389,21 +396,21 @@ def s00_run(probe, mounts):
             "S00 (roots) NOT DRIVEN: 1 directory roots were not listed",
         ),
         (
-            {"/tmp": ((), 2)},
+            {TEMPORARY_MOUNT: ((), 2)},
             ["S00 (roots)"],
             ["S00 (token)"],
             [],
             "S00 (token) FAILED: 2 files hold the login token",
         ),
         (
-            {"/tmp": ((("refused", 1),), 0)},
+            {TEMPORARY_MOUNT: ((("refused", 1),), 0)},
             ["S00 (roots)"],
             [],
             ["S00 (token)"],
             "S00 (token) NOT DRIVEN: 1 entries could not be read for the token",
         ),
         (
-            {"/tmp": ((), 0), "n-0": ((("file mount", 1),), 0)},
+            {TEMPORARY_MOUNT: ((), 0), "n-0": ((("file mount", 1),), 0)},
             ["S00 (roots)", "S00 (token)"],
             [],
             [],
@@ -424,7 +431,9 @@ def test_the_s00_verdicts_decide_the_cells_and_the_run(
 ):
     """#457 rows 9 and 10: the cell turns the census into held, failed and not driven."""
     census_mounts = {
-        shown: probe.census.Mount((("n-0", "file"),) if shown == "/tmp" else (), skips, token_files)
+        shown: probe.census.Mount(
+            (("n-0", "file"),) if shown == TEMPORARY_MOUNT else (), skips, token_files
+        )
         for shown, (skips, token_files) in mounts.items()
     }
     run = s00_run(probe, census_mounts)

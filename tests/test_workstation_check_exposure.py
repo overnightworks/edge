@@ -25,6 +25,7 @@ SSHD_ON_PORT = 'tcp LISTEN 0 128 0.0.0.0:{port} 0.0.0.0:* users:(("sshd",pid=900
 SSHD_ROW = "  ! exposure        1 action       sshd can be reached from beyond this PC"
 BROKEN_ROW = "  ✗ exposure        not checked    the check did not run · details in the report"
 ENV_CANARY = "CANARY-ENV-VALUE-0xDEADBEEF"
+PUBLISHED_ADDRESS = "0.0.0.0"  # noqa: S104 - the address of a publication open to every IPv4 interface
 
 
 @pytest.fixture
@@ -154,7 +155,7 @@ def test_neither_the_address_the_port_nor_an_env_value_reach_mail_or_popup(
 ) -> None:
     """The mail names the container and nothing more; no env value is read into any output."""
     docker = docker_with_containers(
-        tmp_path, published_container("edge-keycloak-1", "0.0.0.0", "8080")
+        tmp_path, published_container("edge-keycloak-1", PUBLISHED_ADDRESS, "8080")
     )
 
     home_check(clean_home, runner, docker_script=docker)
@@ -163,7 +164,7 @@ def test_neither_the_address_the_port_nor_an_env_value_reach_mail_or_popup(
     body = message_of(mail_stub.sent[0]).get_content()
     assert "edge-keycloak-1 can be reached from beyond this PC." in body
     carried = [body, *runner.notifications, *runner.notification_bodies]
-    assert not any(token in text for text in carried for token in ("0.0.0.0", "8080", "tcp"))
+    assert not any(token in text for text in carried for token in (PUBLISHED_ADDRESS, "8080", "tcp"))
     everywhere = [
         *carried,
         layout.check_report_file.read_text(),

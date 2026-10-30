@@ -17,6 +17,8 @@ RUNNER_FAILED = "The runner of run r1 failed: CapabilityReflected at 3\n"
 NOT_CONNECTED = "A CLI run's start announcement was refused (RELAY_NOT_CONNECTED)\n"
 OTHER_REFUSAL = "A CLI run's start announcement was refused (TOOLS_UNCHANGED)\n"
 LOGIN_REFUSED = "run r1 failed: CliLoginRefusedError\n"
+TEMPORARY_MOUNT = "/tmp"  # noqa: S108 - a mount path the scenario names and never a file this test creates
+SHARED_MEMORY_MOUNT = "/dev/shm"  # noqa: S108 - a mount path the scenario names and never a file this test creates
 
 
 @pytest.fixture(scope="module")
@@ -229,7 +231,7 @@ def test_b4_holds_when_the_service_died_once_and_left_no_marker_or_file(containm
         "host marker",
         "container marker",
         "working root not empty",
-        "/tmp not empty",
+        f"{TEMPORARY_MOUNT} not empty",
     ],
 )
 def test_b4_fails_on_each_condition_alone(containment, cell, arguments):
@@ -361,7 +363,7 @@ def look(containment, *, processes=(INIT, SERVICE, CENSUS), mounts=None, listene
     mounts = (
         mounts
         if mounts is not None
-        else {"/work": mount(containment), "/tmp": mount(containment, "a")}
+        else {"/work": mount(containment), TEMPORARY_MOUNT: mount(containment, "a")}
     )
     return containment.Look(
         tuple(containment.Process(*record) for record in processes),
@@ -372,7 +374,7 @@ def look(containment, *, processes=(INIT, SERVICE, CENSUS), mounts=None, listene
 
 
 def roots(containment):
-    return containment.Roots(working="/work", temporary="/tmp")
+    return containment.Roots(working="/work", temporary=TEMPORARY_MOUNT)
 
 
 def b5(containment, before, after, terminals=RUNS):
@@ -411,10 +413,10 @@ def test_b5_fails_on_each_observation_alone(containment, cell, changes):
 
 
 def test_b5_working_root_or_tmp_difference_fails(containment):
-    leftover = {"/work": mount(containment, "run"), "/tmp": mount(containment, "a")}
+    leftover = {"/work": mount(containment, "run"), TEMPORARY_MOUNT: mount(containment, "a")}
     changed_tmp = {
         "/work": mount(containment),
-        "/tmp": mount(containment, "a", "cc-socks-1000"),
+        TEMPORARY_MOUNT: mount(containment, "a", "cc-socks-1000"),
     }
     for mounts in (leftover, changed_tmp):
         verdicts = b5(containment, look(containment), after_the_runs(containment, mounts=mounts))
@@ -426,27 +428,30 @@ def test_b5_other_mount_difference_is_reported_not_failed(containment):
         containment,
         mounts={
             "/work": mount(containment),
-            "/tmp": mount(containment, "a"),
-            "/dev/shm": mount(containment),
+            TEMPORARY_MOUNT: mount(containment, "a"),
+            SHARED_MEMORY_MOUNT: mount(containment),
         },
     )
     after = after_the_runs(
         containment,
         mounts={
             "/work": mount(containment),
-            "/tmp": mount(containment, "a"),
-            "/dev/shm": mount(containment, "n-1"),
+            TEMPORARY_MOUNT: mount(containment, "a"),
+            SHARED_MEMORY_MOUNT: mount(containment, "n-1"),
         },
     )
     assert all(b5(containment, before, after).values())
     changed = containment.changed_mounts(before, after, roots(containment))
-    assert changed == {"/dev/shm": (("n-1", "file"),)}
+    assert changed == {SHARED_MEMORY_MOUNT: (("n-1", "file"),)}
 
 
 def test_b5_reports_cc_socks_in_tmp(containment):
     after = after_the_runs(
         containment,
-        mounts={"/work": mount(containment), "/tmp": mount(containment, "a", "cc-socks-1000")},
+        mounts={
+            "/work": mount(containment),
+            TEMPORARY_MOUNT: mount(containment, "a", "cc-socks-1000"),
+        },
     )
     verdicts = containment.b5_verdicts(look(containment), after, RUNS, roots(containment))
     assert (
@@ -543,17 +548,20 @@ def test_loopback_listeners_counts_127_and_ipv6_loopback(containment, names, cou
 def test_b5_is_not_driven_when_the_working_root_or_tmp_skipped_something(containment):
     working_roots = roots(containment)
     for reason in ("replaced", "refused", "login excluded", "too deep"):
-        skipped = {"/work": mount(containment, skips={reason: 1}), "/tmp": mount(containment)}
+        skipped = {
+            "/work": mount(containment, skips={reason: 1}),
+            TEMPORARY_MOUNT: mount(containment),
+        }
         seen = look(containment, mounts=skipped)
         with pytest.raises(containment.NotDriven):
             containment.expect_comparable(seen, seen, working_roots)
 
 
 def test_b5_is_not_driven_when_any_skip_changed(containment):
-    base = {"/work": mount(containment), "/tmp": mount(containment)}
-    before = look(containment, mounts={**base, "/dev/shm": mount(containment)})
+    base = {"/work": mount(containment), TEMPORARY_MOUNT: mount(containment)}
+    before = look(containment, mounts={**base, SHARED_MEMORY_MOUNT: mount(containment)})
     after = look(
-        containment, mounts={**base, "/dev/shm": mount(containment, skips={"vanished": 1})}
+        containment, mounts={**base, SHARED_MEMORY_MOUNT: mount(containment, skips={"vanished": 1})}
     )
     working_roots = roots(containment)
     with pytest.raises(containment.NotDriven):
@@ -563,7 +571,7 @@ def test_b5_is_not_driven_when_any_skip_changed(containment):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"mounts": {"/work": ("run",), "/tmp": ()}},
+        {"mounts": {"/work": ("run",), TEMPORARY_MOUNT: ()}},
         {"processes": (INIT, SERVICE, CENSUS, (41, 7, 41, 41, "n-x"))},
     ],
     ids=["working root not empty", "an extra process"],
@@ -628,12 +636,12 @@ def test_every_minted_token_is_in_the_s1_list(containment):
 def test_b5_prints_what_lets_a_reader_check_the_census(containment):
     before = look(
         containment,
-        mounts={"/work": mount(containment, "w-before"), "/tmp": mount(containment, "a")},
+        mounts={"/work": mount(containment, "w-before"), TEMPORARY_MOUNT: mount(containment, "a")},
     )
     after = look(
         containment,
         log=runner_lines(first=998, count=3),
-        mounts={"/work": mount(containment, "w-after"), "/tmp": mount(containment, "a")},
+        mounts={"/work": mount(containment, "w-after"), TEMPORARY_MOUNT: mount(containment, "a")},
     )
     verdicts = containment.b5_verdicts(before, after, RUNS, roots(containment))
     assert (
@@ -642,5 +650,5 @@ def test_b5_prints_what_lets_a_reader_check_the_census(containment):
     )
     assert "first run r998" in verdicts["B5 (log)"][1]
     assert "last run r1000" in verdicts["B5 (log)"][1]
-    assert "/tmp before [a (file)], after [a (file)]" in verdicts["B5 (mounts)"][1]
+    assert f"{TEMPORARY_MOUNT} before [a (file)], after [a (file)]" in verdicts["B5 (mounts)"][1]
     assert "(n-init, n-svc)" in verdicts["B5 (processes)"][1]
