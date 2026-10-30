@@ -1,8 +1,0 @@
-claim_id = "d2cecec836ae4a9298101f82de4910dc"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "e98de28f33cbad4c76ff1eed6d7e9203336d471f"
-branch = "claude/issue-774-s3a-2b-system-events"
-scope = [".github/workflows/ci.yml", "docs/design/hal-output.html", "docs/home.md", "pyproject.toml", "src/hal/workstation/system/ansible.cfg", "src/hal/workstation/system/callback_plugins/hal_events.py", "src/hal/workstation/system_step.py", "tests/test_workstation_setup.py", "tests/test_workstation_system_callback.py", "tests/test_workstation_system_step_runner.py", "tests/workstation_support.py", "uv.lock"]
-opened_commit = "c83814875082120d66fa372be54dd621d2e54eb1"
-whole_reason = "The callback, the reader that judges the root run by its events, the packaged cfg that selects it and the CI test that runs it under real Ansible are one protocol across two processes; neither half works without the other."
