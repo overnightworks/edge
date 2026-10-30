@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from hal.stack import compose, core, switches
+from hal.stack import realm as realm_lines
 from hal.stack.realm import observe, reconcile
 from hal.stack.realm.reconcile import RealmAction, RealmPlan, RealmRestart
 
@@ -24,6 +25,26 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 SNAPSHOT = "ab12cd34"
 ATTRIBUTE = "de.adorsys.keycloak.config.import-checksum-default"
 GROUP = observe.GROUP.name
+
+
+def applied(result: reconcile.StepResult) -> reconcile.RealmApplied:
+    assert result.applied is not None
+    return result.applied
+
+
+def change_lines(result: reconcile.StepResult) -> list[str]:
+    return [realm_lines.line(change) for change in applied(result).changes]
+
+
+def leftovers(result: reconcile.StepResult) -> reconcile.Leftovers:
+    found = applied(result).leftovers
+    assert found is not None
+    return found
+
+
+def listed(result: reconcile.StepResult) -> list[str]:
+    """What the step left alone, as `kind identity` of each object."""
+    return [f"{item.kind} {item.identity}" for item in leftovers(result).found]
 
 
 def group(name: str, members: int = 0) -> dict:
@@ -283,15 +304,12 @@ def test_the_step_backs_up_proves_observes_applies_observes_and_lists_the_change
         "backup", "restore test", "observe", "config-cli", "observe", "checksums",
     ]  # fmt: skip
     assert result.failure is None
-    assert result.lines[:2] == (
-        f"realm: applied keycloak/*.yaml; pre-apply snapshot {SNAPSHOT} "
-        "(0s backup, 0s restore test)",
-        "hallucinai: addition group operators (2 members)",
-    )
+    assert (applied(result).snapshot, applied(result).seconds) == (SNAPSHOT, 0.0)
+    assert change_lines(result) == ["hallucinai: addition group operators (2 members)"]
 
 
 def test_an_apply_that_changes_nothing_says_so(world: World) -> None:
-    assert world.step().lines[1] == "realm: no changes"
+    assert applied(world.step()).changes == ()
 
 
 def test_a_removal_is_printed_as_reset_to_the_file_with_the_snapshot(world: World) -> None:
@@ -301,10 +319,9 @@ def test_a_removal_is_printed_as_reset_to_the_file_with_the_snapshot(world: Worl
     result = world.step()
 
     assert result.failure is None
-    assert result.lines[1:2] == (
-        "hallucinai: removal group console-made (0 members): reset to the file, "
-        f"pre-apply snapshot {SNAPSHOT}",
-    )
+    assert [(change.kind, change.identity) for change in applied(result).changes] == [
+        (realm_lines.Kind.REMOVAL, "console-made")
+    ]
 
 
 def test_a_failed_backup_applies_nothing(world: World) -> None:
@@ -356,7 +373,7 @@ def test_a_failed_config_cli_is_partial_names_the_way_back_and_is_planned_again(
         f'pre-apply snapshot {SNAPSHOT}, the way back is docs/backup.md "Restore Keycloak"; '
         "the next run repeats the step"
     )
-    assert result.lines == ()  # cell 5: a failed step lists nothing
+    assert result.applied is None  # cell 5: a failed step lists nothing
     assert world.plan().action is RealmAction.RUN
 
 
@@ -616,7 +633,7 @@ def test_a_bind_resolution_that_fails_is_a_partial_line_not_a_traceback(
     assert world.events == []
 
 
-def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repeats(
+def test_a_record_that_cannot_be_written_keeps_the_changes_and_says_it_repeats(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world.after = inventory(group("/apps"), group("operators", members=2))
@@ -628,8 +645,8 @@ def test_a_record_that_cannot_be_written_keeps_the_change_lines_and_says_it_repe
 
     result = world.step()
 
-    assert "hallucinai: addition group operators (2 members)" in result.lines
-    assert not [line for line in result.lines if "only in Keycloak" in line]
+    assert change_lines(result) == ["hallucinai: addition group operators (2 members)"]
+    assert applied(result).leftovers is None
     assert result.failure == (
         "realm: applied and observed, but the record could not be written "
         "(cannot write applied.json (Permission denied)); the next run repeats the step"
@@ -660,9 +677,8 @@ def test_an_object_made_in_the_console_is_listed_and_has_no_removal_line(
     result = world.step()
 
     assert result.failure is None
-    assert f"realm: only in Keycloak: hallucinai {kind} {identity}" in result.lines
-    assert f"realm: only in Keycloak: hallucinai {GROUP} console-made" in result.lines
-    assert [line for line in result.lines if "removal" in line] == []
+    assert sorted(listed(result)) == sorted([f"{kind} {identity}", f"{GROUP} console-made"])
+    assert applied(result).changes == ()
 
 
 def test_what_the_files_declare_and_keycloak_brings_itself_is_not_listed(world: World) -> None:
@@ -689,8 +705,8 @@ def test_what_the_files_declare_and_keycloak_brings_itself_is_not_listed(world: 
 
     result = world.step()
 
-    assert result.lines[2] == reconcile.NOTHING_ONLY_IN_KEYCLOAK
-    assert len(result.lines) == 4
+    assert (leftovers(result).found, leftovers(result).absent) == ((), ())
+    assert leftovers(result).files_read
 
 
 def test_a_declared_group_in_a_declared_sub_tree_is_not_listed(world: World) -> None:
@@ -700,22 +716,17 @@ def test_a_declared_group_in_a_declared_sub_tree_is_not_listed(world: World) -> 
     )
     world.before = world.after = inventory(group("/apps"), group("/apps/admin"), group("/other"))
 
-    lines = world.step().lines
+    result = world.step()
 
-    assert [line for line in lines if "only in Keycloak" in line] == [
-        f"realm: only in Keycloak: hallucinai {GROUP} /other"
-    ]
+    assert listed(result) == [f"{GROUP} /other"]
 
 
-def test_the_kinds_that_cannot_be_read_are_named_on_one_line(world: World) -> None:
+def test_the_kinds_that_cannot_be_read_are_carried_by_name(world: World) -> None:
     """Cell 3."""
-    lines = world.step().lines
+    unread = leftovers(world.step()).unread
 
-    unread = [line for line in lines if line.startswith(reconcile.NOT_READ)]
-    assert len(unread) == 1
-    assert "defaultGroups" in unread[0]
-    assert "workflows" in unread[0]
-    assert ":" not in unread[0].removeprefix(reconcile.NOT_READ)
+    assert {"defaultGroups", "workflows"} <= set(unread)
+    assert not [name for name in unread if "." in name]
 
 
 def test_the_list_holds_names_only(world: World) -> None:
@@ -725,22 +736,10 @@ def test_the_list_holds_names_only(world: World) -> None:
         group("/apps"), **{observe.CLIENT.name: {"console-client": made}}
     )
 
-    lines = world.step().lines
+    result = world.step()
 
-    assert f"realm: only in Keycloak: hallucinai {observe.CLIENT.name} console-client" in lines
-    assert not [line for line in lines if "planted" in line]
-
-
-def test_a_console_name_with_an_escape_stays_one_line(world: World) -> None:
-    named = "console\x1b[31m\nname"
-    world.before = world.after = inventory(group("/apps"), group(named))
-
-    lines = world.step().lines
-
-    assert not [line for line in lines if "\x1b" in line or "\n" in line]
-
-
-UNLISTED = "realm: only in Keycloak: not listed, the realm files could not be read"
+    assert listed(result) == [f"{observe.CLIENT.name} console-client"]
+    assert "planted" not in repr(applied(result))
 
 
 @pytest.mark.parametrize(
@@ -762,8 +761,8 @@ def test_realm_files_that_cannot_be_read_leave_the_step_as_it_ended(
     expected = world.step()
 
     assert without_the_list.failure is None
-    assert without_the_list.lines[-1] == UNLISTED
-    assert without_the_list.lines[:-1] == expected.lines[: len(without_the_list.lines) - 1]
+    assert leftovers(without_the_list).files_read is False
+    assert applied(without_the_list).changes == applied(expected).changes
 
 
 def test_a_file_in_an_unreadable_encoding_leaves_the_step_as_it_ended(world: World) -> None:
@@ -772,7 +771,7 @@ def test_a_file_in_an_unreadable_encoding_leaves_the_step_as_it_ended(world: Wor
     result = world.step()
 
     assert result.failure is None
-    assert result.lines[-1] == UNLISTED
+    assert leftovers(result).files_read is False
 
 
 def test_a_yaml_scalar_the_loader_cannot_build_still_records_and_says_unreadable(
@@ -783,7 +782,7 @@ def test_a_yaml_scalar_the_loader_cannot_build_still_records_and_says_unreadable
     result = world.step()
 
     assert result.failure is None
-    assert result.lines[-1] == UNLISTED
+    assert leftovers(result).files_read is False
     assert world.plan().settled
 
 
@@ -795,7 +794,7 @@ def test_a_key_left_empty_in_a_realm_file_still_records_and_lists(world: World) 
     result = world.step()
 
     assert result.failure is None
-    assert f"realm: only in Keycloak: hallucinai {GROUP} /console" in result.lines
+    assert listed(result) == [f"{GROUP} /console"]
     assert world.plan().settled
 
 
@@ -807,8 +806,7 @@ def test_a_realm_the_files_name_that_was_not_observed_is_one_line_not_a_tracebac
     result = world.step()
 
     assert result.failure is None
-    assert "realm: only in Keycloak: elsewhere not listed, it was not observed" in result.lines
-    assert reconcile.NOTHING_ONLY_IN_KEYCLOAK not in result.lines
+    assert leftovers(result).absent == ("elsewhere",)
 
 
 def test_a_failed_step_lists_nothing_only_in_keycloak(world: World) -> None:
@@ -819,7 +817,7 @@ def test_a_failed_step_lists_nothing_only_in_keycloak(world: World) -> None:
     result = world.step()
 
     assert result.failure is not None
-    assert not [line for line in result.lines if "only in Keycloak" in line]
+    assert result.applied is None
 
 
 # --- hal backup is stopped, not killed --------------------------------------------------------
