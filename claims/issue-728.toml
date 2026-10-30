@@ -1,8 +1,0 @@
-claim_id = "3bb236e6b9bb4bc3b725f56aafc93da8"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "dd0c56194fc550782750bb42fec6c64c4f1025c1"
-branch = "claude/issue-728-s7c-external-prints-write-line"
-scope = ["src/hal/stack/external/apply.py", "src/hal/stack/external/cli.py", "src/hal/stack/external/tofu.py", "src/hal/stack/external/tofu_test.py"]
-opened_commit = "eeb3449f50deb1e946ca072006eb6d073014a52e"
-whole_reason = "One rule, one sink and one mapping across the four files of the publish path; a split leaves it half on the writer."
