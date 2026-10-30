@@ -23,6 +23,8 @@ always removes its containers, volumes, networks and images, found by their comp
     flock -o -w 1200 /tmp/probe-stack.lock timeout -k 50 1780 \\
         python3 probe/apps/probe.py --scratch DIR [--switch-only]
 
+Measured teardown: 2 s (K 50 s, CAP 1780 s).
+
 Needs an empty or new --scratch directory, `uv` (it runs `uv sync` in the copy) and a Docker that
 may pull busybox and Traefik.
 """

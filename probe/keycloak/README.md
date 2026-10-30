@@ -11,6 +11,8 @@ routing name that is not valid, by design of the `edge.name: PROBE` label that k
     flock -o -w 1200 /tmp/probe-stack.lock timeout -k 50 540 \
         python3 probe/keycloak/probe.py [run|hold] --scratch DIR
 
+Measured teardown: 11 s (K 50 s, CAP 540 s).
+
 Before each `compose up` the probe writes appkit's tokens and fonts into this checkout, where the
 themes read them (`appkit-<version>/` beside each theme's `css/`), through
 `uv run --project <checkout> python -m hal.stack.appkit_step <checkout>`. Any interpreter starts the probe, but

@@ -11,6 +11,8 @@ prints only verdicts, counts and role names. An agent runs it only with a dummy 
     flock -o -w 1200 /tmp/probe-stack.lock timeout -k 50 1780 \\
         python3 probe/agent-service/cells_12b.py --login-directory DIR
 
+Measured teardown: 11 s (K 50 s, CAP 1780 s).
+
 Exit 0: every cell held, 1: a cell failed or was not driven, 2: the arguments were refused.
 """
 

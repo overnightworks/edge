@@ -5,6 +5,8 @@ the real `agent-service` of compose.yaml, in a throwaway compose project of thei
     flock -o -w 1200 /tmp/probe-stack.lock timeout -k 50 1780 \\
         python3 probe/agent-service/egress.py --scratch DIR [--target stand-in|service]
 
+Measured teardown: 2 s (K 50 s, CAP 1780 s).
+
 The stack runs from a copy of compose.yaml and of the gateway's static file with the egress
 network moved to a free /24 of its own (the gateway's address and the subject's `extra_hosts`
 follow through the anchors), so it never collides with the live stack's `edge_egress`

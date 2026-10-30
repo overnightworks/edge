@@ -46,6 +46,8 @@ or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down whi
     flock -o -w 1200 /tmp/probe-stack.lock timeout -k 30 900 \\
         python3 probe/switches/probe.py --scratch DIR
 
+Measured teardown: not measured yet (K 30 s, CAP 900 s).
+
 Needs an existing, empty --scratch directory, and `uv`: it runs `uv sync` in the copy.
 """
 
