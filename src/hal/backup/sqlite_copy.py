@@ -37,7 +37,7 @@ def check(database: Path, table: str) -> int:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise sqlite3.DatabaseError("integrity_check")
         quoted = '"' + table.replace('"', '""') + '"'
-        return connection.execute(f"SELECT count(*) FROM {quoted}").fetchone()[0]
+        return connection.execute(f"SELECT count(*) FROM {quoted}").fetchone()[0]  # noqa: S608 - the table name is quoted by doubling its quotes
 
 
 def main(arguments: list[str]) -> int:

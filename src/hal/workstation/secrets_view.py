@@ -63,11 +63,11 @@ class SecretKind(Enum):
     Documentation and configuration are the known files under ~/.secrets that hold no secret.
     """
 
-    HUMAN_PASSWORD = "human-password"
+    HUMAN_PASSWORD = "human-password"  # noqa: S105 - a finding kind name and no credential
     TOOL_LOGIN = "tool-login"
-    TOKEN = "token"
-    SERVICE_PASSWORD = "service-password"
-    UNVERIFIED_TOKEN = "unverified-token"
+    TOKEN = "token"  # noqa: S105 - a finding kind name and no credential
+    SERVICE_PASSWORD = "service-password"  # noqa: S105 - a finding kind name and no credential
+    UNVERIFIED_TOKEN = "unverified-token"  # noqa: S105 - a finding kind name and no credential
     DERIVED_MIRROR = "derived-mirror"
     CONFIGURATION = "configuration"
     DOCUMENTATION = "documentation"
@@ -429,7 +429,7 @@ def probe_exit_code(argv: Sequence[str], timeout: float = PROBE_TIMEOUT_SECONDS)
     """
     with _StopsAroundTheProbe() as stops:
         try:
-            probe = subprocess.Popen(
+            probe = subprocess.Popen(  # noqa: S603 - argv is the probe the check names and no shell runs
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
             )
         except FileNotFoundError:
