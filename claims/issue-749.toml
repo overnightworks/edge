@@ -3,6 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "afda39a5f2a1f8e564e3ef92586fa939c90c1bdf"
 branch = "claude/issue-749-agent-runtime-0-12-0"
-scope = ["agent-service/image/Dockerfile", "agent-service/image/requirements.txt", "compose.yaml", "docs/agent-service.md", "docs/architecture.md", "probe/agent-service/unit.py", "tests/test_agent_service_image.py", "tests/test_agent_service_unit.py"]
+scope = ["agent-service/image/Dockerfile", "agent-service/image/requirements.txt", "compose.yaml", "docs/agent-service.md", "docs/architecture.md", "probe/agent-service/scratch_secrets.py", "probe/agent-service/unit.py", "tests/test_agent_service_image.py", "tests/test_agent_service_unit.py"]
 opened_commit = "3bcadfa9d10cefc16d1597f1438ae015926c4d46"
 whole_reason = "The lock, the Python base, the compose tag, the writable Codex bind and its probe and docs change together; a read-write bind the probe still calls read-only, or a lock without the grace, is wrong."
