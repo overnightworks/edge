@@ -874,7 +874,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
   - uses the common door (§10 rule 7);
   - reports its load numbers.
 - A load balancer and a second machine's setup come with the first rented GPU.
-- What stays allowed: an app keeps its own single-instance state (in-process state, SQLite, local files), as the goal "Scale" above lists. A shared service does not.
+- What stays allowed: an app keeps its own single-instance state (in-process state, SQLite, local files), such as agent-presentator's SQLite and files or hopin's rooms in the goal "Scale" above. That list is about instance count: one instance stays allowed for everyone, and scaling is an item. A shared service may run one replica but keeps no state that matters only in its process.
 - An item that spreads or scales a service has the matching checklist below as its done-when; the checklists are the mechanics that items build when a caller needs them.
 - **Any second machine** (spread or scale):
   - encrypted links between machines;
