@@ -12,7 +12,16 @@ from hal.backup.apps import App, AppsError, parse_apps
 from hal.backup.runner import Interrupted, Run, StepFailed
 from hal.backup.settings import Settings
 from hal.backup.status import ExitCategory, first_attempt
-from hal.output import Glyph, Noun, Verdict, counted, format_moment, write_row, write_verdict
+from hal.output import (
+    Glyph,
+    Noun,
+    Verdict,
+    counted,
+    format_moment,
+    write_line,
+    write_row,
+    write_verdict,
+)
 from hal.output.command import Verb, command
 
 # uv installs the project editable, so this file sits in the checkout: src/hal/backup/cli.py.
@@ -24,7 +33,7 @@ def init(settings: Settings, _: argparse.Namespace) -> None:
     runner.require_password_file(settings)
     settings.repository.mkdir(mode=0o700, parents=True, exist_ok=True)
     _command(restic.init, settings)
-    print(f"{command(Verb.BACKUP)}: repository created")
+    write_line(f"{command(Verb.BACKUP)}: repository created")
 
 
 def backup(settings: Settings, arguments: argparse.Namespace) -> None:
@@ -51,7 +60,7 @@ def backup(settings: Settings, arguments: argparse.Namespace) -> None:
 
     def announce(run: Run) -> None:
         if arguments.json:
-            print(json.dumps({"snapshot": run.snapshot_of(arguments.app)}))
+            write_line(json.dumps({"snapshot": run.snapshot_of(arguments.app)}))
         else:
             noun = AppCount.APP
             write_verdict(
@@ -127,11 +136,10 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
             if run.failed_apps:
                 failed = run.failed_apps
                 total = run.proven_apps + len(failed)
-                failure.error_line = (
-                    _app_failure_line(run, failure)
-                    if arguments.snapshot
-                    else _failed_apps_line(failed, total, "not proven")
-                )
+                if arguments.snapshot:
+                    failure.error_line = _app_failure_line(run, failure)
+                else:
+                    failure.error_line = _failed_apps_line(failed, total, "not proven")
                 failure.next_step = command(Verb.RESTORE, "--test", failed[0])
             raise
 
@@ -152,7 +160,7 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
 def snapshots(settings: Settings, _: argparse.Namespace) -> None:
     runner.require_secret_and_repository(settings)
     listing = _command(restic.snapshots, settings)
-    print(listing, end="")
+    write_line(listing, end="")
 
 
 def unlock(settings: Settings, _: argparse.Namespace) -> None:
@@ -166,7 +174,7 @@ def restore(settings: Settings, arguments: argparse.Namespace) -> None:
     snapshot_id = _command(
         runner.restore, settings, apps, app, arguments.target, arguments.snapshot
     )
-    print(
+    write_line(
         f"{command(Verb.RESTORE)}: snapshot {snapshot_id[:8]} of {app.name} "
         f"restored into {arguments.target}"
     )

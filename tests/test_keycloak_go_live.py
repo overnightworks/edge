@@ -3,8 +3,6 @@
 import dataclasses
 import fcntl
 import getpass
-import importlib.machinery
-import importlib.util
 import json
 import os
 import re
@@ -20,6 +18,7 @@ from types import ModuleType
 from urllib.parse import parse_qs
 
 import pytest
+from support.script_module import loaded_script
 
 from hal.stack import switches
 
@@ -32,14 +31,7 @@ SENTINEL_PASSWORD = "sentinel-first-password-7f3a"
 
 @pytest.fixture(scope="module")
 def golive() -> Iterator[ModuleType]:
-    loader = importlib.machinery.SourceFileLoader("keycloak_go_live", str(SCRIPT))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
-    loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+    yield from loaded_script("keycloak_go_live", SCRIPT)
 
 
 # Not "edge_keycloak-db": compose, not the script, decides the project name.

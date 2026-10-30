@@ -34,7 +34,8 @@ and `hal apply --local` writes it again.
   tokens and fonts (`legal/assets/appkit-<version>/`, which `hal apply` writes from the installed appkit) answer under `/_rechtliches/`, every other path with 404. The catalog gives
   it the apex as its host, which the Cloudflare redirect leaves to it for the three pages, `/favicon.ico` (answered 404) and
   `/_rechtliches/` (`cloudflare.redirect.serve`). The pages are built by `hal apply` from `legal/frame` and `legal/sections` (the plan names each page that is
-  new or changes) and go live when it has written them; before the first build they answer 404. The stylesheet goes live once the live checkout is
+  new or changes) and go live when it has written them; every answer carries `Cache-Control: no-cache`, so a cache that
+  stored a page asks again before it shows it; before the first build they answer 404. The stylesheet goes live once the live checkout is
   pulled; a changed `legal/nginx/default.conf` needs the container restarted with `hal stop legal` and
   `hal start legal`.
 - **Readiness.** The stack is ready when `127.0.0.1:8081` and `127.0.0.1:8090` listen, an unknown host

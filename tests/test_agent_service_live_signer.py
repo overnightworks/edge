@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "agent-service"))
 
 import live_signer  # noqa: E402
 from live_smoke import LiveSmokeFailed, Report, Verdict  # noqa: E402
-from live_smoke_fakes import (  # noqa: E402
+from support.live_smoke_fakes import (  # noqa: E402
     KNOWN,
     SECRET_FILES,
     SERVICE_NETWORKS,

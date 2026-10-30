@@ -11,7 +11,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
-from probe_support import probe_imports
+from support.probe_support import probe_imports
 
 KEY = bytes(range(32))
 SERVICE, CLI, TOOL = 7, 20, 21

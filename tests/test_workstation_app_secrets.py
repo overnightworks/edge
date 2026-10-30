@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 from workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
 from workstation_secrets_support import never_run, FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
-from test_workstation_secrets_view import findings_of
+from support.workstation_secrets_report import findings_of
 
-from terminal_support import put_stdout_on_a_terminal
+from support.terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
 from hal.workstation import ports as home_ports
 from hal.workstation import secrets_view

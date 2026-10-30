@@ -28,7 +28,7 @@ SetupCheck = Callable[[list[str]], subprocess.CompletedProcess[str]]
 
 
 def run_setup_check(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - the argv is a setup check the fleet file declares and no shell runs
         command, capture_output=True, text=True, check=False, timeout=SETUP_CHECK_SECONDS
     )
 
@@ -81,7 +81,7 @@ def run_setup(command: Path, repository: Path) -> SetupRun:
 
     previous = signal.signal(signal.SIGINT, note_interrupt)
     try:
-        exit_code = subprocess.run([str(command)], cwd=repository, check=False).returncode
+        exit_code = subprocess.run([str(command)], cwd=repository, check=False).returncode  # noqa: S603 - runs the unit own setup script and no shell runs
     finally:
         signal.signal(signal.SIGINT, previous)
     return SetupRun(exit_code, interrupted or exit_code == -signal.SIGINT)

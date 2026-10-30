@@ -8,8 +8,10 @@ network takes a free /24 from 172.31.200.0 up. Both modes need an empty or new `
 directory and always tear the stack down. While a probe runs, `hal check exposure` reports its Keycloak as a
 routing name that is not valid, by design of the `edge.name: PROBE` label that keeps the live Traefik away.
 
-    flock /tmp/probe-stack.lock timeout --kill-after=50 540 \
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 540 \
         python3 probe/keycloak/probe.py [run|hold] --scratch DIR
+
+Measured teardown: 11 s (K 50 s, CAP 540 s).
 
 Before each `compose up` the probe writes appkit's tokens and fonts into this checkout, where the
 themes read them (`appkit-<version>/` beside each theme's `css/`), through
@@ -112,8 +114,10 @@ or a `teardown: stack edge-kc-probe FAILED` line, remove the project under the l
 directory without a compose file, because Compose finds its containers, networks and volumes by the
 name:
 
-    flock /tmp/probe-stack.lock \
-        timeout --kill-after=30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM \
+        timeout -k 30 300 docker compose --project-name edge-kc-probe down --volumes --remove-orphans
+
+This command is itself the teardown: its K of 30 seconds covers compose's own stop.
 
 ## `hold` contract
 

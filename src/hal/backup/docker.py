@@ -319,7 +319,7 @@ class RestoreServer:
         )  # fmt: skip
 
     def row_count(self, table: str) -> int:
-        output = self._query(f'SELECT count(*) FROM "{table}"')
+        output = self._query(f'SELECT count(*) FROM "{table}"')  # noqa: S608 - the table name comes from apps.toml and is quoted
         try:
             return int(output.strip(b"\0\n"))
         except ValueError as error:
@@ -328,7 +328,7 @@ class RestoreServer:
     def column_values(self, table: str, column: str) -> list[str]:
         """The non-empty values; identifiers are validated by apps.toml, so quoting suffices."""
         output = self._query(
-            f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL AND "{column}" <> \'\''
+            f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL AND "{column}" <> \'\''  # noqa: S608 - table and column names come from apps.toml and are quoted
         )
         return [value.decode() for value in output.strip(b"\n").split(b"\0") if value]
 

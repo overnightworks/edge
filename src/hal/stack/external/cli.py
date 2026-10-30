@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from hal.output import Stream, write_line
 from hal.output.command import Verb, command
 from hal.stack import catalog, checkout
 from hal.stack.external import apply, cloudflare_read, host_check, host_probe, secrets, tofu
@@ -53,7 +54,7 @@ def apply_command(
 
             def plan_and_apply(home: Path, token_values: dict[str, str]) -> int:
                 nonlocal closing
-                assert planned_catalog is not None  # the refusal, which always runs first, set it
+                assert planned_catalog is not None  # noqa: S101 - narrows the type; the refusal that always runs first set it
                 try:
                     outcome = apply.apply_plan(
                         home,
@@ -106,7 +107,7 @@ def _exit_after_interrupt(run: _ApplyRun) -> int:
         line = _CLOSING_LINES[(closing, INTERRUPTED)]
     else:
         line = "interrupted, nothing was applied"
-    print(f"{apply.SENDER}: {line}", file=sys.stderr)
+    write_line(f"{apply.SENDER}: {line}", stream=Stream.STDERR)
     return apply.ApplyExit.REFUSED
 
 
@@ -154,7 +155,7 @@ def _close_on_host_check(
             apply_exit if check_exit == host_check.CheckExit.CLEAN else apply.ApplyExit.REFUSED
         )
         if line := _CLOSING_LINES.get((closing, check_exit)):
-            print(f"{apply.SENDER}: {line}", file=sys.stderr)
+            write_line(f"{apply.SENDER}: {line}", stream=Stream.STDERR)
         return run.committed_exit
 
 
@@ -163,7 +164,7 @@ def _refusal_unreadable_cloudflare_read_file(home: Path) -> int | None:
     try:
         secrets.read_cloudflare_token(home)
     except secrets.SecretFileError as error:
-        print(f"{apply.SENDER}: {error}", file=sys.stderr)
+        write_line(f"{apply.SENDER}: {error}", stream=Stream.STDERR)
         return apply.ApplyExit.CANNOT_PLAN
     return None
 
@@ -177,17 +178,13 @@ class HostCheckOutcome:
     cause: tuple[str, ...] = ()
 
 
-def _write_line_to_stdout(text: str) -> None:
-    sys.stdout.write(f"{text}\n")
-
-
 def run_host_check(
     home: Path,
     *,
     as_json: bool = False,
     cloudflare: Callable[[str], cloudflare_read.CloudflareRead] | None = None,
     prober: Callable[[], host_probe.Prober] | None = None,
-    emit: Callable[[str], None] = _write_line_to_stdout,
+    emit: Callable[[str], None] = write_line,
 ) -> HostCheckOutcome:
     """Read-only: no tofu, no sweep, no write token. `cloudflare` makes the reader, `prober` the
     unauthenticated host probe, `emit` writes the one output, redacted, with stop signals ignored:
@@ -238,13 +235,13 @@ def check_command(
     *,
     cloudflare: Callable[[str], cloudflare_read.CloudflareRead] | None = None,
     prober: Callable[[], host_probe.Prober] | None = None,
-    emit: Callable[[str], None] = _write_line_to_stdout,
+    emit: Callable[[str], None] = write_line,
 ) -> int:
     """The host check that closes the publish: its findings on stdout, why it could not
     run on stderr."""
     outcome = run_host_check(home, cloudflare=cloudflare, prober=prober, emit=emit)
     for line in outcome.cause:
-        print(f"{apply.SENDER}: host check: cannot check, {line}", file=sys.stderr)
+        write_line(f"{apply.SENDER}: host check: cannot check, {line}", stream=Stream.STDERR)
     return outcome.exit_code
 
 
@@ -262,7 +259,7 @@ def _refusal_off_clean_live_main(tree: Path, home: Path, git: checkout.Runner) -
     else:
         refusals = []
     for line in refusals:
-        print(f"{apply.SENDER}: {line}", file=sys.stderr)
+        write_line(f"{apply.SENDER}: {line}", stream=Stream.STDERR)
     return apply.ApplyExit.CANNOT_PLAN if refusals else None
 
 
@@ -296,7 +293,7 @@ def _valid_catalog(sender: str) -> _ValidCatalog | None:
     try:
         return _read_catalog()
     except catalog.CatalogError as error:
-        print(f"{sender}: {error}", file=sys.stderr)
+        write_line(f"{sender}: {error}", stream=Stream.STDERR)
         return None
 
 
@@ -357,6 +354,6 @@ def _describe(error: Exception) -> str:
 
 
 def _report(message: str, error: Exception, token_values: dict[str, str], sender: str) -> None:
-    print(secrets.redact(message, token_values), file=sys.stderr)
+    write_line(secrets.redact(message, token_values), stream=Stream.STDERR)
     for note in getattr(error, "__notes__", []):
-        print(secrets.redact(f"{sender}: {note}", token_values), file=sys.stderr)
+        write_line(secrets.redact(f"{sender}: {note}", token_values), stream=Stream.STDERR)

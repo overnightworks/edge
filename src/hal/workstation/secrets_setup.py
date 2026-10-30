@@ -69,9 +69,9 @@ PASSPHRASE_BYTES = 48
 VERIFY_TIMEOUT_SECONDS = 20
 RESPONSE_LIMIT_BYTES = 64 * 1024
 
-GITHUB_TOKEN_PAGE = "https://github.com/settings/personal-access-tokens/new"
+GITHUB_TOKEN_PAGE = "https://github.com/settings/personal-access-tokens/new"  # noqa: S105 - a page address and no credential
 GITHUB_API = "https://api.github.com"
-CLOUDFLARE_TOKEN_PAGE = "https://dash.cloudflare.com/profile/api-tokens"
+CLOUDFLARE_TOKEN_PAGE = "https://dash.cloudflare.com/profile/api-tokens"  # noqa: S105 - a page address and no credential
 CLOUDFLARE_DASHBOARD_PAGE = "https://dash.cloudflare.com/"
 CLOUDFLARE_VERIFY_URL = "https://api.cloudflare.com/client/v4/user/tokens/verify"
 CLOUDFLARE_ACTIVE = "active"
@@ -112,7 +112,7 @@ TokenVerifier = Callable[[TokenSource, str], Verdict]
 def http_fetch(request: urllib.request.Request) -> Response | None:
     """One HTTP call; None when the provider cannot be reached. An error status is an answer, not a failure."""
     try:
-        with urllib.request.urlopen(request, timeout=VERIFY_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(request, timeout=VERIFY_TIMEOUT_SECONDS) as response:  # noqa: S310 - the request is built for a fixed https provider API
             return Response(response.status, response.read(RESPONSE_LIMIT_BYTES))
     except urllib.error.HTTPError as error:
         with contextlib.closing(error):
@@ -128,7 +128,7 @@ def _verify_request(source: TokenSource) -> urllib.request.Request:
         headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
     else:
         url, headers = CLOUDFLARE_VERIFY_URL, {"Accept": "application/json"}
-    return urllib.request.Request(url, headers={**headers, "User-Agent": "home-secrets-setup"})
+    return urllib.request.Request(url, headers={**headers, "User-Agent": "home-secrets-setup"})  # noqa: S310 - the request is built for a fixed https provider API
 
 
 def _cloudflare_token_status(body: bytes) -> str:
@@ -210,7 +210,7 @@ LoginRunner = Callable[[Sequence[str], Mapping[str, str]], int | None]
 def run_command(argv: Sequence[str], variables: Mapping[str, str]) -> int | None:
     """The CLI keeps the operator's terminal, so its sign-in output and prompts reach the person; hal reads none of it."""
     try:
-        return subprocess.run(argv, env={**os.environ, **variables}, check=False).returncode
+        return subprocess.run(argv, env={**os.environ, **variables}, check=False).returncode  # noqa: S603 - argv is the provider CLI the wizard names and no shell runs
     except FileNotFoundError:
         return None
 
@@ -408,7 +408,7 @@ class WizardEvent(StrEnum):
     VERIFIED = "verified"
     GENERATED = "generated"
     STORED = "stored"
-    NEW_TOKEN = "new token"
+    NEW_TOKEN = "new token"  # noqa: S105 - an event label and no credential
     REJECTED = "rejected"
     SKIPPED = "skipped"
     NOT_CHECKED = "not checked"

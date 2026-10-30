@@ -1,10 +1,11 @@
-#!/usr/bin/env python3
 """Probe of the agent service unit (#201 U1-U11, #214 U15, #346 P09 and P11a): `agent-service` of
 compose.yaml, with its real `service.toml`, in a throwaway compose project of its own and a
 scratch HOME that holds a dummy login (never a real token).
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
         python3 probe/agent-service/unit.py --scratch DIR
+
+Measured teardown: 1 s (K 50 s, CAP 1780 s).
 
 U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. `--cell smoke`
 drives U14 instead (#214 S4): the operator's `agent-smoke` against the service with a stand-in
@@ -68,12 +69,13 @@ from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
 from signer import SignerProbe
 
+from hal.output import write_line
 from hal.stack import compose
 
 SERVICE = Target.SERVICE.compose_service
 REFUSAL_SECONDS = 60
 UID = 1000
-CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path
+CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path  # noqa: S108 - the service tmpfs inside its container and no host path
 SERVICE_COMMAND = "agent-runtime-service"
 INIT_COMMAND = "docker-init"
 OWNER_ONLY = 0o700
@@ -186,7 +188,7 @@ class Inside:
         copy = os.path.join(directory, "copied-true")
         shutil.copy("/bin/true", copy)
         try:
-            subprocess.run([copy], check=True)
+            subprocess.run([copy], check=True)  # noqa: S603 - runs the copy of a system binary that the probe made
             return {"result": "ran"}
         except OSError as error:
             return {"result": errno.errorcode.get(error.errno or 0, str(error.errno))}
@@ -198,7 +200,7 @@ class Inside:
         """A same-uid child in its own process group with a descendant of its own, SIGKILLed as a
         group: how long until both are gone from /proc (init reaps the orphan)."""
         child = subprocess.Popen(
-            ["sh", "-c", "sleep 300 & echo $!; wait"], stdout=subprocess.PIPE, text=True,
+            ["sh", "-c", "sleep 300 & echo $!; wait"], stdout=subprocess.PIPE, text=True,  # noqa: S607 - sh is found on PATH by design and the script is a literal
             start_new_session=True,
         )  # fmt: skip
         descendant = int(child.stdout.readline())
@@ -215,7 +217,7 @@ class Inside:
 
     @staticmethod
     def main(arguments: list[str]) -> int:
-        print(json.dumps(getattr(Inside, arguments[0])(*arguments[1:])), flush=True)
+        print(json.dumps(getattr(Inside, arguments[0])(*arguments[1:])), flush=True)  # noqa: T201 - this in-container program imports nothing of hal and prints itself
         return 0
 
 
@@ -317,7 +319,9 @@ class ServiceConditions:
                 owned["uid"] == UID and owned["mode"] == OWNER_ONLY,
                 f"U6: {directory} is owned by {owned['uid']} with mode {owned['mode']:o}",
             )
-        self.hold("U6", f"/tmp and {working_root()} are tmpfs owned by {UID} with mode 0700")
+        self.hold(
+            "U6", f"{CONTAINER_TMP} and {working_root()} are tmpfs owned by {UID} with mode 0700"
+        )
 
     def cell_u7(self) -> None:
         options = {m["point"]: m["options"] for m in self.inside("mounts")["mounts"]}
@@ -675,8 +679,8 @@ class SmokeProbe(IssuerProbe):
         expect(stack.project == PROJECT, f"U16: compose names the project {stack.project}")
         expect(stack.gateway == self.address, f"U16: compose names the gateway {stack.gateway}")
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
-        known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")
-        report = Report(known.values(), out=lambda line: print(f"  {line}", flush=True))
+        known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")  # noqa: S106 - a dummy secret of the throwaway probe client
+        report = Report(known.values(), out=lambda line: write_line(f"  {line}", flush=True))
         smoke_cells(stack, known, report)
         report.add(*live_egress_cells(stack))
         failed = sorted(
@@ -684,7 +688,7 @@ class SmokeProbe(IssuerProbe):
         )
         expect(failed == ["L2"], f"U16: the cells that failed were {failed}, not only L2")
         self.held.append("U16")
-        print(
+        write_line(
             "U16 held: the live smoke's cells ran; only L2 failed, as the dummy login must",
             flush=True,
         )
@@ -713,7 +717,7 @@ class SmokeProbe(IssuerProbe):
         for secret in (person, workload, dummy):
             expect(secret not in shown + logs, "U14: a token was printed")
         self.held.append("U14")
-        print(
+        write_line(
             f"U14 held: the smoke exited {smoke.returncode}; its output was {lines}; no token "
             "in it or in the service log; the log ends "
             f"{logs.strip().splitlines()[-3:]}",

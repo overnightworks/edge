@@ -12,14 +12,13 @@ marker cleared.
 """
 
 import os
-import sys
 from collections.abc import Callable, Iterable
 from contextlib import ExitStack
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
-from hal.output import confirmed
+from hal.output import Stream, confirmed, write_line
 from hal.output.command import Verb, command
 from hal.stack import (
     app_compose,
@@ -43,11 +42,11 @@ ABORTED_UNCHANGED = "aborted, nothing changed"
 
 
 def _say(command: str, line: str) -> None:
-    print(f"{command}: {line}")
+    write_line(f"{command}: {line}")
 
 
 def _complain(command: str, line: str) -> None:
-    print(f"{command}: {line}", file=sys.stderr)
+    write_line(f"{command}: {line}", stream=Stream.STDERR)
 
 
 def _read_fleet(engine: compose.Compose, repository: Path) -> unit_plans.Fleet | CannotPlan:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hal.output import write_line
+
 HEALTHY_SECONDS = 100  # three healthcheck intervals of compose.yaml
 
 
@@ -17,4 +19,6 @@ def proof_2_health(probe) -> None:
         HEALTHY_SECONDS,
         lambda: health_of(probe, "step-ca") == "healthy",
     )
-    print(f"proof 2 health held: the healthcheck of step-ca reports {health_of(probe, 'step-ca')}")
+    write_line(
+        f"proof 2 health held: the healthcheck of step-ca reports {health_of(probe, 'step-ca')}"
+    )

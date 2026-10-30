@@ -16,7 +16,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
-from probe_support import CONFIGURATION, TOKEN, login_probe_modules, probe_imports, resolved
+from support.probe_support import CONFIGURATION, TOKEN, login_probe_modules, probe_imports, resolved
 
 MARKER = "SECRET-MARKER-NOT-TO-BE-PRINTED"
 RUN_ID = "0b6c1b0e-6f3a-4a59-9d5b-3f6a8f5f9b11"

@@ -13,9 +13,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from probe_support import CONFIGURATION, LOGIN, TOKEN, login_probe_modules, make_login, resolved
+from support.probe_support import (
+    CONFIGURATION,
+    LOGIN,
+    TOKEN,
+    login_probe_modules,
+    make_login,
+    resolved,
+)
 
 STARTED = ("agent-egress", "agent-issuer", "agent-service")
+TEMPORARY_MOUNT = "/tmp"  # noqa: S108 - a mount path the scenario names and never a file this test creates
 
 
 @pytest.fixture(scope="module")
@@ -211,8 +219,8 @@ def test_a_secret_added_later_is_gated_and_a_clean_line_passes(probe, capsys):
     with probe.checks.gating([TOKEN]) as gate:
         gate.add("late-key")
         gate.add("")
-        print("late-key and a clean line", flush=True)
-        print("clean", flush=True)
+        sys.stdout.write("late-key and a clean line\n")
+        sys.stdout.write("clean\n")
     assert capsys.readouterr().out == "[secret] and a clean line\nclean\n"
     assert gate.hits == 1
 
@@ -277,13 +285,13 @@ def test_a_directory_root_that_was_not_listed_is_counted_and_a_file_mount_is_not
     probe, skips, unlisted
 ):
     """#457 row 9: an unlisted directory root is counted, a file mount is not."""
-    mounts = {"/tmp": mount(probe, entries=1), "n-0": mount(probe, skips=skips)}
+    mounts = {TEMPORARY_MOUNT: mount(probe, entries=1), "n-0": mount(probe, skips=skips)}
     assert probe.checks.unlisted_roots(mounts) == unlisted
 
 
 def test_token_files_are_summed_over_every_mount(probe):
     """#457 row 10: token files are summed over every mount."""
-    mounts = {"/tmp": mount(probe, token_files=1), "n-0": mount(probe, token_files=2)}
+    mounts = {TEMPORARY_MOUNT: mount(probe, token_files=1), "n-0": mount(probe, token_files=2)}
     assert probe.checks.token_files(mounts) == 3
 
 
@@ -291,44 +299,21 @@ def test_token_files_are_summed_over_every_mount(probe):
 
 
 @pytest.mark.parametrize(
-    ("lock_in", "tmpdir_in", "reason"),
-    [
-        ("", "elsewhere", "LOCK_IN_LOGIN"),
-        ("inner", "elsewhere", "LOCK_IN_LOGIN"),
-        ("symlink", "elsewhere", "LOCK_IN_LOGIN"),
-        ("", "", "SCRATCH_IN_LOGIN"),
-        ("elsewhere", "inner", "SCRATCH_IN_LOGIN"),
-    ],
-    ids=[
-        "lock in the login directory",
-        "lock below it",
-        "lock a link into it",
-        "scratch in it",
-        "scratch below it",
-    ],
+    "tmpdir_in",
+    ["", "inner"],
+    ids=["scratch in it", "scratch below it"],
 )
-def test_a_lock_or_scratch_directory_in_the_login_directory_is_refused_by_a_fixed_reason(
-    probe, tmp_path, lock_in, tmpdir_in, reason
+def test_a_scratch_directory_in_the_login_directory_is_refused_by_a_fixed_reason(
+    probe, tmp_path, tmpdir_in
 ):
     """#457 row 2: nothing is created inside the login directory, and the reason names no path."""
     directory = make_login(tmp_path / "login")
     (directory / "inner").mkdir()
-    (tmp_path / "elsewhere").mkdir()
     login = probe.checks.read_login(str(directory))
-    (tmp_path / "link").symlink_to(directory / "target")
-    lock_parent = {
-        "": directory,
-        "inner": directory / "inner",
-        "elsewhere": tmp_path,
-        "symlink": tmp_path,
-    }[lock_in]
-    lock = tmp_path / "link" if lock_in == "symlink" else lock_parent / "lock"
-    scratch = {"": directory, "inner": directory / "inner", "elsewhere": tmp_path / "elsewhere"}[
-        tmpdir_in
-    ]
+    scratch = {"": directory, "inner": directory / "inner"}[tmpdir_in]
     with pytest.raises(probe.checks.LoginFailed) as raised:
-        probe.checks.scratch_parent(login, lock, {"TMPDIR": str(scratch)})
-    assert str(raised.value) == probe.checks.Refusal[reason]
+        probe.checks.scratch_parent(login, {"TMPDIR": str(scratch)})
+    assert str(raised.value) == probe.checks.Refusal.SCRATCH_IN_LOGIN
 
 
 # --- B9 (#469) ---------------------------------------------------------------------------------

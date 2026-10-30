@@ -1,6 +1,5 @@
 """The Keycloak probe's credential bookkeeping and teardown, checked without a Keycloak stack."""
 
-import importlib.util
 import json
 import os
 import re
@@ -20,26 +19,16 @@ from urllib.request import Request
 from urllib.response import addinfourl
 
 import pytest
+import support.keycloak_probe as keycloak_support
 import yaml
-from fake_docker import DAEMON_GONE, LATE_APPLY, RUNNING_APPLY, SERVICE_CONTAINER
+from support.fake_docker import DAEMON_GONE, LATE_APPLY, RUNNING_APPLY, SERVICE_CONTAINER
+from support.keycloak_probe import DockerHost
 
 REPOSITORY = Path(__file__).resolve().parents[1]
-PROBE = REPOSITORY / "probe" / "keycloak" / "probe.py"
 LOGIN_URL = "http://localhost:8090/realms/master/login-actions/authenticate"
-FAKE_DOCKER = Path(__file__).with_name("fake_docker.py")
 
-
-@pytest.fixture(scope="module")
-def probe() -> Iterator[ModuleType]:
-    spec = importlib.util.spec_from_file_location("keycloak_probe", PROBE)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    # Its dataclasses resolve their annotations through sys.modules.
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    yield module
-    del sys.modules[spec.name]
+# The probe's module and the docker host are the support module's fixtures.
+probe, docker_host = keycloak_support.probe, keycloak_support.docker_host
 
 
 def response_setting(*set_cookie_lines: str) -> addinfourl:
@@ -72,36 +61,6 @@ def test_every_cookie_value_reaches_proof_7_although_a_later_response_replaces_o
     )
 
     assert sorted(kept.values()) == ["restart-1", "session-1", "session-2"]
-
-
-class DockerHost:
-    """The host the probe runs on: a docker executable on PATH over a state file."""
-
-    def __init__(self, directory: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        self.state_file = directory / "docker-state.json"
-        self.configure(containers=[], one_offs=[])
-        executables = directory / "bin"
-        executables.mkdir()
-        docker = executables / "docker"
-        docker.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_DOCKER}" "$@"\n')
-        docker.chmod(0o755)
-        monkeypatch.setenv("PATH", f"{executables}{os.pathsep}{os.environ['PATH']}")
-        monkeypatch.setenv("FAKE_DOCKER_STATE", str(self.state_file))
-        # The compose environment names the docker group, which a host without Docker lacks.
-        monkeypatch.setenv("DOCKER_GID", "999")
-
-    def configure(self, **changes: object) -> None:
-        state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
-        self.state_file.write_text(json.dumps({**state, **changes}))
-
-    @property
-    def containers(self) -> set[str]:
-        return set(json.loads(self.state_file.read_text())["containers"])
-
-
-@pytest.fixture
-def docker_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> DockerHost:
-    return DockerHost(tmp_path, monkeypatch)
 
 
 @pytest.mark.parametrize(
@@ -189,7 +148,7 @@ def run_main(
         def down(self) -> bool:
             if down_signal:
                 os.kill(os.getpid(), down_signal)
-            print("teardown: stack edge-kc-probe removed", flush=True)
+            sys.stdout.write("teardown: stack edge-kc-probe removed\n")
             return True
 
     monkeypatch.setattr(sys, "argv", ["probe.py", "--scratch", str(scratch)])
@@ -747,14 +706,14 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
     """#21 D1a: the run mode keeps its proof order (3b before the fresh apply, 3a after it)."""
 
     def start_with_bootstrap_admin(_self: object) -> object:
-        print("stack: up with the temporary bootstrap admin", flush=True)
+        sys.stdout.write("stack: up with the temporary bootstrap admin\n")
         return object()
 
     def missing_variable_fails_loudly(self: object, _admin: object) -> None:
         self.held("3b", "an undefined variable fails the apply")
 
     def apply_and_restart(self: Any) -> None:
-        print(FRESH_APPLY_LINE, flush=True)
+        sys.stdout.write(f"{FRESH_APPLY_LINE}\n")
         self.admin = object()
 
     monkeypatch.setattr(probe.logout_actions_cell, "prove", lambda *_: None)
@@ -1007,7 +966,7 @@ def test_a_token_is_the_workload_identity_only_with_role_audience_client_and_no_
         ("198.51.100.23", "192.0.2.123", False),
         ("192.0.2.123", "192.0.2.123", False),
         ("127.0.0.1", "127.0.0.1", False),
-        ("0.0.0.0", "0.0.0.0", False),
+        ("0.0.0.0", "0.0.0.0", False),  # noqa: S104 - the wildcard address as a client address the probe must not accept
     ],
 )
 def test_the_stored_login_events_must_both_carry_the_forwarded_client_address(

@@ -4,9 +4,9 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-import test_keycloak_probe
+import support.keycloak_probe as keycloak_support
 
-keycloak_probe = test_keycloak_probe.probe  # the fixture that loads probe.py
+keycloak_probe = keycloak_support.probe  # the fixture that loads probe.py
 
 
 def answering(

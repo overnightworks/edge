@@ -11,18 +11,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from workstation_secrets_support import FakeTerminal, never_run, run_wizard
-from test_workstation_secrets_setup import (  # noqa: F401 the fixtures, requested by name
-    PASSPHRASE_FILE,
-    PASTED_VALUE,
-    files_under,
-    home,
-    squeezed,
-    terminal,
-)
+from workstation_secrets_support import FakeTerminal, never_run, run_wizard, squeezed
+from support import workstation_secrets_wizard
+from support.workstation_secrets_wizard import PASSPHRASE_FILE, PASTED_VALUE, files_under
 
 from hal.workstation.secrets_setup import UNSENDABLE_PASTE, Boundaries, Outcome, Response, Verdict, WalkEnd, http_fetch, verify_token
 from hal.workstation.secrets_view import Provider, TokenSource
+
+home, terminal = workstation_secrets_wizard.home, workstation_secrets_wizard.terminal
 
 GITHUB = TokenSource(Provider.GITHUB, "example-org", ("metadata:read",), 366)
 CLOUDFLARE = TokenSource(Provider.CLOUDFLARE, "example.invalid", ("Zone › DNS › Read",), 30)
@@ -195,9 +191,9 @@ def test_a_fetch_returns_the_status_and_body_or_none_when_nothing_answers(local_
     """#36 rule 2.4: an answer is told apart from no answer, so an unreachable provider is never a refusal."""
     closed_port = local_server.url.rsplit(":", 1)[0] + ":1"
 
-    assert http_fetch(urllib.request.Request(f"{local_server.url}/ok")) == Response(200, b"ok")
-    assert http_fetch(urllib.request.Request(f"{local_server.url}/missing")) == Response(404, b"")
-    assert http_fetch(urllib.request.Request(f"{closed_port}/ok")) is None
+    assert http_fetch(urllib.request.Request(f"{local_server.url}/ok")) == Response(200, b"ok")  # noqa: S310 - the URL is that of the loopback test server or a closed port of it
+    assert http_fetch(urllib.request.Request(f"{local_server.url}/missing")) == Response(404, b"")  # noqa: S310 - the URL is that of the loopback test server or a closed port of it
+    assert http_fetch(urllib.request.Request(f"{closed_port}/ok")) is None  # noqa: S310 - the URL is that of the loopback test server or a closed port of it
 
 
 def test_a_redirect_never_carries_the_token_on(local_server: LocalServer) -> None:
@@ -216,7 +212,7 @@ def canary_with(character: str) -> str:
 
 @pytest.mark.parametrize("character", UNSENDABLE_CHARACTERS.values(), ids=UNSENDABLE_CHARACTERS.keys())
 def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritten(
-    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys, character: str  # noqa: F811 the imported fixtures
+    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys, character: str
 ) -> None:
     """#36 rule 3 / #10 line 2: a paste no token can be is refused with a fixed line; it is never sent, shown or written."""
     canary = canary_with(character)
@@ -236,7 +232,7 @@ def test_a_paste_that_is_not_visible_ascii_is_refused_unsent_unshown_and_unwritt
 
 
 def test_the_walk_refuses_a_token_with_a_future_start_date_and_writes_nothing(
-    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys  # noqa: F811 the imported fixtures
+    home: Path, terminal: FakeTerminal, local_server: LocalServer, capsys
 ) -> None:
     """#54 rule 1 / #10 line 22: a rejected value is refused with one line naming the start date and is never written."""
     now = datetime(2026, 10, 19, tzinfo=UTC)

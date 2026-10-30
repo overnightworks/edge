@@ -2,11 +2,18 @@
 once more after the yes, and the rows of the run. The person at the prompt is `Typist`."""
 
 import pytest
-from rename_support import SSH, make_clone, origin_of, tree_state, worktree_registrations
+from support import rename_support
+from support.rename_support import SSH, make_clone, origin_of, tree_state, worktree_registrations
 
 from hal import cli
 from hal.grammar import ExitCode
 from hal.rename_commands import RunningProcess
+
+(everything, cli_world, fakes, home, locked, repository, through_cli, world) = (
+    rename_support.everything, rename_support.cli_world, rename_support.fakes,
+    rename_support.home, rename_support.locked, rename_support.repository,
+    rename_support.through_cli, rename_support.world,
+)  # fmt: skip
 
 PROMPT = "Type yes to apply "
 

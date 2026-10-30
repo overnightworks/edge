@@ -29,7 +29,7 @@ DOWNLOAD_TIMEOUT_SECONDS = 60
 
 def download_release(url: str, writer: BinaryIO) -> None:
     try:
-        with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+        with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:  # noqa: S310 - the URL is a release address chosen by the setup step
             shutil.copyfileobj(response, writer)
     except http.client.HTTPException as error:
         raise OSError(repr(error)) from error
