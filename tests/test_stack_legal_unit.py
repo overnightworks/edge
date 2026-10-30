@@ -83,7 +83,7 @@ def test_every_cache_asks_the_unit_again_before_it_shows_a_stored_page():
     copy without asking first, and nothing grants a lifetime or a stale answer."""
     config = (ROOT / "legal/nginx/default.conf").read_text()
     value = re.search(r'add_header Cache-Control "([^"]*)" always;', config).group(1)
-    directives = {part.strip().split("=")[0] for part in value.split(",")}
+    directives = {part.strip().lower().split("=")[0] for part in value.split(",")}
 
     assert directives & {"no-cache", "no-store"}
     assert not directives & {
