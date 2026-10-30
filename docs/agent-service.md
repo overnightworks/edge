@@ -244,7 +244,7 @@ dummy login makes no call: B9 (a)-(e) are then NOT DRIVEN ("no call reached the 
 exits 1 by design. With the real login R2 is one paid model turn, which is why it is posted once and `busy` is
 not retried.
 
-**The unit probe** is `probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
+**The unit probe** is `python3 probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
 with a dummy login and drives the cells U1 to U11 and U15, which its docstring and code define: the
 process, the container hardening, the tmpfs and login mounts, a renewal seen at once, and the
