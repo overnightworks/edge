@@ -1,7 +1,0 @@
-claim_id = "52422946151a44aaaf764950f0bbc37c"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "afda39a5f2a1f8e564e3ef92586fa939c90c1bdf"
-branch = "claude/issue-786-core-phase-module"
-scope = ["src/hal/stack/apply.py", "src/hal/stack/core_phase.py"]
-opened_commit = "f21002e98f3a0f76411acd360ba0a2410048c021"
