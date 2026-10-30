@@ -6,15 +6,16 @@
 #   flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 \
 #       scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>
 #
-# <part> is `fresh` (the first container: install, fresh, both reboots and their stages) or `prepared` (the second:
-# install, prepared, both sudos); each call runs and judges only its own container's cells. <edge checkout> is a clone
-# whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it. Give each part its own evidence dir
-# (`<evidence dir>/fresh`, `<evidence dir>/prepared`): each call truncates cells.txt and containers.txt there.
+# <part> is `fresh` (the first container: install, fresh, both reboots and their stages), `prepared` (the second:
+# install, prepared, both sudos) or `shapes` (the third: one convergence, then the foreign account shapes of A1-3); each
+# call runs and judges only its own container's cells. <edge checkout> is a clone whose `origin/main` (or $EDGE_REF)
+# carries tunnel/; only `git archive` reads it. Give each part its own evidence dir (`<evidence dir>/fresh`,
+# `<evidence dir>/prepared`, `<evidence dir>/shapes`): each call truncates cells.txt and containers.txt there.
 # The script takes no lock: the fleet form above does. CAP 1800 plus K 30 stays within 1830, and K 30 is more than the
-# teardown of a cut run needs (it left no container within 30 s). Measured under that form on a loaded machine: wheel
-# and image build about 15 s, `fresh` about 1725 s; both parts in one call needed more than the cap, so the proof is
-# cut by its two containers. The wait for a low load and every stage run inside the cap, so the cap bounds them, and
-# the EXIT trap runs on its TERM.
+# teardown of a cut run needs (it left no container within 30 s). Measured under that form on a loaded machine, in
+# seconds after the lock was taken: `shapes` 881, `fresh` 924, `prepared` 383, each exit 0 with every cell held. The
+# slowest part keeps 876 s of the 1800 s cap, 576 s of the 1500 s a part may take. The wait for a low load and every
+# stage run inside the cap, so the cap bounds them, and the EXIT trap runs on its TERM.
 # It keeps the container ids in the evidence dir and removes its container, with its volumes and nothing else, on exit.
 # The sudo password is generated per run.
 set -euo pipefail
