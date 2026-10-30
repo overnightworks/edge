@@ -14,7 +14,6 @@ The command holds /tmp/probe-stack.lock itself, so it runs without an outer floc
 cell held, 1: a cell failed or was not driven, 2: the arguments were refused.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse

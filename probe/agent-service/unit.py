@@ -23,7 +23,6 @@ The container is asked through the `Inside` class below: the driver sends its so
 `python -I -` inside the container, which has the interpreter of the image and nothing else.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse

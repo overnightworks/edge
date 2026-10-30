@@ -22,7 +22,6 @@ The subject runs the `Client` class below: the driver sends its source to `pytho
 the container, so the client needs nothing but the standard library of the pinned image.
 """
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse

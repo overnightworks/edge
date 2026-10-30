@@ -8,7 +8,6 @@ clocks.
 Nothing here prints a path, a subprocess's output or an exception's text: every line is a verdict,
 a count, a role name, a docker verb with an exit code, or a fixed reason from `Refusal`."""
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import fcntl

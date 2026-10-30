@@ -12,7 +12,6 @@ CLI; B5 runs the smoke a hundred times with it transparent and compares what the
 holds before and after. A cell reads verdicts, counts and event names, never a token, and none of
 them prints a log line. The (a) parts, the loopback capture, are not built (#339)."""
 
-# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import ipaddress
