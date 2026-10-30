@@ -63,11 +63,11 @@ class SecretKind(Enum):
     Documentation and configuration are the known files under ~/.secrets that hold no secret.
     """
 
-    HUMAN_PASSWORD = "human-password"  # noqa: S105 - a finding kind name and no credential
+    HUMAN_PASSWORD = "human-password"  # noqa: S105 - a secret kind name and no credential
     TOOL_LOGIN = "tool-login"
-    TOKEN = "token"  # noqa: S105 - a finding kind name and no credential
-    SERVICE_PASSWORD = "service-password"  # noqa: S105 - a finding kind name and no credential
-    UNVERIFIED_TOKEN = "unverified-token"  # noqa: S105 - a finding kind name and no credential
+    TOKEN = "token"  # noqa: S105 - a secret kind name and no credential
+    SERVICE_PASSWORD = "service-password"  # noqa: S105 - a secret kind name and no credential
+    UNVERIFIED_TOKEN = "unverified-token"  # noqa: S105 - a secret kind name and no credential
     DERIVED_MIRROR = "derived-mirror"
     CONFIGURATION = "configuration"
     DOCUMENTATION = "documentation"
