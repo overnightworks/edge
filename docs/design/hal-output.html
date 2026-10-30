@@ -1108,6 +1108,146 @@ Type <span class="w">yes</span> to apply 1 change: yes
   </ul>
 </section>
 
+<section aria-labelledby="s-one-yes">
+  <div class="head">
+    <h2 id="s-one-yes"><span class="tag new">neu für #361</span> <code>hal apply</code>: ein yes für Setups, lokalen Teil und Cloudflare</h2>
+    <p class="sub">Kandidat zum Segnen (#785). Jedes Bild trägt die Zeile von #361, die es zeigt, in der empfohlenen Form A. Ersetzt nach dem Segnen <code>cloudflare · publish later · own plan after a clean local run</code> im Bild darüber. Namen, Zahlen und Zeiten sind Beispielwerte.</p>
+  </div>
+  <div class="pair">
+    <div class="stack">
+      <figure id="f-one-yes-first">
+        <figcaption><span class="tag new">neu #361</span> Y1a A, Y1c A: erste Installation, die Setups sind Zeilen im Plan, ein yes zählt alles</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
+<span class="g">  +</span> step-ca         setup          <span class="d">step-ca/init · makes the CA key</span>
+<span class="g">  +</span> agent-service   setup          <span class="d">agent-service/setup · makes the signing key</span>
+<span class="g">  +</span> keycloak        setup          <span class="d">keycloak/go-live · starts Keycloak</span>
+<span class="g">  +</span> legal           2 new pages    <span class="d">datenschutz, nutzungsbedingungen</span>
+<span class="hd">units</span>
+<span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
+<span class="hd">cloudflare</span>
+<span class="g">  +</span> app.example.de  create         <span class="d">CNAME → tunnel</span>
+<span class="b">  ~</span> www.example.de  update         <span class="d">ttl 300 → auto</span>
+<span class="r">  -</span> old.example.de  delete         <span class="d">A 203.0.113.7</span>
+Type <span class="w">yes</span> to apply 8 changes: <span class="u">yes</span>
+<span class="d">…</span></pre>
+        <p class="was">Acht Zeilen: drei Setups, eine Rechtsseite, ein Einschalten, drei Cloudflare-Zeilen mit dem Lese-Token; <code>~</code>/<code>!</code>-Zeilen stehen sonst wie heute. Nichts läuft vor diesem yes.</p>
+      </figure>
+      <figure id="f-one-yes-handoff">
+        <figcaption><span class="tag new">neu #361</span> Y7: nach dem yes übergibt hal jedes Setup an dein Terminal und nimmt es danach wieder auf</figcaption>
+<pre class="term"><span class="d">…</span>
+Type <span class="w">yes</span> to apply 8 changes: <span class="u">yes</span>
+<span class="c">  ›</span> step-ca         setup          <span class="d">step-ca/init runs in your terminal</span>
+<span class="sys">Password for the CA key:</span>  <span class="n">← die Frage des Skripts, nicht von hal</span>
+<span class="g">  ✓</span> step-ca         set up         <span class="d">CA key made · 6s</span>
+<span class="c">  ›</span> agent-service   setup          <span class="d">agent-service/setup runs in your terminal</span>
+<span class="sys">Password for the agent account:</span>  <span class="n">← seine Ausgabe, hal druckt sie nicht um</span>
+<span class="g">  ✓</span> agent-service   set up         <span class="d">signing key made · 14s</span>
+<span class="c">  ›</span> keycloak        setup          <span class="d">keycloak/go-live runs in your terminal</span>
+<span class="sys">Back up before go-live? (no backup exists)</span>  <span class="n">← die eigene Einwilligung des Setups (Y3)</span>
+<span class="r">  ✗</span> keycloak        setup failed   <span class="d">go-live stopped: no backup consent</span>
+<span class="rw">error:</span> 1 of 8 failed, 5 skipped · Cloudflare not touched
+<span class="c">next:</span> hal apply</pre>
+        <p class="was">Das Setup fragt seine Passwörter, den Passkey und die Einwilligung ohne Backup selbst; das eine yes ersetzt sie nicht. Übersprungen sind die lokalen Zeilen nach dem Fehler und die drei Cloudflare-Zeilen. Ein gescheitertes Setup endet im Paar <code>error:</code>/<code>next:</code>, Exit 3.</p>
+      </figure>
+      <figure id="f-one-yes-grown">
+        <figcaption><span class="tag new">neu #361</span> Y1b A: der Plan wuchs durch das Setup, die neuen Zeilen werden gezeigt und neu gefragt</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="d">…</span>
+<span class="g">  +</span> keycloak        setup          <span class="d">keycloak/go-live · starts Keycloak</span>
+<span class="hd">units</span>
+<span class="y">  !</span> keycloak        realm skipped  <span class="d">the realm observer failed (…)</span>
+Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
+<span class="c">  ›</span> keycloak        setup          <span class="d">keycloak/go-live runs in your terminal</span>
+<span class="g">  ✓</span> keycloak        set up         <span class="d">Keycloak answers · 41s</span>
+<span class="hd">units</span>
+<span class="b">  ~</span> keycloak        realm          <span class="d">1 change · group /ops added</span>
+Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
+<span class="g">  ✓</span> keycloak        realm applied  <span class="d">1 change · snapshot 37c2a560 proven · 11s</span>
+<span class="d">…</span></pre>
+        <p class="was">Das erste yes zählt nur die Setup-Zeile; die gelbe Realm-Zeile zählt nicht. Nach dem Setup liest hal neu: nur die Zeile, die der gezeigte Plan nicht hatte, wird gedruckt und gefragt. Hat der neue Plan keine solche Zeile, läuft hal ohne zweite Frage weiter.</p>
+      </figure>
+      <figure id="f-one-yes-stop">
+        <figcaption><span class="tag new">neu #361</span> Y2: ein Halt vor Cloudflare, <code>· Cloudflare not touched</code></figcaption>
+<pre class="term"><span class="d">…</span>
+Type <span class="w">yes</span> to apply 5 changes: <span class="u">yes</span>
+<span class="g">  ✓</span> legal           pages written  <span class="d">datenschutz, nutzungsbedingungen</span>
+<span class="hd">core</span>
+<span class="r">  ✗</span> traefik         not running    <span class="d">exited within 5s of the start</span>
+<span class="rw">error:</span> 1 of 5 failed, 3 skipped · Cloudflare not touched
+<span class="c">next:</span> docker logs --tail 50 edge-traefik-1</pre>
+        <p class="was">Die drei Cloudflare-Zeilen des Plans gelten als übersprungen. Cloudflare wird nur nach einem sauberen lokalen Lauf berührt; der Schreib-Token wird gar nicht erst gelesen. Gleiche Form, wenn die Bereitschaftsprüfung vor Cloudflare scheitert.</p>
+      </figure>
+    </div>
+    <div class="stack">
+      <figure id="f-one-yes-cf-plan">
+        <figcaption><span class="tag new">neu #361</span> Y1c A: <code>cloudflare</code> als Zeilen vor dem yes, geplant mit dem Lese-Token (S6-Zeilenform)</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
+<span class="d">…</span>
+<span class="b">  ~</span> traefik         recreate       <span class="d">traefik.yml changed</span>
+<span class="hd">cloudflare</span>
+<span class="g">  +</span> app.example.de  create         <span class="d">CNAME → tunnel</span>
+<span class="b">  ~</span> www.example.de  update         <span class="d">ttl 300 → auto</span>
+<span class="r">  -</span> old.example.de  delete         <span class="d">A 203.0.113.7</span>
+Type <span class="w">yes</span> to apply 4 changes: <span class="u">yes</span></pre>
+        <p class="was">Löschen und Ändern stehen wie bei tofu mit <code>-</code> und <code>~</code> da, mit dem Wert, der weicht. Die Zeilen zählen im einen yes.</p>
+      </figure>
+      <figure id="f-one-yes-cf-same">
+        <figcaption><span class="tag new">neu #361</span> Y1c A: nach dem sauberen lokalen Lauf ist der Schreib-Plan gleich dem gezeigten, hal wendet ihn ohne zweite Frage an</figcaption>
+<pre class="term"><span class="d">…</span>
+<span class="g">  ✓</span> traefik         recreated      <span class="d">barriers proven · 9s</span>
+<span class="hd">cloudflare</span>
+<span class="d">  · plan            same as shown  write token · 3 rows</span>
+<span class="g">  ✓</span> app.example.de  created        <span class="d">CNAME → tunnel · 2s</span>
+<span class="g">  ✓</span> www.example.de  updated        <span class="d">ttl 300 → auto · 1s</span>
+<span class="g">  ✓</span> old.example.de  deleted        <span class="d">A 203.0.113.7 · 1s</span></pre>
+        <p class="was">Kein zweites <code>Type yes</code>: die Zeilen sind dieselben, die du bestätigt hast.</p>
+      </figure>
+      <figure id="f-one-yes-cf-changed">
+        <figcaption><span class="tag new">neu #361</span> Y1c A: der Schreib-Plan weicht ab, die neue Zeile wird gezeigt und neu gefragt</figcaption>
+<pre class="term"><span class="d">…</span>
+<span class="g">  ✓</span> traefik         recreated      <span class="d">barriers proven · 9s</span>
+<span class="hd">cloudflare</span>
+<span class="y">  !</span> plan            changed        <span class="d">not what you saw: 1 new row · write token</span>
+<span class="g">  +</span> api.example.de  create         <span class="d">CNAME → tunnel</span>
+Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
+<span class="g">  ✓</span> api.example.de  created        <span class="d">CNAME → tunnel · 2s</span>
+<span class="d">…</span></pre>
+        <p class="was">Sagst du etwas anderes als genau <code>yes</code>, endet der Lauf mit <code>error: aborted, nothing changed in Cloudflare</code> und <code>next: hal apply</code>; der lokale Teil bleibt gemacht.</p>
+      </figure>
+      <figure id="f-one-yes-dry">
+        <figcaption><span class="tag new">neu #361</span> Y5 A, Y5b: <code>hal apply --dry-run</code> zeigt den ganzen Plan, ohne Terminal, ohne yes, ohne Änderung</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply --dry-run</span> <span class="d">&lt; /dev/null</span>
+<span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
+<span class="g">  +</span> step-ca         setup          <span class="d">step-ca/init · makes the CA key</span>
+<span class="g">  +</span> agent-service   setup          <span class="d">agent-service/setup · makes the signing key</span>
+<span class="g">  +</span> keycloak        setup          <span class="d">keycloak/go-live · starts Keycloak</span>
+<span class="g">  +</span> legal           2 new pages    <span class="d">datenschutz, nutzungsbedingungen</span>
+<span class="hd">units</span>
+<span class="g">  +</span> agent-service   switch on      <span class="d">agent-egress, agent-service</span>
+<span class="hd">cloudflare</span>
+<span class="g">  +</span> app.example.de  create         <span class="d">CNAME → tunnel</span>
+<span class="b">  ~</span> www.example.de  update         <span class="d">ttl 300 → auto</span>
+<span class="r">  -</span> old.example.de  delete         <span class="d">A 203.0.113.7</span>
+<span class="b">~ 8 changes planned</span> <span class="d">· 4s · run hal apply</span></pre>
+        <p class="was">Exit 0. Liest nur: Herkunft, Lese-Token für Cloudflare, den Realm. Kein Setup läuft, kein Lock bleibt, keine <code>.env</code> wird geschrieben, kein tofu apply, keine Plan-Datei bleibt.</p>
+      </figure>
+      <figure id="f-one-yes-dry-clean">
+        <figcaption><span class="tag new">neu #361</span> Y5 A: <code>--dry-run</code>, nichts zu tun</figcaption>
+<pre class="term"><span class="p">$</span> <span class="u">hal apply --dry-run</span>
+<span class="g">  ✓</span> checkout        current        <span class="d">c280a80 · origin/main</span>
+<span class="w">✓ nothing to change</span> <span class="d">· units, apps and cloudflare checked · 21s</span></pre>
+      </figure>
+    </div>
+  </div>
+  <ul class="why">
+    <li><b>Ein yes, danach nichts Neues ungefragt.</b> Jede Änderung eines Laufs steht vorher als Zeile da (Invariante 2). Taucht nach den Setups oder im Schreib-Plan von Cloudflare eine Zeile auf, die du nicht sahst, zeigt hal nur diese Zeile und fragt noch einmal; die Zahl im Satz ist die Zahl der gedruckten Zeilen.</li>
+    <li><b>Die Zeilenform ist die aus Bild A:</b> <code>Zeichen · Objekt · Ereignis · Fakt</code>, am Ende genau ein <code>error:</code> und ein <code>next:</code>. Die Setups sind <code>+ &lt;unit&gt; setup</code>, der Übergang <code>› … runs in your terminal</code>, das Ergebnis <code>✓ … set up</code> oder <code>✗</code>.</li>
+    <li><b>Was dein eigenes Ja behält (Y3):</b> die Einwilligung ohne Backup in go-live, jedes Passwort und der Passkey eines Setups, <code>--replace-signing-key</code>, Löschen im Realm, Restore, <code>hal start</code> und <code>hal online</code>. Ein <code>-y</code> gibt es nicht: <code>error: unrecognized arguments: -y</code>, Exit 2.</li>
+    <li><b>Vorschläge des Kopfs, nicht gesegnet.</b> Gezeichnet ist je die empfohlene Form A. Y1a, Y1c, Y3 und Y5b wartet auf das Wort des Operators; anders entschieden, ändert sich das Bild vor dem Segnen. Bis dahin gilt das Bild darüber weiter, mit <code>cloudflare · publish later</code>.</li>
+  </ul>
+</section>
+
 <section aria-labelledby="s-smoke">
   <div class="head">
     <h2 id="s-smoke">Die Skripte: <code>live_smoke.py</code> im selben Schnitt</h2>
@@ -1358,7 +1498,8 @@ Type <span class="w">yes</span> to apply 7 changes: yes
         <tr><td><code>edge apply --closed:</code> vor jeder Zeile</td><td>nichts</td><td>du hast <code>hal apply</code> getippt</td></tr>
         <tr><td><code>partial, …; run `edge apply --closed` again</code></td><td><code>✗</code>-Zeile, <code>error:</code>, <code>next: hal apply</code></td><td>Ort, Bedeutung und nächster Schritt getrennt</td></tr>
         <tr><td><code>(block 6; Keycloak with a dump first, K11b)</code>, <code>(#50 SW3)</code></td><td>nichts</td><td>interne Kürzel sagen dir nichts</td></tr>
-        <tr><td><code>Type 'yes' to apply exactly this plan:</code></td><td><code>Type yes to apply 7 changes:</code></td><td>die Zahl sagt, was „this plan“ ist</td></tr>
+        <tr><td><code>Type 'yes' to apply exactly this plan:</code></td><td><code>Type yes to apply 7 changes:</code></td><td>die Zahl sagt, was „this plan“ ist; das eigene yes von Cloudflare entfällt, sobald der Plan gezeigt wurde und gleich ist (neu für #361)</td></tr>
+        <tr><td><code>Type yes to run &lt;setup&gt; now</code></td><td><code>Type yes to apply 8 changes:</code>, die Setups als <code>+ step-ca  setup</code>-Zeilen</td><td>die eine Zahl zählt auch die Setups; kein yes je Setup vor dem Plan (neu für #361)</td></tr>
         <tr><td><code>would change</code>, <code>not checked (needs …)</code></td><td><code>~ system  2 changes</code>, <code>› system  needs sudo</code></td><td>Plan-Zeichen statt Zustandssätzen</td></tr>
         <tr><td><code>idle memory.current 63156224</code>, <code>(0) 0</code></td><td><code>60 MiB idle</code>, <code>0 in …</code></td><td>Zahlen, die man liest, ohne zu rechnen</td></tr>
       </tbody>
