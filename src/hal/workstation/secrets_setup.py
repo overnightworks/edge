@@ -20,6 +20,7 @@ import getpass
 import json
 import os
 import secrets
+import shutil
 import signal
 import stat
 import subprocess
@@ -522,30 +523,30 @@ def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Bou
     return True
 
 
-def _seal_login(entry: SecretEntry, layout: Layout) -> PurePosixPath | None:
-    """After the CLI exits: the folder 0700 and the declared login file 0600 (the entry's loosest mode), leaving what the CLI put beside it alone; the file made, None when it made none.
+@contextlib.contextmanager
+def _fresh_login_home(folder: Path) -> Iterator[Path]:
+    """A new empty folder open to its owner only, beside the entry's folder and so outside the service's bind; gone on every way out."""
+    home = folder.with_name(f".{folder.name}.{uuid.uuid4().hex}.login")
+    home.mkdir(mode=LOOSEST_DIRECTORY_MODE)
+    try:
+        yield home
+    finally:
+        shutil.rmtree(home)
 
-    Only `stat` and `chmod`: the content is never opened.
+
+def _install_login(entry: SecretEntry, layout: Layout, home: Path) -> PurePosixPath | None:
+    """The login file the CLI left in `home` moves to its place with the entry's loosest mode; None when it left no regular file.
+
+    Only `lstat`, `chmod` and one `rename`: the content is never opened, and the rename replaces whatever stands at the place,
+    a link included, without following it.
     """
-    (layout.home / entry.folder).chmod(LOOSEST_DIRECTORY_MODE)
-    made = stat_matches(layout, entry.place) or ()
-    for fact in made:
-        (layout.home / fact.relative).chmod(entry.loosest_mode)
-    return made[0].relative if made else None
-
-
-def _folder_contents(folder: Path) -> frozenset[Path]:
-    """Every path below the entry's folder, by name only."""
-    return frozenset(folder.rglob("*"))
-
-
-def _discard_login(folder: Path, before: frozenset[Path]) -> None:
-    """After a failed CLI: what that run left in the folder goes, deepest first, so that a refused sign-in stores nothing and the next run asks again; what was there before stays."""
-    for left in sorted(_folder_contents(folder) - before, key=lambda path: len(path.parts), reverse=True):
-        if left.is_dir() and not left.is_symlink():
-            left.rmdir()
-        else:
-            left.unlink()
+    made = home / entry.place.name
+    with contextlib.suppress(FileNotFoundError):
+        if stat.S_ISREG(made.lstat().st_mode):
+            made.chmod(entry.loosest_mode)
+            made.rename(layout.home / entry.place)
+            return entry.place
+    return None
 
 
 def _login_refusal(create: CreateCommand, exit_code: int | None) -> str:
@@ -558,19 +559,18 @@ def _login_refusal(create: CreateCommand, exit_code: int | None) -> str:
 
 
 def _set_up_tool_login(entry: SecretEntry, create: CreateCommand, layout: Layout, boundaries: Boundaries) -> bool:
-    """The CLI makes the secret itself in the entry's folder; hal checks path and mode only and never reads what the CLI wrote."""
+    """The CLI makes the secret itself in a home of its own, since the service may write the entry's folder; hal moves only the login
+    file into the folder, checks path and mode only and never reads what the CLI wrote."""
     subject = entry.name
     suffix = ", a login of its own" if create.home else ""
     _write_entry_row(Glyph.ANNOUNCE, subject, WizardEvent.NEW_LOGIN, f"your {create.label} account{suffix}")
     write_detail(f"why: {entry.purpose}")
     boundaries.terminal.ask(f"{DETAIL_INDENT}Enter opens the {create.label} sign-in in your browser: ")
     _private_directories(layout.home, layout.home / entry.folder)
-    folder = layout.home / entry.folder
-    before = _folder_contents(folder)
-    exit_code = boundaries.run_command(create.run, {name: str(folder) for name in create.home})
-    made = _seal_login(entry, layout) if exit_code == 0 else None
+    with _fresh_login_home(layout.home / entry.folder) as home:
+        exit_code = boundaries.run_command(create.run, dict.fromkeys(create.home, str(home)))
+        made = _install_login(entry, layout, home) if exit_code == 0 else None
     if made is None:
-        _discard_login(folder, before)
         _write_entry_row(Glyph.FAILED, subject, WizardEvent.NOT_SIGNED_IN, _login_refusal(create, exit_code))
         return False
     write_row(Row(Glyph.DONE, subject, WizardEvent.SIGNED_IN, f"{HOME_PREFIX}{made} ({entry.loosest_mode:o}) · never shown"))

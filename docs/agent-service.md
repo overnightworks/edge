@@ -85,13 +85,16 @@ service renews this login itself, so it needs the directory to create `.auth.jso
 over the file (a read-only directory logs `sibling not created` hourly and nothing renews). It is the
 service's one writable bind. The start refuses an incomplete sign-in or a file that group or others
 can touch, naming `cli.openai.token_file` and the path; a Codex run gets a copy without the renewal
-token. A stop waits for a renewal in flight, so `stop_grace_period` is 105 s (about 45 s for the
-renewal and at least 60 s beyond it); a kill sooner can leave `.auth.json.new` behind.
-`agent-service/setup --check` does not check it: a missing folder fails the start. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
+token. A stop waits for a renewal in flight, so `stop_grace_period` in `compose.yaml` covers about 45 s
+for the renewal plus at least 60 s beyond it; a kill sooner can leave `.auth.json.new` behind.
+`agent-service/setup --check` does not check it: a missing folder fails the start. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
 rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
-leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file. What the CLI leaves beside it (`log/`, `tmp/`) is part of the entry, never an unknown file, and a failed login removes only what that run left.
-`hal secrets -v` lists the entry `agent-service/codex` and shows the renewal command above.
+leaves a present one untouched; that is also the way to sign in again, once the file is gone. Because the
+service can write the folder, `codex login` never runs in it: hal runs it with `CODEX_HOME` at a fresh
+private folder beside it, moves only a regular `auth.json` (0600) into the folder, replacing whatever
+stood there without following a link, and removes the rest, however the login ends. hal never reads or
+prints the file. `hal secrets -v` lists the entry `agent-service/codex`.
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC, so his

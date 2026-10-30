@@ -354,14 +354,14 @@ class ServiceConditions:
     def cell_u8(self) -> None:
         own_options = {m["point"]: m["own_options"] for m in self.inside("mounts")["mounts"]}
         for provider, table in cli_tables().items():
-            options = own_options.get(str(PurePosixPath(table["token_file"]).parent), [])
-            expect(("rw" in options) is (provider == "openai"), f"U8: {provider} mount {options}")
+            options = own_options.get(str(PurePosixPath(table["token_file"]).parent)) or []
+            expect(("rw" if provider == "openai" else "ro") in options, f"U8: {provider} {options}")
             login = self.inside("stat", table["token_file"])
             expect(
                 login["uid"] == UID and login["mode"] == TOKEN_MODE,
                 f"U8: the {provider} login is owned by {login['uid']} with mode {login['mode']:o}",
             )
-        self.hold("U8", f"only the openai mount is writable; logins are 0600 owned by {UID}")
+        self.hold("U8", f"anthropic mount ro, openai mount rw; logins are 0600 owned by {UID}")
 
 
 class UnitProbe(ServiceConditions, Probe):
