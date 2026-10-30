@@ -191,9 +191,9 @@ def test_a_fetch_returns_the_status_and_body_or_none_when_nothing_answers(local_
     """#36 rule 2.4: an answer is told apart from no answer, so an unreachable provider is never a refusal."""
     closed_port = local_server.url.rsplit(":", 1)[0] + ":1"
 
-    assert http_fetch(urllib.request.Request(f"{local_server.url}/ok")) == Response(200, b"ok")
-    assert http_fetch(urllib.request.Request(f"{local_server.url}/missing")) == Response(404, b"")
-    assert http_fetch(urllib.request.Request(f"{closed_port}/ok")) is None
+    assert http_fetch(urllib.request.Request(f"{local_server.url}/ok")) == Response(200, b"ok")  # noqa: S310 - the URL is that of the loopback test server or a closed port of it
+    assert http_fetch(urllib.request.Request(f"{local_server.url}/missing")) == Response(404, b"")  # noqa: S310 - the URL is that of the loopback test server or a closed port of it
+    assert http_fetch(urllib.request.Request(f"{closed_port}/ok")) is None  # noqa: S310 - the URL is that of the loopback test server or a closed port of it
 
 
 def test_a_redirect_never_carries_the_token_on(local_server: LocalServer) -> None:

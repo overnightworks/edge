@@ -17,16 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 APPLY_PROFILE = "apply"
 NO_LOGGING = {"driver": "none"}
 OVERLAYS = sorted(ROOT.glob("probe/*/compose*.yaml"))
+PLACEHOLDER_DIRECTORY = "/tmp"  # noqa: S108 - a bind source that docker compose config interpolates and never opens
 PLACEHOLDERS = {
     "DOCKER_GID": "999",
     "EDGE_DOMAIN": "edge.test",
     "PROBE_ADMIN_URL": "https://admin.test",
-    "PROBE_CA_JSON": "/tmp/ca.json",
-    "PROBE_CONFIG_DIR": "/tmp",
-    "PROBE_EGRESS_STATIC": "/tmp/static.yml",
+    "PROBE_CA_JSON": f"{PLACEHOLDER_DIRECTORY}/ca.json",
+    "PROBE_CONFIG_DIR": PLACEHOLDER_DIRECTORY,
+    "PROBE_EGRESS_STATIC": f"{PLACEHOLDER_DIRECTORY}/static.yml",
     "PROBE_KEYCLOAK_SUBNET": "172.31.240.0/24",
-    "PROBE_SECRETS_DIR": "/tmp",
-    "PROBE_TRAEFIK_CONFIG": "/tmp/traefik.yml",
+    "PROBE_SECRETS_DIR": PLACEHOLDER_DIRECTORY,
+    "PROBE_TRAEFIK_CONFIG": f"{PLACEHOLDER_DIRECTORY}/traefik.yml",
 }
 
 

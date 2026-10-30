@@ -4,6 +4,8 @@ The state file named by FAKE_DOCKER_STATE holds the containers of the probe proj
 host misbehaves; every invocation reads it, acts like the real CLI would and writes it back.
 """
 
+# ruff: noqa: T201 - this stand-in docker program answers on its standard output and error
+
 import json
 import os
 import signal
