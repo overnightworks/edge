@@ -83,7 +83,7 @@ def run_docker(
     """Runs the command with COMPOSE_COMPATIBILITY off: an app's tracked `.env` could turn it on,
     and Compose would then name a built image `<project>_<service>`, not `<project>-<service>`."""
     try:
-        return subprocess.run(
+        return subprocess.run(  # noqa: S603 - argv is hal's compose command and no shell runs
             command,
             capture_output=True,
             text=True,

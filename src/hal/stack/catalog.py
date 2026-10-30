@@ -114,7 +114,7 @@ def read_bytes(catalog_file: Path) -> bytes:
 def parse(raw: bytes, name: str = FLEET_FILE) -> Any:
     """The document of catalog bytes already read; `name` is the file the message names."""
     try:
-        return yaml.load(raw.decode(), Loader=_CatalogLoader)
+        return yaml.load(raw.decode(), Loader=_CatalogLoader)  # noqa: S506 - the loader subclasses SafeLoader
     except yaml.YAMLError as error:
         raise CatalogError(f"{name}: cannot read it ({type(error).__name__})") from error
 

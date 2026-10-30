@@ -39,7 +39,7 @@ class Manager(StrEnum):
 def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     """Only stdout is captured: stdin and stderr stay the terminal's, for the system's prompt."""
     try:
-        return subprocess.run(
+        return subprocess.run(  # noqa: S603 - argv is hal's cloudflared command and no shell runs
             command, stdout=subprocess.PIPE, text=True, check=False, timeout=_SECONDS
         )
     except (OSError, subprocess.TimeoutExpired) as error:
