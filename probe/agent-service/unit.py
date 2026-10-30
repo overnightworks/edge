@@ -1,6 +1,6 @@
 """Probe of the agent service unit (#201 U1-U11, #214 U15, #346 P09 and P11a): `agent-service` of
 compose.yaml, with its real `service.toml`, in a throwaway compose project of its own and a
-scratch HOME that holds a dummy login (never a real token).
+scratch HOME that holds a dummy login of each CLI (never a real token).
 
     flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 1780 \\
         python3 probe/agent-service/unit.py --scratch DIR
@@ -40,7 +40,7 @@ import subprocess
 import sys
 import time
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))  # edge's own observation
@@ -50,23 +50,29 @@ from containment import ContainmentProbe
 from egress import (
     COMPOSE_FILE,
     LABEL,
-    LOGIN_DIRECTORY,
     PROJECT,
     SERVICE_PORT,
     Probe,
     ProbeFailed,
     Target,
+    cli_tables,
     expect,
     run_probe,
     scratch_directory,
     service_configuration,
     token_path,
-    write_dummy_token,
 )
 from issuer import ISSUER_SERVICE, LISTENING, IssuerProbe, wait_for_listening
 from live_smoke import Report, Secrets, Stack, Verdict, smoke_cells
 from live_smoke import egress_cells as live_egress_cells
 from refusals import SMOKE_SERVICE, check_refusals
+from scratch_secrets import (
+    DUMMY_LOGIN_WRITERS,
+    SECRETS_DIRECTORY,
+    login_file,
+    login_values,
+    write_incomplete_codex_login,
+)
 from signer import SignerProbe
 
 from hal.output import write_line
@@ -242,7 +248,7 @@ def ended_unsuccessfully(state: dict) -> bool:
 def refusal_is_complete(cell: str, logs: str, fields: list[str]) -> bool:
     """The logs of an attempt that ended unsuccessfully name every field; one that listened
     fails the cell."""
-    expect(LISTENING not in logs, f"{cell}: the service listened: {logs[-300:]!r}")
+    expect(LISTENING not in logs, f"{cell}: the service listened")
     return all(field in logs for field in fields)
 
 
@@ -332,25 +338,30 @@ class ServiceConditions:
             )
         ran = self.inside("run_copy", working_root())["result"]
         expect(ran == "EACCES", f"U7: a copied binary in the working root gave {ran}")
-        version = self.run(
-            ["docker", "exec", self.container(SERVICE), "/opt/claude/claude", "--version"]
-        ).stdout.strip()
-        expect(version.startswith("2.1.302"), f"U7: the CLI says {version!r}")
+        versions = []
+        for provider, table in cli_tables().items():
+            said = self.run(
+                ["docker", "exec", self.container(SERVICE), table["binary"], "--version"]
+            ).stdout.strip()
+            expect(table["version"] in said.split(), f"U7: the {provider} CLI says {said!r}")
+            versions.append(said)
         self.hold(
             "U7",
             "nosuid,nodev,noexec on /tmp and the working root; a copied binary there gives "
-            f"{ran}; the CLI ({version}) starts",
+            f"{ran}; the CLIs ({', '.join(versions)}) start",
         )
 
     def cell_u8(self) -> None:
         own_options = {m["point"]: m["own_options"] for m in self.inside("mounts")["mounts"]}
-        expect("ro" in own_options.get(login_directory(), []), "U8: the login mount is writable")
-        token = self.inside("stat", token_path())
-        expect(
-            token["uid"] == UID and token["mode"] == TOKEN_MODE,
-            f"U8: the token is owned by {token['uid']} with mode {token['mode']:o}",
-        )
-        self.hold("U8", f"the login mount is read-only; the token is 0600 owned by {UID}")
+        for provider, table in cli_tables().items():
+            directory = str(PurePosixPath(table["token_file"]).parent)
+            expect("ro" in own_options.get(directory, []), f"U8: the {provider} login is writable")
+            login = self.inside("stat", table["token_file"])
+            expect(
+                login["uid"] == UID and login["mode"] == TOKEN_MODE,
+                f"U8: the {provider} login is owned by {login['uid']} with mode {login['mode']:o}",
+            )
+        self.hold("U8", f"the login mounts are read-only; the logins are 0600 owned by {UID}")
 
 
 class UnitProbe(ServiceConditions, Probe):
@@ -358,7 +369,9 @@ class UnitProbe(ServiceConditions, Probe):
 
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch, Target.SERVICE)
-        self.token = scratch / "home" / LOGIN_DIRECTORY / "token"
+        self.logins = {
+            provider: scratch / "home" / login_file(provider) for provider in DUMMY_LOGIN_WRITERS
+        }
 
     def services_to_start(self) -> tuple[str, ...]:
         return (SERVICE,)
@@ -478,20 +491,22 @@ class UnitProbe(ServiceConditions, Probe):
         ).stdout.strip()
 
     def cell_u9(self) -> None:
-        before = self.inside("sha256", token_path())["sha256"]
-        started = self.started_at()
-        renewed = self.token.with_name("token.new")
-        write_dummy_token(renewed)
-        self.run(["mv", "-T", str(renewed), str(self.token)])
-        after = self.inside("sha256", token_path())["sha256"]
-        expected = hashlib.sha256(self.token.read_bytes()).hexdigest()
-        expect(after == expected and after != before, f"U9: the container sees {after}")
-        expect(self.started_at() == started, "U9: the service restarted")
-        self.hold(
-            "U9",
-            f"after token.new and mv -T the container reads sha256 {after[:12]} "
-            f"(was {before[:12]}) at once; StartedAt unchanged",
-        )
+        for provider, login in self.logins.items():
+            token_file = cli_tables()[provider]["token_file"]
+            before = self.inside("sha256", token_file)["sha256"]
+            started = self.started_at()
+            renewed = login.with_name(f"{login.name}.new")
+            DUMMY_LOGIN_WRITERS[provider](renewed)
+            self.run(["mv", "-T", str(renewed), str(login)])
+            after = self.inside("sha256", token_file)["sha256"]
+            expected = hashlib.sha256(login.read_bytes()).hexdigest()
+            expect(after == expected and after != before, f"U9: the container sees {after}")
+            expect(self.started_at() == started, "U9: the service restarted")
+            self.hold(
+                "U9",
+                f"after {renewed.name} and mv -T the container reads the {provider} login as "
+                f"sha256 {after[:12]} (was {before[:12]}) at once; StartedAt unchanged",
+            )
 
     # --- the cells that stop a start ----------------------------------------------------------
 
@@ -509,7 +524,9 @@ class UnitProbe(ServiceConditions, Probe):
                 if refusal_is_complete(cell, logs, fields):
                     return logs
             time.sleep(1)
-        raise ProbeFailed(f"{cell}: no refused start naming {fields}: {logs[-300:]!r}")
+        raise ProbeFailed(
+            f"{cell}: no refused start naming {fields} in the log of a failed attempt"
+        )
 
     def cell_u6_refusal(self) -> None:
         overlay = self.compose_file.with_name("working-root-0750.yaml")
@@ -534,44 +551,73 @@ class UnitProbe(ServiceConditions, Probe):
             f"cli.working_root ({logs.strip().splitlines()[-1][:160]!r})",
         )
 
-    def cell_u10(self) -> None:
-        directory = self.token.parent
-        aside = directory.with_name("claude.aside")
-        directory.rename(aside)
-        try:
-            started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
-            expect(started.returncode != 0, "U10: the service started without a login directory")
-            expect(not directory.exists(), "U10: the missing login directory was created")
-            strangers = self.paths_of_others()
-            expect(not strangers, f"U10: paths not owned by the operator: {strangers}")
-            reason = (started.stderr or started.stdout).strip().splitlines()[-1]
-        finally:
-            aside.rename(directory)
-            self.compose("down", "--timeout", "10")
-        self.hold(
-            "U10",
-            f"a missing login directory fails the start ({reason[:140]!r}); "
-            "nothing was created under ~/.secrets",
+    def refused_login(self, cell: str, provider: str) -> str:
+        """A refused start that names the provider's `token_file` and its path and whose log
+        holds no value of the login; returns the log."""
+        logs = self.refused_start(
+            cell, [f"cli.{provider}.token_file", cli_tables()[provider]["token_file"]]
         )
+        leaked = [value for value in login_values(self.logins[provider]) if value in logs]
+        expect(not leaked, f"{cell}: the log holds a value of the login")
+        return logs
+
+    def cell_u10(self) -> None:
+        for provider, login in self.logins.items():
+            directory = login.parent
+            aside = directory.with_name(f"{directory.name}.aside")
+            directory.rename(aside)
+            try:
+                started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
+                expect(started.returncode != 0, f"U10: the service started without {directory}")
+                expect(not directory.exists(), f"U10: the missing {directory} was created")
+                strangers = self.paths_of_others()
+                expect(not strangers, f"U10: paths not owned by the operator: {strangers}")
+                reason = (started.stderr or started.stdout).strip().splitlines()[-1]
+            finally:
+                aside.rename(directory)
+                self.compose("down", "--timeout", "10")
+            self.hold(
+                "U10",
+                f"a missing {provider} login directory fails the start ({reason[:140]!r}); "
+                "nothing was created under ~/.secrets",
+            )
 
     def cell_u11(self) -> None:
-        content = self.token.read_text(encoding="utf-8").strip()
-        self.token.chmod(LOOSE_TOKEN_MODE)
+        for provider, login in self.logins.items():
+            login.chmod(LOOSE_TOKEN_MODE)
+            try:
+                self.refused_login(f"U11 {provider}", provider)
+            finally:
+                login.chmod(TOKEN_MODE)
+                self.compose("down", "--timeout", "10")
+            self.hold(
+                "U11",
+                f"a {provider} login at mode 0644 stops the start; the log names "
+                f"cli.{provider}.token_file and its path, never a value of the login",
+            )
+        self.cell_u11_incomplete()
+
+    def cell_u11_incomplete(self) -> None:
+        login = self.logins["openai"]
+        complete = login.read_bytes()
+        login.unlink()
+        write_incomplete_codex_login(login)
         try:
-            logs = self.refused_start("U11", ["cli.anthropic.token_file", token_path()])
+            self.refused_login("U11 incomplete", "openai")
         finally:
-            self.token.chmod(TOKEN_MODE)
+            login.unlink()
+            login.write_bytes(complete)
+            login.chmod(TOKEN_MODE)
             self.compose("down", "--timeout", "10")
-        expect(content not in logs, "U11: the log holds the token")
         self.hold(
             "U11",
-            "a token at mode 0644 stops the start; the log names cli.anthropic.token_file "
-            f"and {token_path()}, never the content",
+            "a Codex sign-in without its access token at mode 0600 stops the start; the log "
+            "names cli.openai.token_file and its path, never a value of the login",
         )
 
     def paths_of_others(self) -> list[str]:
         """Paths under the scratch HOME's `.secrets` that the operator does not own."""
-        secrets_directory = self.token.parent.parent.parent
+        secrets_directory = Path(self.environment["HOME"]) / SECRETS_DIRECTORY
         return [
             str(path)
             for path in (secrets_directory, *secrets_directory.rglob("*"))
@@ -626,8 +672,9 @@ class UnitProbe(ServiceConditions, Probe):
     def cell_u15(self) -> None:
         """A login directory without its token: `up -d` exits 0 and the first look sees the
         service running, and `hal apply`'s own observation finds it not running."""
-        aside = self.token.with_name("token.aside")
-        self.token.rename(aside)
+        token = self.logins["anthropic"]
+        aside = token.with_name("token.aside")
+        token.rename(aside)
         try:
             started = self.compose("up", "--detach", SERVICE, check=False, timeout=300)
             expect(started.returncode == 0, f"U15: up exited {started.returncode}")
@@ -639,7 +686,7 @@ class UnitProbe(ServiceConditions, Probe):
             logs = self.service_logs()
             expect(LISTENING not in logs, "U15: the service listened without its token")
         finally:
-            aside.rename(self.token)
+            aside.rename(token)
             self.compose("down", "--timeout", "10")
         self.hold(
             "U15",

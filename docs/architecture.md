@@ -154,7 +154,7 @@ The agent service is an L4 service: the one place that holds the subscription lo
 
 **What this means for the platform (A1d):**
 - The realm carries the callers' identity (#183): the realm role `agent-workload` held only by the service accounts of the songmaker, presentator and hopin clients, whose default scopes add the `agent-service` audience, so an app's workload token has the same `azp` as its people's tokens. Whoever holds such a client secret can get that token, which is why the secret stays the app's own file.
-- The container mounts only one read-only directory bind per profile (its login), its configuration file and two tmpfs mounts: `cli_working_directory_root` and `/tmp` (section 4).
+- The container mounts only one read-only directory bind per provider (its login), its configuration file and two tmpfs mounts: `cli_working_directory_root` and `/tmp` (section 4).
 - Its AppArmor/Bubblewrap policy permits writes only below that root.
 - Its egress is exactly two names, through `agent-egress` ([edge#189](https://github.com/overnightworks/edge/issues/189)): an SNI-allowlisting TLS passthrough to the provider endpoint `api.anthropic.com` and the issuer host for the JWKS fetch. The service sits on internal, isolated networks with no route out, no host address and no DNS forwarding. MCP origins stay internal over `mcp`; LiteLLM joins with A2a.
 
@@ -397,11 +397,11 @@ Today's fields stay: `name`, `kind`, `paths`, `read_by` (= consumer), `recreate`
 | volume `step-ca`: `certs/`, `secrets/intermediate_ca_key`, `db/` | uid 1000 | the CA | planned (Block 9) |
 | volume `traefik-mcp-acme`: `acme.json` (the issued certificates and their keys) | uid 65534 | `traefik-mcp` | no: they are issued again |
 
-**The agent service's mounts (A1d).** Its container binds two things from the host (the login directory and its `service.toml`), gets two compose file secrets (the signing key and the step-ca root), plus two tmpfs; the rulings are in section 2. It runs as `1000:1000`, the operator's uid on this PC, because its reader refuses a login file that group or others can touch.
+**The agent service's mounts (A1d).** Its container binds three things from the host (the two login directories and its `service.toml`), gets two compose file secrets (the signing key and the step-ca root), plus two tmpfs; the rulings are in section 2. It runs as `1000:1000`, the operator's uid on this PC, because its reader refuses a login file that group or others can touch.
 
 | Mount | Holds | Mode | In the backup |
 |---|---|---|---|
-| one read-only directory bind per provider, `~/.secrets/agent-service/<provider folder>/` (today `claude/`, the Anthropic login; the file inside is replaced, the directory never) | that provider's subscription login, one file | the container user only (0700 directory, 0600 file); no other provider's login and not the operator's `~/.claude` | no: the login is restored from its `~/.secrets` source ([agent-runtime#18](https://github.com/overnightworks/agent-runtime/issues/18)) |
+| one read-only directory bind per provider, `~/.secrets/agent-service/<provider folder>/` (today `claude/`, the Anthropic login, and `codex/`, the Codex login, which also holds what `codex login` left beside `auth.json`; the file inside is replaced, the directory never) | that provider's subscription login, one file | the container user only (0700 directory, 0600 file); no other provider's login and not the operator's `~/.claude` or `~/.codex` | no: the login is restored from its `~/.secrets` source ([agent-runtime#18](https://github.com/overnightworks/agent-runtime/issues/18)) |
 | the compose secret `agent_service_signing_key`, `~/.secrets/agent-service/signing/private.pem` → `/run/secrets/agent_service_signing_key` (the private file alone, never the `signing/` folder) | the key the service signs app-tool capabilities with | 0600, owned by the container user; the service refuses to start otherwise | no: a lost key is replaced by `agent-service/setup --replace-signing-key` |
 | the compose secret `step_ca_root_certificate`, `~/.secrets/step-ca/root_ca.crt` → `/run/secrets/step_ca_root_certificate` | the CA root the service trusts for MCP origins | 0644; no secret | see the step-ca table |
 | `./agent-service/service.toml` → `/etc/agent-service/service.toml`, read-only | the service's configuration | the checkout's | no: it is in the repository |

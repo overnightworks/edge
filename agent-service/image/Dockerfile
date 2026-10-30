@@ -8,8 +8,18 @@ RUN curl --fail --silent --show-error --location --output /tmp/claude \
         "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude" \
     && echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c -
 
+FROM docker.io/curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06 AS codex-download
+ARG CODEX_VERSION=0.163.0
+ARG CODEX_SHA256=beb339e8ecd9ba057a6bb2dc81ad8ca474812edfbf0fc5056ca818797648dde4
+# The static musl executable is taken out of its archive by name.
+RUN curl --fail --silent --show-error --location --output /tmp/codex.tar.gz \
+        "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
+    && echo "${CODEX_SHA256}  /tmp/codex.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/codex.tar.gz -C /tmp codex-x86_64-unknown-linux-musl
+
 FROM docker.io/library/python:3.13.17-slim-trixie@sha256:d98cc29d3266e535dd9da1099688d9cb3ca4753813571e071763d17725460962
 COPY --from=claude-download --chown=0:0 --chmod=0555 /tmp/claude /opt/claude/claude
+COPY --from=codex-download --chown=0:0 --chmod=0555 /tmp/codex-x86_64-unknown-linux-musl /opt/codex/codex
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir --no-deps --require-hashes --only-binary :all: \
         -r /tmp/requirements.txt \

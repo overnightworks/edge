@@ -9,20 +9,22 @@ the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `
 ## The image
 
 `agent-service/image/` is the recipe of the service's image (agent-runtime, Claude Code
-`2.1.302`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
-pinned: both base images by digest, the Python packages by hash, the Claude CLI by its sha256. A
+`2.1.302`, Codex `0.163.0`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
+pinned: both base images by digest, the Python packages by hash, each CLI by its sha256 (Codex as its release archive, whose one executable the Dockerfile unpacks by name). A
 changed or vanished artifact fails the build. The image is never pulled from a registry, because its
 name could be anyone's on a public one (`pull_policy: never`), so it is built on the PC.
 `agent-service/setup` builds it when it is missing, and `hal apply` asks to run that setup before it
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.11.0-2.1.302 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.11.0-claude-2.1.302-codex-0.163.0 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
-only writer of `requirements.txt`, and changes the CLI pin in the Dockerfile and the image name in
-`compose.yaml` and in the build line above together. `probe/agent-service/image.py` builds without cache and starts the
+only writer of `requirements.txt`. A bump of either CLI changes its pin in the Dockerfile and its
+`version` in `service.toml`; every bump changes the image name, which carries the release and both CLI
+versions, in `compose.yaml` and in the build line above together. A base-image digest bump alone keeps
+the name, so setup builds nothing. `probe/agent-service/image.py` builds without cache and starts the
 entrypoint from the clean image.
 
 ## The service
@@ -78,7 +80,10 @@ otherwise, naming `cli.anthropic.token_file` and the path, never the content. `h
 the entry `agent-service-claude`.
 
 A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/auth.json`
-(folder 0700, file 0600); the service does not bind it yet. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
+(folder 0700, file 0600), bound read-only at `/run/agent-service/login/codex` the same way. The start
+refuses an incomplete sign-in or a file that group or others can touch, naming `cli.openai.token_file`
+and the path; a Codex run gets a copy without the renewal token, and the service does not renew it.
+`agent-service/setup --check` does not check it: a missing folder fails the start. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
 rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
 leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file. What the CLI leaves beside it (`log/`, `tmp/`) is part of the entry, never an unknown file, and a failed login removes only what that run left.
@@ -152,8 +157,8 @@ reaches a container, never a restart. There is no grace period.
 
 The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
 are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
-drops them. The only host binds are `service.toml` and the login directory, both read-only
-([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the login reaches the CLI only through its environment. The service sets
+drops them. The only host binds are `service.toml` and the two login directories, both read-only
+([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the Claude login reaches the CLI only through its environment. The service sets
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
@@ -246,9 +251,10 @@ not retried.
 
 **The unit probe** is `python3 probe/agent-service/unit.py --scratch DIR`; its docstring gives the full command
 line (the probe-stack lock and a timeout). It starts the real service in a throwaway project
-with a dummy login and drives the cells U1 to U11 and U15, which its docstring and code define: the
-process, the container hardening, the tmpfs and login mounts, a renewal seen at once, and the
-refusals (bad working-root mode, missing login directory, token at the wrong mode, no token). P09 and P11a are the
+with a dummy login of each CLI and drives the cells U1 to U11 and U15, which its docstring and code define: the
+process, the container hardening, the tmpfs and login mounts, a replaced login of either CLI seen at once, and the
+refusals (bad working-root mode, missing login directory, login at the wrong mode, no token, a Codex sign-in
+without its access token). P09 and P11a are the
 signing key's: a key at mode 0640 or 0000 stops the start, naming `signing.key_file` and no key byte (a wrong owner needs
 root and is not driven), and with the key or the CA root moved aside the service is not created and nothing appears at the
 source. Every probe that starts the real service writes a throwaway CA and signing pair into its scratch HOME

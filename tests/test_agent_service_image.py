@@ -12,6 +12,7 @@ from types import ModuleType
 
 import agent_service_lock
 import pytest
+import yaml
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 PROBE = REPOSITORY / "probe" / "agent-service" / "image.py"
@@ -22,6 +23,19 @@ AGENT_SERVICE_DOCUMENT = (REPOSITORY / "docs" / "agent-service.md").read_text(en
 
 RELEASE_WHEELS = ("agent-runtime", "agent-runtime-client", "agent-runtime-service")
 DIGEST_PINNED_IMAGE = re.compile(r"^FROM \S+@sha256:[0-9a-f]{64}\b", re.MULTILINE)
+
+
+def load_probe() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("agent_service_image_probe", PROBE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+PROBE_MODULE = load_probe()
+COPIED_CLI = re.compile(r"^COPY --from=\S+ --chown=0:0 --chmod=0555 \S+ \S+$", re.MULTILINE)
 
 
 def dockerfile_argument(name: str) -> str:
@@ -44,11 +58,14 @@ def test_every_base_image_is_pinned_by_digest():
     assert len(DIGEST_PINNED_IMAGE.findall(DOCKERFILE)) == len(base_images)
 
 
-def test_the_claude_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256():
-    version = dockerfile_argument("CLAUDE_VERSION")
-    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
-    assert re.fullmatch(r"[0-9a-f]{64}", dockerfile_argument("CLAUDE_SHA256"))
-    assert 'echo "${CLAUDE_SHA256}  /tmp/claude" | sha256sum -c -' in DOCKERFILE
+@pytest.mark.parametrize("prefix", PROBE_MODULE.DOCKERFILE_PREFIXES.values())
+def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_on_its_output_file(prefix):
+    assert re.fullmatch(r"\d+\.\d+\.\d+", dockerfile_argument(f"{prefix}_VERSION"))
+    assert re.fullmatch(r"[0-9a-f]{64}", dockerfile_argument(f"{prefix}_SHA256"))
+    output = PROBE_MODULE.checked_download(prefix)
+    assert f'echo "${{{prefix}_SHA256}}  {output}" | sha256sum -c -' in PROBE_MODULE.download_step(
+        prefix
+    )
 
 
 @pytest.mark.parametrize("moving_name", ["latest", "stable", "install.sh", "claude.ai/install"])
@@ -56,9 +73,10 @@ def test_the_recipe_never_names_a_moving_cli_release(moving_name):
     assert moving_name not in DOCKERFILE
 
 
-def test_the_cli_is_installed_root_owned_and_not_writable():
-    assert "--chown=0:0 --chmod=0555" in DOCKERFILE
-    assert DOCKERFILE.count("/opt/claude/claude") == 1
+def test_every_cli_is_installed_root_owned_and_not_writable_once_per_download():
+    downloads = re.findall(r"^RUN curl ", DOCKERFILE, re.MULTILINE)
+    assert len(COPIED_CLI.findall(DOCKERFILE)) == len(downloads)
+    assert len(re.findall(r"^COPY --from=", DOCKERFILE, re.MULTILINE)) == len(downloads)
 
 
 def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards():
@@ -69,7 +87,7 @@ def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards()
 
 def test_the_recipe_runs_only_the_download_and_the_hashed_install():
     steps = re.findall(r"^RUN (\S+ \S+)", DOCKERFILE, re.MULTILINE)
-    assert steps == ["curl --fail", "pip install"]
+    assert steps == ["curl --fail", "curl --fail", "pip install"]
 
 
 @pytest.mark.parametrize("package_manager", ["apt", "apt-get", "apk"])
@@ -162,10 +180,10 @@ def test_the_lock_script_writes_the_built_lock(tmp_path, monkeypatch):
     assert lock.read_text(encoding="utf-8") == "lock for v1.2.3\n"
 
 
-def test_the_image_runs_the_service_as_uid_1000_without_a_login():
+@pytest.mark.parametrize("login", ["/.claude", "/.codex", "auth.json", "managed-settings"])
+def test_the_image_runs_the_service_as_uid_1000_without_a_login(login):
     assert "USER 1000:1000" in DOCKERFILE
-    assert "/.claude" not in DOCKERFILE
-    assert "managed-settings" not in DOCKERFILE
+    assert login not in DOCKERFILE
 
 
 def test_every_requirement_of_the_lock_carries_a_hash_and_is_pinned():
@@ -185,21 +203,17 @@ def test_the_lock_holds_the_release_wheel_by_url_and_sha256(package):
     )
 
 
-def test_the_agent_service_document_builds_the_name_made_of_the_release_and_the_cli_version():
-    version = release_tag().removeprefix("v")
-    name = f"edge-agent-service:{version}-{dockerfile_argument('CLAUDE_VERSION')}"
+def test_the_agent_service_document_builds_the_name_compose_runs():
+    name = yaml.safe_load((REPOSITORY / "compose.yaml").read_text())["services"]["agent-service"][
+        "image"
+    ]
     command = f"docker build -f agent-service/image/Dockerfile -t {name} agent-service/image"
     assert command in AGENT_SERVICE_DOCUMENT
 
 
 @pytest.fixture(scope="module")
 def probe() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("agent_service_image_probe", PROBE)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return PROBE_MODULE
 
 
 PLANTED = "/usr/local/planted.bin"
@@ -224,3 +238,13 @@ def test_the_token_search_bite_check_fails_without_exit_zero_and_exactly_the_pla
 def test_the_token_search_bite_check_passes_on_exit_zero_with_exactly_the_planted_path(probe):
     bitten = subprocess.CompletedProcess([], 0, stdout=f"{PLANTED}\n", stderr="")
     assert probe.bite_check_failure(bitten, PLANTED) is None
+
+
+def test_the_login_variable_check_names_the_variables_and_never_their_values(probe):
+    secret_value = "synthetic-value-that-must-not-print"
+    environment = ["PATH=/usr/bin", f"OPENAI_API_KEY={secret_value}", f"CODEX_HOME={secret_value}"]
+
+    names = probe.login_environment_names(environment)
+
+    assert names == ["OPENAI_API_KEY", "CODEX_HOME"]
+    assert secret_value not in str(names)

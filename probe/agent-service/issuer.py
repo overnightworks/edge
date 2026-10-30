@@ -13,7 +13,6 @@ from pathlib import Path
 
 from egress import (
     COMPOSE_FILE,
-    LOGIN_DIRECTORY,
     SERVICE_CONFIGURATION,
     SERVICE_PORT,
     Probe,
@@ -22,6 +21,7 @@ from egress import (
     expect,
 )
 from refusals import MEMBER_GROUPS
+from scratch_secrets import LOGIN_DIRECTORY
 from smoke import Tokens
 
 SERVICE = Target.SERVICE.compose_service

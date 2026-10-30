@@ -28,6 +28,12 @@ version = "2.1.302"
 models = ["opus", "sonnet", "haiku"]
 token_file = "/run/agent-service/login/claude/token"
 
+[cli.openai]
+binary = "/opt/codex/codex"
+version = "0.163.0"
+models = ["gpt-6-astra"]
+token_file = "/run/agent-service/login/codex/auth.json"
+
 # The model of every agent that neither its app nor its own entry overrides.
 [defaults]
 model = "anthropic/opus"
