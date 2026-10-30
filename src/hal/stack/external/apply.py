@@ -18,7 +18,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, TextIO
 
-from hal.output import confirmed
+from hal.output import Stream, confirmed, write_line
 from hal.output.command import Verb, command
 from hal.stack import catalog, terminal
 from hal.stack.external import host_probe, secrets, tofu
@@ -146,7 +146,7 @@ def remove_leftover_plans(
 def _remove_leftover(plan_file: Path) -> None:
     if plan_file.exists():
         plan_file.unlink()
-        print(f"{SENDER}: removed the leftover plan file {plan_file}", file=sys.stderr)
+        write_line(f"{SENDER}: removed the leftover plan file {plan_file}", stream=Stream.STDERR)
 
 
 def _names_the_open_file(descriptor: int, path: Path) -> bool:
@@ -305,9 +305,9 @@ def report_interrupt(progress: Progress, *, plan_file_deleted: bool = True) -> N
     consequence = UNCHECKED_CONSEQUENCE if progress.apply_reached else "nothing was applied"
     plan_file = "; the plan file is deleted" if plan_file_deleted else ""
     with signals_ignored():  # the line and the record that it was printed are one step
-        print(
+        write_line(
             f"\n{SENDER}: interrupted during {step}, {consequence}{plan_file}",
-            file=sys.stderr,
+            stream=Stream.STDERR,
         )
         progress.reported = True
 
@@ -352,21 +352,21 @@ def _show_confirm_apply(
         return ApplyExit.APPLIED_OR_NOTHING
     if planned.exit_code != tofu.PlanExit.CHANGES:
         show_tofu_output(shown, sys.stderr)
-        print(f"{SENDER}: tofu plan failed (exit {planned.exit_code})", file=sys.stderr)
+        write_line(f"{SENDER}: tofu plan failed (exit {planned.exit_code})", stream=Stream.STDERR)
         return ApplyExit.CANNOT_PLAN
     show_tofu_output(shown.rstrip("\n"), sys.stdout)
     progress.step = Step.READINESS
     if unanswered := _unanswered(hosts, prober_for):
         for line in unanswered:
-            print(f"{SENDER}: {line}", file=sys.stderr)
-        print(
+            write_line(f"{SENDER}: {line}", stream=Stream.STDERR)
+        write_line(
             f"{SENDER}: refused, a ready host does not answer, nothing applied",
-            file=sys.stderr,
+            stream=Stream.STDERR,
         )
         return ApplyExit.REFUSED
     progress.step = Step.CONFIRMATION
     if not confirmed("apply exactly this plan"):
-        print(f"{SENDER}: aborted, nothing applied", file=sys.stderr)
+        write_line(f"{SENDER}: aborted, nothing applied", stream=Stream.STDERR)
         return ApplyExit.REFUSED
     progress.step = Step.APPLY
     progress.apply_reached = True
@@ -375,6 +375,6 @@ def _show_confirm_apply(
     progress.apply_exit_code = applied.exit_code
     progress.step = Step.CLEANUP
     if applied.exit_code != 0:
-        print(f"{SENDER}: tofu apply failed (exit {applied.exit_code})", file=sys.stderr)
+        write_line(f"{SENDER}: tofu apply failed (exit {applied.exit_code})", stream=Stream.STDERR)
         return ApplyExit.REFUSED
     return ApplyExit.APPLIED_OR_NOTHING

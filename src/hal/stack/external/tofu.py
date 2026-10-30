@@ -5,13 +5,13 @@ import re
 import shutil
 import signal
 import subprocess
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
 
+from hal.output import Stream, write_line
 from hal.stack.external import secrets
 
 # uv installs the project editable, so this file sits in the checkout:
@@ -87,7 +87,7 @@ def run(tofu: Path, arguments: list[str], environment: dict[str, str]) -> Comple
     # Between the fork and the try below an interrupt would find no tofu to forward to.
     outside_mask = signal.pthread_sigmask(signal.SIG_BLOCK, _FORWARDED_SIGNALS)
     try:
-        with subprocess.Popen(
+        with subprocess.Popen(  # noqa: S603 - argv is built by the program itself and no shell runs
             [str(tofu), *arguments],
             cwd=EXTERNAL_ROOT,
             env=environment,
@@ -162,6 +162,6 @@ def session(home: Path, token_values: dict[str, str]) -> Iterator[Session]:
             raise TofuError(secrets.redact(str(error), token_values)) from None
         init = run(tofu_path, init_arguments(home), environment)
         if init.exit_code != 0:
-            print(secrets.redact(init.output, token_values), file=sys.stderr)
+            write_line(secrets.redact(init.output, token_values), stream=Stream.STDERR)
             raise TofuError("tofu init failed")
         yield Session(tofu_path, environment, temporary_directory)
