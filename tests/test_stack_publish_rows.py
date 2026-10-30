@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from test_stack_external import (  # noqa: F401 - pytest finds the fixtures by name here
+from support.stack_external import (  # noqa: F401 - pytest finds the fixtures by name here
     PLANS_DIRECTORY,
     TOKEN_FILES,
     WRITE_TOKEN_FILES,
@@ -342,7 +342,7 @@ def test_a_broken_stream_is_one_row_that_names_no_tofu_text():
 
 
 # The publish cells below drive `apply_command` and `hal apply` on a pty against the fake tofu of
-# test_stack_external, whose fixtures they request by name.
+# tests/support/stack_external.py, whose fixtures they request by name.
 @pytest.fixture
 def fake(fake_tofu: FakeTofu) -> FakeTofu:  # noqa: F811
     return fake_tofu

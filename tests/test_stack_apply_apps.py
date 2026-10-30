@@ -1,6 +1,6 @@
 """`hal apply --local` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
-step after the units and the realm, on the scripted boundaries of `test_stack_apply` and the real
-origin and scripted Docker of `app_support`."""
+step after the units and the realm, on the scripted boundaries of
+`tests/support/stack_apply.py` and the real origin and scripted Docker of `app_support`."""
 
 import io
 import sys
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import support.stack_apply_apps as stack_apply_apps_support
 from app_support import (
     FLEET,
     HOSTED_COMPOSE,
@@ -18,15 +19,11 @@ from app_support import (
     KEY,
     TWO_SERVICES,
     Clock,
-    ScriptedDocker,
-    origin_at,
-    runtime_of,
     switch_lock_is_held,
 )
-from test_stack_apply import (
+from support.stack_apply import (
     ENABLED,
     NOW,
-    WHOAMI,
     ZONE,
     at_terminal,  # noqa: F401 the fixture, requested by name below
     home,  # noqa: F401 the fixture, requested by name below
@@ -43,9 +40,19 @@ from test_stack_apply import (
     switch_off,
     write_fleet,
 )
-from test_stack_plan_rows import plain
+from support.stack_apply_apps import (
+    RELEASE,
+    AppWorld,
+    deployed,
+)
+from support.stack_apply_fakes import (
+    WHOAMI,
+)
+from support.stack_plan_rows import plain
 
 from hal.stack import apps, barrier, checkout, compose, emergency, switches
+
+(app_world) = (stack_apply_apps_support.app_world)  # fmt: skip
 
 APP = "github: {{org: overnightworks}}\nservices:\n  hopin:\n    repo: {repo}\n    run: {run}\n"
 
@@ -91,38 +98,6 @@ INVALID_APPS = [
         "github.org",
     ),
 ]
-
-
-@dataclass
-class AppWorld:
-    """An app `hopin` in the catalog of the live checkout, a real origin it is checked out from and
-    a scripted Docker; the catalog holds no unit, so only the app has anything to change."""
-
-    run: object
-    repository: Path
-    scripted: object
-    origin: object
-    docker: ScriptedDocker
-    runtime: object
-    state: Path
-    srv: Path
-
-    def apply(self, answer: str = "yes") -> tuple[int, str, str]:
-        return self.run(answer, app_runtime=self.runtime)
-
-
-@pytest.fixture
-def app_world(request, tmp_path):
-    needs = {name: request.getfixturevalue(name) for name in ("repository", "state", "home")}
-    tree, state_directory, operator_home = needs.values()
-    write_fleet(tree, f"cloudflare:\n  zone: {ZONE}\n{FLEET}")
-    srv = operator_home / "srv" / KEY
-    docker = ScriptedDocker(state_directory, srv)
-    return AppWorld(
-        request.getfixturevalue("switch"), tree, request.getfixturevalue("scripted"),
-        origin_at(tmp_path, operator_home), docker,
-        runtime_of(operator_home, state_directory, docker), state_directory, srv,
-    )  # fmt: skip
 
 
 @pytest.mark.parametrize(
@@ -224,9 +199,6 @@ def test_a_disabled_app_is_neither_fetched_nor_run(app_world):
     assert app_world.docker.verbs == ["ps"]
 
 
-RELEASE = "v2026.10.22.1"
-
-
 @dataclass
 class Hal:
     """`hal stop hopin` and `hal start hopin` as the operator runs them, on the same boundaries."""
@@ -262,15 +234,6 @@ class Hal:
 @pytest.fixture
 def hal(app_world, at_terminal, capsys, ingress, monkeypatch):  # noqa: F811
     return Hal(app_world, at_terminal, capsys, ingress.verifier, monkeypatch)
-
-
-def deployed(app_world: AppWorld) -> None:
-    app_world.origin.release(RELEASE)
-    stdin, stdout = sys.stdin, sys.stdout
-    try:
-        assert app_world.apply()[0] == 0
-    finally:
-        sys.stdin, sys.stdout = stdin, stdout
 
 
 def hosted(app_world: AppWorld, hal: Hal) -> Path:

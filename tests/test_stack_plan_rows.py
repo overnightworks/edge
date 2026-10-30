@@ -1,28 +1,33 @@
 """The rows `hal apply` prints for its app plan and its unit plan: what each kind of entry says,
 from typed fields, and the `find_row` helper the apply tests share."""
 
-import re
-from enum import StrEnum
-from pathlib import Path
-from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
+from support.stack_plan_rows import (
+    APP,
+    DIGEST_A,
+    DIGEST_B,
+    KEYCLOAK,
+    NEW,
+    OLD,
+    app_plan,
+    groups_of,
+    kept,
+    unit_plan,
+)
 
-from hal.output import DETAIL_INDENT, Glyph, Group, Row
+from hal.output import Glyph, Row
 from hal.stack import checkout, releases
-from hal.stack.appkit_step import AppkitPlan
 from hal.stack.apps import (
     AppKind,
     AppPlan,
-    AppRuntime,
-    AppsPlan,
     OffPlan,
     SkippedNote,
     StaysStoppedNote,
 )
 from hal.stack.built_image import ENDS_RUNS, BuiltRecreate
-from hal.stack.catalog import App, Unit
+from hal.stack.catalog import App
 from hal.stack.core import (
     Cause,
     CauseKind,
@@ -32,74 +37,15 @@ from hal.stack.core import (
     FollowerPlan,
     Gate,
 )
-from hal.stack.legal_step import LegalPlan
-from hal.stack.plan import Plan
 from hal.stack.plan_rows import (
     CHECKOUT,
     CheckoutEvent,
     PlanEvent,
     PlanGroup,
     checkout_row,
-    plan_groups,
 )
 from hal.stack.realm.reconcile import REALM_UNIT, RealmAction, RealmPlan, RealmRestart
-from hal.stack.unit_plans import Action, ImageReference, KeptImage, Recreate, UnitPlan
-
-APP = App("hopin", True, "master")
-OLD, NEW = "v2026.10.26.1", "v2026.10.27.1"
-
-
-def app_plan(kind: AppKind, **overrides: object) -> AppPlan:
-    fields: dict[str, object] = {
-        "app": APP,
-        "release": releases.parse(NEW),
-        "sha": "a" * 40,
-        "services": ("hopin",),
-        "url": "https://github.com/org/hopin.git",
-        "ingress": None,
-        "kind": kind,
-        "recorded_tag": None,
-        "unfinished": None,
-    }
-    return AppPlan(**{**fields, **overrides})  # type: ignore[arg-type]
-
-
-NO_REALM = RealmPlan()
-NO_LEGAL = LegalPlan(Path(), Path(), {}, {})
-REPOSITORY = Path("/repository")
-NO_APPKIT = AppkitPlan("0.5.0", Path(), REPOSITORY, (), ())
-
-
-def plan_of(
-    images: tuple[KeptImage, ...] = (),
-    realm: RealmPlan = NO_REALM,
-    legal: LegalPlan = NO_LEGAL,
-    appkit: AppkitPlan = NO_APPKIT,
-    **parts: Any,
-) -> Plan:
-    units = {
-        key: parts.pop(key)
-        for key in ("built", "recreates", "unit_plans", "core", "followers")
-        if key in parts
-    }
-    apps = AppsPlan(cast(AppRuntime, None), **parts)  # type: ignore[arg-type]
-    plan = SimpleNamespace(
-        app_plans=apps,
-        images=list(images),
-        realm=realm,
-        legal=legal,
-        appkit=appkit,
-        built=list(units.pop("built", ())),
-        recreates=list(units.pop("recreates", ())),
-        plans=list(units.pop("unit_plans", ())),
-        core=list(units.pop("core", ())),
-        followers=list(units.pop("followers", ())),
-    )
-    return cast(Plan, plan)
-
-
-def groups_of(**parts: Any) -> tuple[Group, ...]:
-    return plan_groups(plan_of(**parts))
+from hal.stack.unit_plans import Action, ImageReference, KeptImage, Recreate
 
 
 def rows_of(**parts: object) -> tuple[Row, ...]:
@@ -115,33 +61,6 @@ def rows_of(**parts: object) -> tuple[Row, ...]:
 
 def unit_rows_of(**plan: Any) -> tuple[Row, ...]:
     return groups_of(**plan)[2].rows
-
-
-def plain(out: str) -> str:
-    """The output without colour."""
-    return re.sub(r"\x1b\[[0-9;]*m", "", out)
-
-
-def find_row(out: str, subject: str, event: StrEnum, fact: str = "") -> re.Match[str] | None:
-    pattern = (
-        rf"^  \S {re.escape(subject)} +(?:\d+ )?{re.escape(str(event))}s?\b.*{re.escape(fact)}"
-    )
-    return re.search(pattern, plain(out), re.MULTILINE)
-
-
-def detail_lines(out: str) -> list[str]:
-    """The lines indented under a row, without colour."""
-    return [
-        line[len(DETAIL_INDENT) :]
-        for line in plain(out).splitlines()
-        if line.startswith(DETAIL_INDENT)
-    ]
-
-
-def row_at(out: str, subject: str, event: StrEnum, fact: str = "") -> int:
-    row = find_row(out, subject, event, fact)
-    assert row, out
-    return row.start()
 
 
 @pytest.mark.parametrize(
@@ -224,14 +143,6 @@ def test_the_rows_stand_in_the_order_the_work_runs_notes_then_switch_offs_then_t
         PlanEvent.SWITCH_OFF,
         PlanEvent.SWITCH_ON,
     ]
-
-
-DIGEST_A, DIGEST_B = "79c6" + "0" * 60, "a78d" + "0" * 60
-KEYCLOAK = "quay.io/keycloak/keycloak:26.8.1"
-
-
-def kept(running: ImageReference, configured: ImageReference) -> KeptImage:
-    return KeptImage("keycloak", running, configured)
 
 
 @pytest.mark.parametrize(
@@ -325,8 +236,6 @@ def test_the_kept_images_come_before_the_realm_row_and_the_units_before_the_apps
     assert apps.rows
 
 
-STEP_CA = Unit("step-ca", True, None)
-SERVICES = ("step-ca", "traefik-mcp")
 SINCE = "2026-10-17T22:10:00"
 
 
@@ -340,11 +249,6 @@ def built(**overrides: Any) -> BuiltRecreate:
         "rebuilt": False,
     }
     return BuiltRecreate(**{**fields, **overrides})
-
-
-def unit_plan(action: Action, **overrides: Any) -> UnitPlan:
-    fields: dict[str, Any] = {"unit": STEP_CA, "services": SERVICES, "volumes": ("step-ca",)}
-    return UnitPlan(action=action, **{**fields, **overrides})
 
 
 @pytest.mark.parametrize(

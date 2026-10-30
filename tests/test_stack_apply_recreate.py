@@ -1,12 +1,11 @@
 """Apply recreates a running unit service whose compose definition changed, never its image
-(#376), on the scripted boundaries of `test_stack_apply`."""
+(#376), on the scripted boundaries of `tests/support/stack_apply.py`."""
 
 import pytest
-from test_stack_apply import (
+from support.stack_apply import (
     APP_EXITED,
     DISABLED,
     ENABLED,
-    IMAGE,
     OLD_IMAGE,
     RECREATE_FOLLOWER,
     RECREATE_TRAEFIK,
@@ -34,7 +33,10 @@ from test_stack_apply import (
     up_calls,
     write_fleet,
 )
-from test_stack_plan_rows import find_row, plain
+from support.stack_apply_fakes import (
+    IMAGE,
+)
+from support.stack_plan_rows import find_row, plain
 
 from hal.stack.plan_rows import PlanEvent
 

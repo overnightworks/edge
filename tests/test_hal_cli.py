@@ -13,6 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import support.throwaway_home as throwaway_home
 from git_support import (
     SOURCE,
     assert_quiet_run,
@@ -29,6 +30,8 @@ from hal.grammar import Asks, Command, ExitCode
 from hal.output import is_verbose
 from hal.output.command import Verb
 
+home = throwaway_home.home
+
 LOCK = SOURCE.parent / "uv.lock"
 DEADLINE_SECONDS = 30
 FORBIDDEN_STDIN = """
@@ -37,17 +40,6 @@ class Forbidden:
         raise AssertionError("stdin was touched")
 sys.stdin = Forbidden()
 """
-
-
-@pytest.fixture(autouse=True)
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway HOME and XDG_CONFIG_HOME: no global config but the one a test writes."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home / ".config"))
-    monkeypatch.setenv("LC_ALL", "C")
-    return home
 
 
 def error_lines(result: subprocess.CompletedProcess[str]) -> list[str]:
@@ -328,11 +320,11 @@ def test_the_verbose_flag_before_the_command_is_a_usage_error_that_names_the_hel
 )
 def test_a_command_that_never_asks_never_reads_stdin(tmp_path, command):
     """G-11. The stack's commands are left out: run here they would reach the real system manager;
-    their stdin cells run on fakes in test_hal_stack_commands. The backup commands would reach the
-    real repository; their stdin cell runs on the fake host in test_backup_runner. `hal check` would
-    run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal` needs a key;
-    its stdin cell runs with its own arguments in test_hal_legal. `hal secrets` runs `--by-service`,
-    the one form that reads no home and starts no probe."""
+    their stdin cells run on fakes in tests/test_hal_stack_commands.py. The backup commands would
+    reach the real repository; their stdin cell runs on the fake host in test_backup_runner. `hal
+    check` would run the real docker and ss; its cell runs on fakes in test_hal_check. `hal legal`
+    needs a key; its stdin cell runs with its own arguments in test_hal_legal. `hal secrets` runs
+    `--by-service`, the one form that reads no home and starts no probe."""
     tree = main_checkout(tmp_path)
 
     arguments = VALID_ARGUMENTS.get(command.name, ())
