@@ -3,6 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "b85f53d590e16ae600580fdda6010879856fd87f"
 branch = "claude/issue-782-m3-of-4-a-5-minute-hal-alarm-job-mails-a"
-scope = ["docs/architecture.md", "docs/home.md", "src/hal/alarm_commands.py", "src/hal/cli.py", "src/hal/config.py", "src/hal/output/command.py", "src/hal/workstation/alarm.py", "src/hal/workstation/check.py", "src/hal/workstation/jobs.py", "src/hal/workstation/user_units.py", "tests/test_hal_config.py", "tests/test_workstation_alarm.py", "tests/test_workstation_user_units.py"]
+scope = ["docs/architecture.md", "docs/home.md", "pyproject.toml", "src/hal/alarm_commands.py", "src/hal/cli.py", "src/hal/config.py", "src/hal/output/command.py", "src/hal/setup_commands.py", "src/hal/workstation/alarm.py", "src/hal/workstation/check.py", "src/hal/workstation/jobs.py", "src/hal/workstation/user_units.py", "tests/test_hal_config.py", "tests/test_workstation_alarm.py", "tests/test_workstation_user_units.py"]
 opened_commit = "162f724ec87ce31e0ed40fce1c2a5258262026f7"
 whole_reason = "A verb without its timer, or a timer without its verb and config table, is dead code until the other lands, so the run, its delivery through the daily check's owner, the table and the unit are one slice."
