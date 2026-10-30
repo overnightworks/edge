@@ -1,0 +1,8 @@
+claim_id = "87e00ebffde14d73b9f9fc9d09902e1d"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "ec12836abddec46e45f71527e3bd756790240b0c"
+branch = "claude/issue-713-s7a-of-472-output-raw-line-writer"
+scope = ["src/hal/backup/cli.py", "src/hal/check_commands.py", "src/hal/output/__init__.py", "src/hal/rename_rows.py", "src/hal/version.py", "tests/test_hal_output.py"]
+opened_commit = "3d22acfc2fddc5f535fd4e4519e955cbf92743ab"
+whole_reason = "The writer and its first callers: a writer with no caller is dead code and a caller cannot call a writer that is not there, and the four caller files are one mechanical line each under one sink."
