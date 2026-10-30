@@ -114,23 +114,54 @@ def read_plan_stream(output: str, token_values: dict[str, str]) -> PlanStream:
     """The diagnostics of the stream; every other message type is ignored. Only severity, summary
     and detail are read: the snippet and difference objects of a diagnostic can carry values.
 
-    The lines outside the stream come from the output redacted as a whole, so a secret is masked
-    wherever its own lines would parse (a passphrase line `{}` is a JSON object)."""
+    A line is a stream object or not by the output as tofu wrote it; the lines that are not are
+    shown with every secret masked, also where a secret spans several lines. Masking never decides
+    what a line is, so no stream object can turn into shown text."""
+    secret_spans = _secret_spans(output, token_values)
     diagnostics = []
-    for line in _lines_of(output):
-        message = _json_object(line)
-        if message is not None and message.get("type") == "diagnostic":
+    unparsed = []
+    position = 0
+    for raw in output.splitlines(keepends=True):
+        line = raw.splitlines()[0]
+        message = _json_object(line.strip())
+        if message is None:
+            shown = _masked(line, position, secret_spans).strip()
+            if shown:
+                unparsed.append(shown)
+        elif message.get("type") == "diagnostic":
             diagnostics.append(_diagnostic_of(message.get("diagnostic")))
-    unparsed = tuple(
-        line
-        for line in _lines_of(secrets.redact(output, token_values))
-        if _json_object(line) is None
+        position += len(raw)
+    return PlanStream(tuple(diagnostics), tuple(unparsed))
+
+
+def _secret_spans(output: str, token_values: dict[str, str]) -> list[tuple[int, int]]:
+    """Where a secret stands in the output, overlapping or touching occurrences merged."""
+    found = sorted(
+        match.span()
+        for value in token_values.values()
+        for match in re.finditer(re.escape(value), output)
     )
-    return PlanStream(tuple(diagnostics), unparsed)
+    merged: list[tuple[int, int]] = []
+    for start, end in found:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
 
 
-def _lines_of(output: str) -> list[str]:
-    return [line.strip() for line in output.splitlines() if line.strip()]
+def _masked(line: str, position: int, secret_spans: list[tuple[int, int]]) -> str:
+    """`line`, which starts at `position` of the output, with one `***` for each secret run."""
+    shown = ""
+    cursor = 0
+    for start, end in secret_spans:
+        first = max(start - position, 0)
+        last = min(end - position, len(line))
+        if first >= last:
+            continue
+        shown += line[cursor:first] + "***"
+        cursor = last
+    return shown + line[cursor:]
 
 
 def _json_object(line: str) -> dict | None:

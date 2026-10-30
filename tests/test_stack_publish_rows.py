@@ -641,6 +641,42 @@ def test_a_passphrase_with_a_json_looking_line_is_not_printed_wherever_its_lines
         assert leaked not in printed.out + printed.err
 
 
+@pytest.mark.parametrize(
+    ("plan_exit", "plan_lines"),
+    [
+        pytest.param(0, REAL_EMPTY_PLAN_WITH_WARNING, id="empty-plan"),
+        pytest.param(1, REAL_FAILED_PLAN, id="failed-plan"),
+    ],
+)
+def test_masking_a_secret_never_turns_a_stream_object_into_printed_text(
+    fake, capsys, publish_answering, request, plan_exit, plan_lines
+):
+    """#754 gate finding 2: a passphrase `false` is in the stream's booleans."""
+    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text("false\n")
+    configure_plan(fake, plan=plan_exit, plan_lines=plan_lines)
+    publish_answering()
+    printed = capsys.readouterr()
+    for field in ("snippet", "difference", "after_unknown", '"type"'):
+        assert field not in printed.out + printed.err
+
+
+def test_a_secret_spanning_a_stream_object_and_crash_lines_is_masked_in_each_part(
+    fake, capsys, publish_answering, request
+):
+    """#754 gate finding 2: the object line stays a diagnostic, the crash lines around it mask."""
+    object_line = diagnostic_line("warning", "careful")
+    secret = f"alpha\n{object_line}\nbeta"
+    (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
+        secret + "\n"
+    )
+    configure_plan(fake, plan=0, plan_lines=["alpha", object_line, "beta"])
+    assert publish_answering() == 0
+    printed = capsys.readouterr()
+    for part in ("alpha", "beta"):
+        assert part not in printed.out + printed.err
+    assert "careful" in printed.out
+
+
 @pytest.mark.parametrize("plan_exit", [0, 2])
 def test_a_diagnostic_without_a_summary_is_refused_before_the_yes(
     plans, fake, capsys, publish_answering, plan_exit
