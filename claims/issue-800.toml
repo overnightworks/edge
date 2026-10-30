@@ -1,0 +1,8 @@
+claim_id = "3ae4ca39ae474846823beaa01e8200ab"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "815cdc69c75545853f883ede0c8271a21df74fb6"
+branch = "claude/issue-800-symlinked-file-rule"
+scope = ["docs/home.md", "quality/baseline.toml", "src/hal/secrets_rows.py", "src/hal/workstation/check.py", "src/hal/workstation/secrets_view.py", "tests/test_hal_check.py", "tests/test_hal_secrets_rows.py", "tests/test_workstation_secrets_view.py"]
+opened_commit = "7c78cfd2839c588be62d1418b230ce42f0e6e8dd"
+whole_reason = "A rule key lives in the view, its report words in the check, its row event in secrets_rows, its name in the settings table and its pins in the three test modules, and they change together."
