@@ -38,7 +38,6 @@
 
 [clones."probe/agent-service/egress.py"]
 "Client.main" = [["probe/agent-service/unit.py", "Inside.main"]]
-write_dummy_token = [["probe/agent-service/image.py", "write_dummy_token"]]
 
 [clones."probe/apps/probe.py"]
 "Probe.wait_until" = [["probe/switches/probe.py", "Probe.wait_until"]]

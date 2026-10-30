@@ -71,7 +71,7 @@ from egress_observe import (  # noqa: E402
     tcp_connect,
     udp_connect,
 )
-from scratch_secrets import write_scratch_secrets  # noqa: E402
+from scratch_secrets import write_login_folders, write_scratch_secrets  # noqa: E402
 
 from hal.output import write_line  # noqa: E402
 
@@ -86,7 +86,6 @@ LIVE_EGRESS_PREFIX = "172.31.252."
 PROVIDER = "api.anthropic.com"
 GATEWAY_PORT = 443
 SERVICE_PORT = 8080  # the service's own default; service.toml sets only its host
-LOGIN_DIRECTORY = Path(".secrets/agent-service/claude")  # below the HOME of the service's bind
 CLI_BINARY = "/opt/claude/claude"
 CLI_SECONDS = 120
 UPSTREAM_REJECTION = re.compile(r"API Error: 401\b")  # the API's answer, not a local startup error
@@ -123,6 +122,15 @@ def service_configuration() -> dict:
     return tomllib.loads(SERVICE_CONFIGURATION.read_text(encoding="utf-8"))
 
 
+def cli_tables() -> dict[str, dict]:
+    """The `[cli.<provider>]` tables of the shipped service.toml."""
+    return {
+        provider: table
+        for provider, table in service_configuration()["cli"].items()
+        if isinstance(table, dict)
+    }
+
+
 def token_path() -> str:
     return service_configuration()["cli"]["anthropic"]["token_file"]
 
@@ -132,23 +140,6 @@ def issuer_host() -> str:
     host = urlsplit(service_configuration()["identity"]["jwks_url"]).hostname
     expect(host is not None, "service.toml: jwks_url names no host")
     return host
-
-
-def write_dummy_token(path: Path) -> None:
-    """A new file at `path` (mode 0600) with a line of the shape `claude setup-token` prints; it
-    is no credential and reaches no one."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")
-
-
-def write_login_directory(home: Path) -> None:
-    """The service's login directory under a probe HOME, holding a dummy token."""
-    directory = home / LOGIN_DIRECTORY
-    directory.mkdir(parents=True)
-    for folder in (directory, directory.parent, directory.parent.parent):
-        folder.chmod(0o700)
-    write_dummy_token(directory / "token")
 
 
 def classify_syns(
@@ -283,7 +274,7 @@ class Probe:
         self.target = target
         home = scratch / "home"
         home.mkdir()
-        write_login_directory(home)
+        write_login_folders(home)
         self.scratch_secrets = write_scratch_secrets(home, scratch / "ca")
         subnet = edge_copy.free_subnet(SUBNET_CANDIDATES, edge_copy.daemon_subnets())
         self.prefix = str(subnet.network_address).removesuffix("0")

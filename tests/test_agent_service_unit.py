@@ -24,11 +24,19 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICE = "agent-service"
 OWNER_ONLY_TMPFS = ("uid=1000", "gid=1000", "mode=0700", "nosuid", "nodev", "noexec")
 SIZE_BOUND = re.compile(r"size=\d+[kmg]")
+# The keys under which each provider's relationship is read from its owners, not values.
+VERSION_ARGUMENTS = {"anthropic": "CLAUDE_VERSION", "openai": "CODEX_VERSION"}
+LOGIN_ENTRIES = {"anthropic": "agent-service-claude", "openai": "agent-service/codex"}
 
 
 @pytest.fixture(scope="module")
 def service() -> dict:
     return yaml.safe_load((ROOT / "compose.yaml").read_text())["services"][SERVICE]
+
+
+@pytest.fixture(scope="module")
+def dockerfile() -> str:
+    return (ROOT / "agent-service/image/Dockerfile").read_text()
 
 
 @pytest.fixture(scope="module")
@@ -84,13 +92,22 @@ def test_every_volume_of_the_service_is_a_read_only_bind(service):
     )
 
 
-def test_the_login_is_a_read_only_directory_bind_that_is_never_created(binds):
+@pytest.mark.parametrize("provider", LOGIN_ENTRIES)
+def test_each_login_is_a_read_only_directory_bind_that_is_never_created(
+    provider, configuration, binds
+):
     """U8, U10: a directory so that `mv -T` reaches the running container; a missing source fails
-    the start instead of becoming root's directory."""
-    login = binds["/run/agent-service/login/claude"]
+    the start instead of becoming root's directory; the source is the folder the secrets manifest
+    names for the login."""
+    manifest = tomllib.loads((ROOT / "src/hal/workstation/secrets_manifest.toml").read_text())
+    entry = next(e for e in manifest["secret"] if e["name"] == LOGIN_ENTRIES[provider])
+    folder = PurePosixPath(entry["paths"][0]).parent
+    token_file = PurePosixPath(configuration["cli"][provider]["token_file"])
+    login = binds[str(token_file.parent)]
 
     assert login["read_only"] is True
     assert login["bind"] == {"create_host_path": False}
+    assert login["source"].replace("${HOME}", "~") == str(folder)
 
 
 def test_the_configuration_is_a_read_only_file_bind_from_the_checkout(binds):
@@ -100,36 +117,44 @@ def test_the_configuration_is_a_read_only_file_bind_from_the_checkout(binds):
     assert configuration["bind"] == {"create_host_path": False}
 
 
-def test_the_image_tag_is_the_locks_release_and_the_cli_version(service):
-    """The tag names the agent-runtime release of the lock and the Claude CLI of the recipe."""
+def test_the_image_tag_names_the_locks_release_and_both_cli_versions(service, dockerfile):
+    """The tag names the agent-runtime release of the lock and the two CLI pins of the recipe."""
     lock = (ROOT / "agent-service/image/requirements.txt").read_text()
-    dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
     release = re.match(r"# agent-runtime v(\S+), commit ", lock).group(1)
-    cli = re.search(r"^ARG CLAUDE_VERSION=(\S+)$", dockerfile, re.MULTILINE).group(1)
+    claude, codex = (
+        re.search(rf"^ARG {VERSION_ARGUMENTS[provider]}=(\S+)$", dockerfile, re.MULTILINE).group(1)
+        for provider in ("anthropic", "openai")
+    )
 
-    assert service["image"] == f"edge-agent-service:{release}-{cli}"
+    assert service["image"] == f"edge-agent-service:{release}-claude-{claude}-codex-{codex}"
 
 
-def test_the_service_toml_paths_are_the_services_mount_targets(
-    service, configuration, tmpfs_options, binds
-):
-    """U13: the working root is a tmpfs, the token file lies in the login bind, the binary is the
-    image's, and the configuration bind is a mount target."""
-    dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
-    token_file = PurePosixPath(configuration["cli"]["anthropic"]["token_file"])
-
+def test_the_service_toml_paths_are_the_services_mount_targets(configuration, tmpfs_options, binds):
+    """U13: the working root is a tmpfs and the configuration bind is a mount target."""
     assert configuration["cli"]["working_root"] in tmpfs_options
-    assert str(token_file.parent) in binds
-    binary = configuration["cli"]["anthropic"]["binary"]
-    assert f"--chmod=0555 /tmp/claude {binary}\n" in dockerfile
     assert "/etc/agent-service/service.toml" in binds
 
 
-def test_the_version_pin_equals_the_cli_the_recipe_installs(configuration):
-    dockerfile = (ROOT / "agent-service/image/Dockerfile").read_text()
-    pinned = re.search(r"^ARG CLAUDE_VERSION=(\S+)$", dockerfile, re.MULTILINE).group(1)
+@pytest.mark.parametrize("provider", LOGIN_ENTRIES)
+def test_each_cli_binary_is_the_images_and_its_token_file_lies_in_a_login_bind(
+    provider, configuration, binds, dockerfile
+):
+    table = configuration["cli"][provider]
 
-    assert configuration["cli"]["anthropic"]["version"] == pinned
+    assert re.search(
+        rf"^COPY --from=\S+ --chown=0:0 --chmod=0555 \S+ {re.escape(table['binary'])}$",
+        dockerfile,
+        re.MULTILINE,
+    )
+    assert str(PurePosixPath(table["token_file"]).parent) in binds
+
+
+@pytest.mark.parametrize("provider", VERSION_ARGUMENTS)
+def test_each_version_pin_equals_the_cli_the_recipe_installs(provider, configuration, dockerfile):
+    argument = VERSION_ARGUMENTS[provider]
+    pinned = re.search(rf"^ARG {argument}=(\S+)$", dockerfile, re.MULTILINE).group(1)
+
+    assert configuration["cli"][provider]["version"] == pinned
 
 
 def test_the_identity_names_the_realms_issuer_audience_and_subscription_groups(

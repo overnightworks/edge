@@ -394,7 +394,7 @@ services:
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
-    image: &agent-service-image edge-agent-service:0.11.0-2.1.302
+    image: &agent-service-image edge-agent-service:0.11.0-claude-2.1.302-codex-0.163.0
     pull_policy: never
     profiles: [agent-service]
     user: "1000:1000"
@@ -428,6 +428,14 @@ services:
       - type: bind
         source: ${HOME}/.secrets/agent-service/claude
         target: /run/agent-service/login/claude
+        read_only: true
+        bind:
+          create_host_path: false
+      # The same for the Codex login: the dedicated folder `codex login` wrote its `auth.json`
+      # into, never the operator's ~/.codex.
+      - type: bind
+        source: ${HOME}/.secrets/agent-service/codex
+        target: /run/agent-service/login/codex
         read_only: true
         bind:
           create_host_path: false

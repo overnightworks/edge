@@ -1,7 +1,7 @@
 """The agent service image probe (#192, cells I1 to I8).
 
 Builds the image without cache, then drives it as the PC would: a changed hash fails the build,
-the CLI runs as uid 1000 on a read-only root, the real entrypoint starts with a Claude profile
+both CLIs run as uid 1000 on a read-only root, the real entrypoint starts with both CLI tables
 and answers an unauthenticated `POST /runs` with 401, the image holds no login, and the installed
 packages are exactly the lock's, and a dropped configuration field stops the start. Run it from
 the repository root, in the probe-stack lock:
@@ -22,7 +22,6 @@ import argparse
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import socket
@@ -30,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Sequence
@@ -40,6 +40,7 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # egress.py, importable by path too
 
 from egress import scratch_directory  # noqa: E402
+from scratch_secrets import write_dummy_codex_login, write_dummy_token  # noqa: E402
 
 from hal.output import Stream, write_line  # noqa: E402
 
@@ -47,8 +48,11 @@ NO_NETWORK = "--network=none"
 IMAGE_DIRECTORY = REPOSITORY / "agent-service" / "image"
 PROBE_NAME = f"edge-probe-agent-image-{os.getpid()}"
 IMAGE = f"{PROBE_NAME}:probe"
-CLAUDE_CLI_PATH = "/tmp/claude"  # NOSONAR(S5443) where the build downloads the CLI inside the image  # noqa: S108 - a path inside the image build and not on the host
-CLI_REPORT = "2.1.302 (Claude Code)"
+SHIPPED_CONFIGURATION = REPOSITORY / "agent-service" / "service.toml"
+# The ARG-name prefix of each provider's CLI pins in the Dockerfile, and what its `--version` says.
+DOCKERFILE_PREFIXES = {"anthropic": "CLAUDE", "openai": "CODEX"}
+VERSION_REPORTS = {"anthropic": "{version} (Claude Code)", "openai": "codex-cli {version}"}
+RUN_STEP = re.compile(r"^RUN .*?(?=^\S)", re.MULTILINE | re.DOTALL)
 SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
 BUILD_SECONDS = 1500
@@ -71,7 +75,10 @@ LOGIN_PATHS = (
     ".claude.json",
     ".credentials.json",
     "claude-code",
+    ".codex",
+    "auth.json",
 )
+LOGIN_ENVIRONMENT = re.compile(r"(CLAUDE|ANTHROPIC|CODEX|OPENAI)")
 
 
 class ProbeFailed(Exception):
@@ -119,6 +126,20 @@ def build(context: Path, transcript: Path, *extra: str, tag: str = IMAGE, cache:
     return result
 
 
+def shipped_cli(provider: str) -> dict:
+    """The `[cli.<provider>]` table of the service.toml the service ships."""
+    shipped = tomllib.loads(SHIPPED_CONFIGURATION.read_text(encoding="utf-8"))
+    return shipped["cli"][provider]
+
+
+def checked_download(provider: str) -> str:
+    """The file the Dockerfile's download step of `provider` writes and checks by sha256."""
+    dockerfile = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
+    prefix = DOCKERFILE_PREFIXES[provider]
+    step = next(step for step in RUN_STEP.findall(dockerfile) if f"${{{prefix}_VERSION}}" in step)
+    return re.search(r"--output (\S+)", step).group(1)
+
+
 def normalized_name(name: str) -> str:
     """A distribution name as pip and the lock may spell it (`ruamel.yaml`, `ruamel-yaml`)."""
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -139,24 +160,29 @@ def cell_i1(output: Path) -> None:
     result = build(IMAGE_DIRECTORY, output / "i1-build.txt")
     expect(result.returncode == 0, f"I1: the build failed (see {output / 'i1-build.txt'})")
     text = result.stdout + result.stderr
-    expect(f"{CLAUDE_CLI_PATH}: OK" in text, "I1: the build did not report the CLI's sha256 as OK")
+    for provider in DOCKERFILE_PREFIXES:
+        expect(
+            f"{checked_download(provider)}: OK" in text,
+            f"I1: the build did not report the {provider} download's sha256 as OK",
+        )
     expect("No broken requirements found." in text, "I1: pip check did not pass in the build")
 
 
 def cell_i2(output: Path, scratch: Path) -> None:
-    altered_cli = build(
-        IMAGE_DIRECTORY,
-        output / "i2-cli-hash.txt",
-        "--build-arg",
-        f"CLAUDE_SHA256={'0' * 64}",
-        tag=f"{PROBE_NAME}:i2-cli",
-        cache=True,
-    )
-    expect(altered_cli.returncode != 0, "I2: a build with an altered CLI hash succeeded")
-    expect(
-        f"{CLAUDE_CLI_PATH}: FAILED" in altered_cli.stdout + altered_cli.stderr,
-        "I2: sha256sum did not fail on the CLI",
-    )
+    for provider, prefix in DOCKERFILE_PREFIXES.items():
+        altered = build(
+            IMAGE_DIRECTORY,
+            output / f"i2-{provider}-hash.txt",
+            "--build-arg",
+            f"{prefix}_SHA256={'0' * 64}",
+            tag=f"{PROBE_NAME}:i2-{provider}",
+            cache=True,
+        )
+        expect(altered.returncode != 0, f"I2: a build with an altered {provider} hash succeeded")
+        expect(
+            f"{checked_download(provider)}: FAILED" in altered.stdout + altered.stderr,
+            f"I2: sha256sum did not fail on the {provider} download",
+        )
     context = scratch / "altered-wheel"
     shutil.copytree(IMAGE_DIRECTORY, context)
     lock = context / "requirements.txt"
@@ -174,16 +200,20 @@ def cell_i2(output: Path, scratch: Path) -> None:
 
 
 def cell_i3(output: Path) -> None:
-    result = build(
-        IMAGE_DIRECTORY,
-        output / "i3-absent-cli.txt",
-        "--build-arg",
-        "CLAUDE_VERSION=0.0.1",
-        tag=f"{PROBE_NAME}:i3",
-        cache=True,
-    )
-    expect(result.returncode != 0, "I3: a build for an absent CLI version succeeded")
-    expect("curl: (22)" in result.stdout + result.stderr, "I3: curl --fail did not stop the build")
+    for provider, prefix in DOCKERFILE_PREFIXES.items():
+        result = build(
+            IMAGE_DIRECTORY,
+            output / f"i3-absent-{provider}.txt",
+            "--build-arg",
+            f"{prefix}_VERSION=0.0.1",
+            tag=f"{PROBE_NAME}:i3-{provider}",
+            cache=True,
+        )
+        expect(result.returncode != 0, f"I3: a build for an absent {provider} version succeeded")
+        expect(
+            "curl: (22)" in result.stdout + result.stderr,
+            f"I3: curl --fail did not stop the {provider} build",
+        )
 
 
 def run_in_image(
@@ -211,12 +241,21 @@ def run_in_image(
     )
 
 
+def version_reports() -> list[str]:
+    """What each shipped CLI's `--version` must say, from the pin in service.toml."""
+    return [
+        VERSION_REPORTS[provider].format(version=shipped_cli(provider)["version"])
+        for provider in DOCKERFILE_PREFIXES
+    ]
+
+
 def cell_i4() -> None:
-    version = run_in_image(["--version"], entrypoint="/opt/claude/claude")
-    expect(
-        version.stdout.strip() == CLI_REPORT,
-        f"I4: claude --version printed {version.stdout!r} {version.stderr[-200:]!r}",
-    )
+    for provider, report in zip(DOCKERFILE_PREFIXES, version_reports(), strict=True):
+        version = run_in_image(["--version"], entrypoint=shipped_cli(provider)["binary"])
+        expect(
+            version.stdout.strip() == report,
+            f"I4: {provider} --version printed {version.stdout!r} {version.stderr[-200:]!r}",
+        )
     platform = run_in_image(
         ["-c", "import platform;print(platform.libc_ver()[0], platform.machine())"],
         entrypoint="python",
@@ -225,6 +264,7 @@ def cell_i4() -> None:
 
 
 def service_configuration() -> str:
+    claude, codex = (shipped_cli(provider) for provider in DOCKERFILE_PREFIXES)
     return f"""[identity]
 issuer = "https://issuer.invalid/realms/probe"
 jwks_url = "https://issuer.invalid/realms/probe/protocol/openid-connect/certs"
@@ -240,10 +280,16 @@ port = {SERVICE_PORT}
 working_root = "/run/work"
 
 [cli.anthropic]
-binary = "/opt/claude/claude"
-version = "2.1.302"
+binary = "{claude["binary"]}"
+version = "{claude["version"]}"
 models = ["sonnet"]
 token_file = "/run/secrets/claude-token"
+
+[cli.openai]
+binary = "{codex["binary"]}"
+version = "{codex["version"]}"
+models = ["probe-model"]
+token_file = "/run/secrets/codex-login.json"
 
 [defaults]
 model = "anthropic/sonnet"
@@ -296,13 +342,6 @@ def cell_i8(scratch: Path) -> None:
         expect(f"{field}:" in said, f"I8: the refusal of {field} says {said[-300:]!r}")
 
 
-def write_dummy_token(path: Path) -> None:
-    """A line of the shape `claude setup-token` prints; it is no credential and reaches no one."""
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(f"sk-ant-oat01-{secrets.token_urlsafe(72)}\n")
-
-
 def free_loopback_port() -> int:
     with socket.socket() as probe_socket:
         probe_socket.bind(("127.0.0.1", 0))
@@ -337,9 +376,10 @@ def unauthenticated_run_status(port: int) -> int:
 
 def cell_i5(output: Path, scratch: Path) -> None:
     configuration = scratch / "service.toml"
-    token = scratch / "claude-token"
+    token, codex_login = scratch / "claude-token", scratch / "codex-login.json"
     configuration.write_text(service_configuration(), encoding="utf-8")
     write_dummy_token(token)
+    write_dummy_codex_login(codex_login)
     port = free_loopback_port()
     docker(
         [
@@ -356,6 +396,8 @@ def cell_i5(output: Path, scratch: Path) -> None:
             f"type=bind,source={configuration},target=/etc/agent-service/service.toml,readonly",
             "--mount",
             f"type=bind,source={token},target=/run/secrets/claude-token,readonly",
+            "--mount",
+            f"type=bind,source={codex_login},target=/run/secrets/codex-login.json,readonly",
             "--publish",
             f"127.0.0.1:{port}:{SERVICE_PORT}",
             IMAGE,
@@ -414,8 +456,8 @@ def cell_i6(image: str = IMAGE, options: Sequence[str] = ()) -> None:
         docker(["image", "inspect", image, "--format", "{{json .Config.Env}}"]).stdout
     )
     expect(
-        not any(re.match(r"(CLAUDE|ANTHROPIC)", entry) for entry in environment),
-        f"I6: the image sets a Claude or Anthropic variable: {environment}",
+        not any(LOGIN_ENVIRONMENT.match(entry) for entry in environment),
+        f"I6: the image sets a Claude, Anthropic, Codex or OpenAI variable: {environment}",
     )
 
 
@@ -473,19 +515,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         scratch = Path(scratch_name)
         try:
             cell_i1(output)
-            write_line("I1 held: built without cache, every download checked, pip check passed")
+            write_line("I1 held: built without cache, both CLI downloads checked, pip check passed")
             cell_i2(output, scratch)
-            write_line("I2 held: an altered CLI hash and an altered wheel hash both fail the build")
+            write_line("I2 held: an altered hash of either CLI or of a wheel fails the build")
             cell_i3(output)
-            write_line("I3 held: an absent CLI version fails at curl --fail")
+            write_line("I3 held: an absent version of either CLI fails at curl --fail")
             cell_i4()
-            write_line(f"I4 held: uid 1000, read-only root, {CLI_REPORT}, glibc on x86_64")
+            write_line(
+                f"I4 held: uid 1000, read-only root, {', '.join(version_reports())}, "
+                "glibc on x86_64"
+            )
             cell_i5(output, scratch)
             write_line(
                 "I5 held: the entrypoint listened after its version probe; POST /runs was 401"
             )
             cell_i6()
-            write_line("I6 held: no managed settings, no ~/.claude, no token")
+            write_line("I6 held: no managed settings, no Claude or Codex login, no token")
             cell_i7()
             write_line("I7 held: pip freeze is exactly the lock's names and versions")
             cell_i8(scratch)
