@@ -35,7 +35,7 @@ from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
 from hal.workstation.manifest_fields import ManifestError, fail, string, strings
 from hal.workstation.report import findings_count, markdown_table
-from hal.workstation.secrets_create import CreateCommand, left_by_cli, parse_create
+from hal.workstation.secrets_create import CreateCommand, is_renewal_sibling, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
@@ -178,8 +178,8 @@ class SecretEntry:
 
     @property
     def renewal(self) -> str:
-        """How the entry is made again: derived from `create` and the entry's own folder, else the `recreate` text."""
-        return self.create.renewal(f"{HOME_PREFIX}{self.folder}") if self.create else self.recreate
+        """How the entry is made again: for a `create` entry the wizard signs in again once its login file is gone, else the `recreate` text."""
+        return f"{command(Verb.SETUP)}, once {HOME_PREFIX}{self.place} is gone" if self.create else self.recreate
 
 
 # --- manifest --------------------------------------------------------------
@@ -744,7 +744,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
     )
     patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
     logins = tuple(entry.place for entry in manifest if entry.create and not entry.retired)
-    tree = tuple(fact for fact in observation.tree if not any(left_by_cli(fact.relative, login) for login in logins))
+    tree = tuple(fact for fact in observation.tree if not any(is_renewal_sibling(fact.relative, login) for login in logins))
     unknown = (
         SecretFinding(FindingRule.UNKNOWN_FILE, f"{HOME_PREFIX}{fact.relative}", fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it")
         for fact in tree

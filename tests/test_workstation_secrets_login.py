@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from support.workstation_secrets_report import findings_of, report_of
 from workstation_secrets_support import (
     FakeCli,
     FakeSync,
@@ -18,7 +19,9 @@ from workstation_secrets_support import (
     run_wizard,
     squeezed,
 )
+from workstation_support import FakeProbe, run_hal_secrets
 
+from hal.output.command import Verb, command
 from hal.workstation import secrets_setup, secrets_view
 from hal.workstation.secrets_setup import Boundaries, Outcome, Verdict, WalkEnd, run_command
 from hal.workstation.secrets_view import load_manifest
@@ -266,6 +269,32 @@ def test_the_fresh_home_is_gone_however_the_login_ends(
     assert [path.name for path in (login_home / CODEX_FOLDER).parent.iterdir()] == ["codex"]
 
 
+@pytest.mark.parametrize(
+    ("planted", "unknown"),
+    [
+        (("config.toml", "log/codex-login.log"), {"config.toml", "log", "log/codex-login.log"}),
+        ((".auth.json.new",), set()),
+    ],
+    ids=["files planted beside the login", "the service's renewal sibling"],
+)
+def test_beside_the_login_file_only_the_services_renewal_sibling_is_no_unknown_file(
+    login_home: Path, terminal: FakeTerminal, disk: FakeSync, planted: tuple[str, ...], unknown: set[str], capsys
+) -> None:
+    """#749: the service may write the folder and the CLI never does, so only `.auth.json.new` is expected beside auth.json; a file
+    the service planted there shows in `hal secrets`."""
+    assert run_login(login_home, terminal, disk, FakeCli()) is WalkEnd.DONE
+    folder = login_home / CODEX_FOLDER
+    for relative in planted:
+        (folder / relative).parent.mkdir(mode=0o700, exist_ok=True)
+        (folder / relative).write_text("planted")
+        (folder / relative).chmod(0o600)
+
+    run_hal_secrets(login_home, FakeProbe())
+
+    found = findings_of(report_of(login_home), "unknown-file")
+    assert set(found) == {f"~/{CODEX_FOLDER}/{relative}" for relative in unknown}
+
+
 def test_a_failed_login_removes_what_that_run_left_and_keeps_what_was_there_before(
     login_home: Path, terminal: FakeTerminal, disk: FakeSync
 ) -> None:
@@ -282,11 +311,13 @@ def test_a_failed_login_removes_what_that_run_left_and_keeps_what_was_there_befo
     assert sorted(path.name for path in folder.rglob("*")) == ["notes.txt"]
 
 
-def test_the_renewal_command_is_derived_from_the_create_key(login_home: Path) -> None:
-    """#666 D4: the command `hal secrets` shows is derived, so the entry carries no hand-written recreate."""
+def test_the_renewal_of_a_create_entry_is_hal_setup_once_its_login_file_is_gone(login_home: Path) -> None:
+    """#666 D4, #749: the renewal `hal secrets` shows is derived, never a raw CLI run in the folder the service can write."""
     (entry,) = load_manifest(secrets_view.MANIFEST_PATH)
 
-    assert entry.renewal == "CODEX_HOME=~/.secrets/agent-service/codex codex login"
+    assert command(Verb.SETUP) in entry.renewal
+    assert f"{secrets_view.HOME_PREFIX}{entry.place}" in entry.renewal
+    assert "CODEX_HOME" not in entry.renewal
 
 
 @pytest.mark.parametrize(

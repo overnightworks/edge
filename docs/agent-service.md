@@ -94,7 +94,8 @@ leaves a present one untouched; that is also the way to sign in again, once the 
 service can write the folder, `codex login` never runs in it: hal runs it with `CODEX_HOME` at a fresh
 private folder beside it, moves only a regular `auth.json` (0600) into the folder, replacing whatever
 stood there without following a link, and removes the rest, however the login ends. hal never reads or
-prints the file. `hal secrets -v` lists the entry `agent-service/codex`.
+prints the file. `hal secrets -v` lists the entry `agent-service/codex`; every file in the folder besides
+`auth.json` and the service's `.auth.json.new` is an unknown file there.
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC, so his
