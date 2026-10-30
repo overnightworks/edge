@@ -128,6 +128,11 @@ def _run_isolated(name: str, run_check: Callable[[CheckContext], CheckFindings],
     return CheckResult(name, report, identities)
 
 
+def run_areas(ctx: CheckContext, names: frozenset[str]) -> tuple[CheckResult, ...]:
+    """The named checks, each isolated, in the order of `CHECKS`."""
+    return tuple(_run_isolated(name, run_check, ctx) for name, run_check in CHECKS if name in names)
+
+
 def _failure_marker(name: str) -> str:
     return f"{name}\t{CHECK_FAILED_IDENTITY}"
 
@@ -161,7 +166,7 @@ def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
 
-def _previous_identities(layout: Layout) -> frozenset[str] | None:
+def previous_identities(layout: Layout) -> frozenset[str] | None:
     text = read_state_file(layout.home, layout.check_findings_file)
     return None if text is None else _parse_identities(text)
 
@@ -193,7 +198,7 @@ def _is_remembered(identity: str) -> bool:
     return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(separator and rule != CHECK_FAILED_IDENTITY and _rule_report(name, rule)))
 
 
-def _remember(layout: Layout, identities: frozenset[str]) -> None:
+def remember(layout: Layout, identities: frozenset[str]) -> None:
     write_state_file(layout.home, layout.check_findings_file, json.dumps(sorted(identities), indent=0) + "\n")
 
 
@@ -654,18 +659,23 @@ def _write_verdict(items: list[Item], area_count: int, outcome: NewsOutcome, rep
     )
 
 
+def deliver_news(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None) -> NewsOutcome:
+    """The news of `current` against `previous` through every set-up channel, as the daily check delivers it; the caller remembers `current` when the outcome is settled."""
+    return _news_outcome(ctx, current, previous, _mail_facts(ctx))
+
+
 def check(ctx: CheckContext) -> int:
     layout = ctx.layout
-    results = tuple(_run_isolated(name, run_check, ctx) for name, run_check in CHECKS)
+    results = run_areas(ctx, CHECK_NAMES)
     report = render_report(results, ctx.now)
     write_state_file(layout.home, layout.check_report_file, report)
-    previous = _previous_identities(layout)
+    previous = previous_identities(layout)
     current = remembered_identities(results, previous)
     facts = _mail_facts(ctx)
     outcome = _news_outcome(ctx, current, previous, facts)
     # The remembered set stays at the last delivered one, so the next run sends this news again.
     if outcome.settled:
-        _remember(layout, current)
+        remember(layout, current)
     failed = [result for result in results if result.error]
     items = _items(current, facts.readers)
     broken = {result.name for result in failed}

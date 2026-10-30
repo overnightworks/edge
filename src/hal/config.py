@@ -9,12 +9,17 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from hal.workstation.alarm import AlarmSettings
 from hal.workstation.check import CheckSettings
 
 CONFIG_PATH_IN_HOME = Path(".config") / "hal" / "config.toml"
 CHECK_TABLE = "check"
 CHECK_KEY_TYPES: Mapping[str, type] = {"notify": bool}
 KNOWN_CHECK_KEYS = frozenset(CHECK_KEY_TYPES)
+ALARM_TABLE = "alarm"
+ALARM_KEY_TYPES: Mapping[str, type] = {"interval": int, "runs": int}
+KNOWN_ALARM_KEYS = frozenset(ALARM_KEY_TYPES)
+EXPECTED_OF_TYPE: Mapping[type, str] = {bool: "true or false", int: "a whole number of at least 1"}
 
 
 class ConfigInvalid(Exception):
@@ -27,6 +32,7 @@ class ConfigInvalid(Exception):
 @dataclass(frozen=True)
 class Settings:
     check: CheckSettings = field(default_factory=CheckSettings)
+    alarm: AlarmSettings = field(default_factory=AlarmSettings)
 
 
 def config_path(home: Path) -> Path:
@@ -53,20 +59,35 @@ def _refuse_unknown(path: Path, names: set[str], known: frozenset[str]) -> None:
         raise ConfigInvalid(path, f"unknown key(s) or table(s): {', '.join(unknown)}")
 
 
-def _check_settings(path: Path, table: object) -> CheckSettings:
+def _is_of_type(value: object, expected: type) -> bool:
+    if expected is int:
+        return type(value) is int and value >= 1
+    return isinstance(value, expected)
+
+
+def _table_values(
+    path: Path, name: str, table: object, key_types: Mapping[str, type]
+) -> dict[str, object]:
     if not isinstance(table, dict):
-        raise ConfigInvalid(path, f"[{CHECK_TABLE}] must be a table")
-    _refuse_unknown(path, set(table), KNOWN_CHECK_KEYS)
-    for key in set(table):
-        if not isinstance(table[key], CHECK_KEY_TYPES[key]):
-            raise ConfigInvalid(path, f"{key} must be true or false, got {table[key]!r}")
-    return CheckSettings(**table)
+        raise ConfigInvalid(path, f"[{name}] must be a table")
+    _refuse_unknown(path, set(table), frozenset(key_types))
+    for key, value in table.items():
+        if not _is_of_type(value, key_types[key]):
+            raise ConfigInvalid(
+                path, f"{key} must be {EXPECTED_OF_TYPE[key_types[key]]}, got {value!r}"
+            )
+    return table
 
 
 def load(home: Path) -> Settings:
     path = config_path(home)
     raw = _read(path)
-    _refuse_unknown(path, set(raw), frozenset({CHECK_TABLE}))
-    if CHECK_TABLE not in raw:
-        return Settings()
-    return Settings(check=_check_settings(path, raw[CHECK_TABLE]))
+    _refuse_unknown(path, set(raw), frozenset({CHECK_TABLE, ALARM_TABLE}))
+    return Settings(
+        check=CheckSettings(
+            **_table_values(path, CHECK_TABLE, raw.get(CHECK_TABLE, {}), CHECK_KEY_TYPES)
+        ),
+        alarm=AlarmSettings(
+            **_table_values(path, ALARM_TABLE, raw.get(ALARM_TABLE, {}), ALARM_KEY_TYPES)
+        ),
+    )

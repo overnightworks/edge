@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 
 from hal import (
+    alarm_commands,
     backup_commands,
     check_commands,
     legal_commands,
@@ -25,6 +26,7 @@ COMMANDS = (
     *stack_commands.COMMANDS,
     *backup_commands.COMMANDS,
     *check_commands.COMMANDS,
+    *alarm_commands.COMMANDS,
     *secrets_commands.COMMANDS,
     *setup_commands.COMMANDS,
     *rename_commands.COMMANDS,
