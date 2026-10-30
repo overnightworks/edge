@@ -127,11 +127,10 @@ def restore_test(settings: Settings, arguments: argparse.Namespace) -> None:
             if run.failed_apps:
                 failed = run.failed_apps
                 total = run.proven_apps + len(failed)
-                failure.error_line = (
-                    _app_failure_line(run, failure)
-                    if arguments.snapshot
-                    else _failed_apps_line(failed, total, "not proven")
-                )
+                if arguments.snapshot:
+                    failure.error_line = _app_failure_line(run, failure)
+                else:
+                    failure.error_line = _failed_apps_line(failed, total, "not proven")
                 failure.next_step = command(Verb.RESTORE, "--test", failed[0])
             raise
 
