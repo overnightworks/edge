@@ -224,14 +224,11 @@ def live_checkout(home) -> Path:
 
 @pytest.fixture
 def publish(home, live_checkout, monkeypatch) -> Callable[[], int]:
-    """`apply_command` in this process on a plan without changes: the terminal refusal lifted, the
-    closing host check clean and every ready host answering, so a cell sees only the session, the
-    token files and the exit, whatever listens on this machine."""
+    """`apply_command` in process: terminal refusal lifted, host check clean, hosts answering."""
     monkeypatch.setattr(external_apply, "refusal_without_terminal", lambda: None)
     monkeypatch.setattr(external_cli, "check_command", lambda _home: 0)
-    return lambda: external_cli.apply_command(
-        home, live_checkout, prober_for=RecordingReadyProber()
-    )
+    ready = RecordingReadyProber()
+    return lambda: external_cli.apply_command(home, live_checkout, prober_for=ready)
 
 
 @pytest.mark.parametrize("token_file", TOKEN_FILES)
