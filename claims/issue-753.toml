@@ -1,0 +1,8 @@
+claim_id = "faa17ff9b5714b0999b8805858b62204"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "225348b48639c643b58ca3fb4cad2a09fbb37606"
+branch = "claude/issue-753-a5-2a-realm-result-row"
+scope = ["docs/architecture.md", "docs/design/hal-output.html", "docs/keycloak.md", "probe/keycloak/probe.py", "src/hal/stack/apply.py", "src/hal/stack/realm/reconcile.py", "src/hal/stack/result_rows.py", "tests/test_stack_apply.py", "tests/test_stack_realm_reconcile.py"]
+opened_commit = "999d34a1064031faf1023c8905775f832692c370"
+whole_reason = "One vertical slice: three production files plus the tests, probe, docs and picture that pin the realm lines it replaces; splitting them leaves a pin or doc lying."
