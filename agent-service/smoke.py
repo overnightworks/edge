@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """The operator's smoke of the agent service: one run, its event types and its text on stdout.
 
     docker compose run --rm -T agent-smoke [--cancel] [--tool NAME:EFFECT ...]
@@ -39,7 +38,7 @@ SERVED_AFTER_RUN_STARTED = re.compile(
     re.MULTILINE,
 )
 ROLES = ["admin", "user"]
-WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"
+WORKLOAD_TOKEN_HEADER = "Agent-Workload-Token"  # noqa: S105 - a header name and no credential
 SYSTEM_PROMPT = "You answer a smoke test of the agent service. Follow the instruction exactly."
 ANSWER_PROMPT = "Reply with the single word: ok"
 LONG_ANSWER_PROMPT = "Count from 1 to 2000, one number per line, and write nothing else."
@@ -258,7 +257,7 @@ def main(
     try:
         tokens = read_tokens(stdin)
     except SmokeFailed as failure:
-        print(f"smoke: {failure}", file=sys.stderr)
+        print(f"smoke: {failure}", file=sys.stderr)  # noqa: T201 - the failure line of the smoke on standard error
         return 1
     prompt = LONG_ANSWER_PROMPT if arguments.cancel else ANSWER_PROMPT
     smoke = Smoke(tokens, out, connect, pause, tools)

@@ -104,8 +104,8 @@ def read_within_limit(descriptor: int) -> bytes:
 def run_openssl(arguments: list[str], stdin: bytes) -> subprocess.CompletedProcess[bytes]:
     """Key bytes go in and out over pipes only; the caller never prints either stream."""
     try:
-        return subprocess.run(
-            ["openssl", *arguments], input=stdin, capture_output=True, check=False,
+        return subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+            ["openssl", *arguments], input=stdin, capture_output=True, check=False,  # noqa: S607 - openssl is found on PATH by design
             timeout=OPENSSL_SECONDS,
         )  # fmt: skip
     except subprocess.TimeoutExpired as error:
