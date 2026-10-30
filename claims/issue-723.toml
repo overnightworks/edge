@@ -1,8 +1,0 @@
-claim_id = "043f90d3fc97491b863fc938d4143daf"
-agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
-role = "builder"
-base = "78080bc14ac79721acfb8c9e73f0edcc2261da99"
-branch = "claude/issue-723-appkit-v0-7-0-pin"
-scope = ["keycloak/themes/hallucinai/account/theme.properties", "keycloak/themes/hallucinai/login/theme.properties", "legal/frame/datenschutz.html", "legal/frame/impressum.html", "legal/frame/nutzungsbedingungen.html", "pyproject.toml", "uv.lock"]
-opened_commit = "a4e7ab5f45b0816e4a81ed6d8ce6e09cdb041812"
-whole_reason = "The wheel pin and the five files that link its versioned directory must move in one commit, or the tests and the served pages disagree."
