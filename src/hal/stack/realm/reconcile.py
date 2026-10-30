@@ -37,7 +37,7 @@ from hal.output import printable
 from hal.output.command import PROGRAM, Verb, command
 from hal.stack import compose, core, switches
 from hal.stack import realm as realm_lines
-from hal.stack.realm import OBSERVER_SERVICE, Kind, new_digest_key
+from hal.stack.realm import OBSERVER_SERVICE, new_digest_key
 from hal.stack.realm import declared as declared_identities
 from hal.stack.realm.observe import (
     CLIENT,
@@ -65,15 +65,6 @@ RESTORE_GUIDE = 'docs/backup.md "Restore Keycloak"'
 _ERROR_LINE = re.compile(r"^error: (.+)$", re.MULTILINE)
 
 type Checksums = dict[str, dict[str, str]]  # realm -> import-checksum attribute -> value
-_LISTED_KINDS = [
-    f"top-level {kind}" if kind == FLOW.name else kind for kind in declared_identities.KINDS
-]
-NOTHING_ONLY_IN_KEYCLOAK = (
-    "realm: nothing only in Keycloak among "
-    + ", ".join(f"{kind}s" for kind in _LISTED_KINDS[:-1])
-    + f" and {_LISTED_KINDS[-1]}s"
-)
-NOT_READ = "realm: not read, so not listed: "
 type Say = Callable[[str], None]  # says one line of the step, with `hal apply`'s prefix
 
 
@@ -370,10 +361,41 @@ class _Progress:
 
 
 @dataclass(frozen=True)
-class StepResult:
-    """The lines to say, and why the step ended partial when it did."""
+class OnlyInKeycloak:
+    """One object of a kind the operator creates that the realm files do not declare."""
 
-    lines: tuple[str, ...] = ()
+    realm: str
+    kind: str
+    identity: str
+
+
+@dataclass(frozen=True)
+class Leftovers:
+    """What the step leaves alone: the objects only in Keycloak, the declared realms it did not
+    observe, whether the realm files could be read to compare, and the kinds it cannot see."""
+
+    found: tuple[OnlyInKeycloak, ...]
+    absent: tuple[str, ...]
+    files_read: bool
+    unread: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RealmApplied:
+    """A step that ran config-cli and observed the result. `leftovers` is None when the record
+    could not be written, so nothing is listed; `seconds` is the whole step."""
+
+    snapshot: str
+    seconds: float
+    changes: tuple[realm_lines.Change, ...]
+    leftovers: Leftovers | None
+
+
+@dataclass(frozen=True)
+class StepResult:
+    """What the step applied, and why it ended partial when it did."""
+
+    applied: RealmApplied | None = None
     failure: str | None = None
 
 
@@ -408,50 +430,44 @@ class Realm:
             return StepResult(failure=_failure(progress, "interrupted"))
 
     def _apply(self, plan: RealmPlan, progress: _Progress) -> StepResult:
+        started = self.clock()
         followed = core.followed_services(self.config, self.repository)
         self._refuse_while_config_cli_runs()
-        progress.snapshot, backup_seconds = self._timed(self.backup.pre_apply)
-        _, test_seconds = self._timed(lambda: self.backup.restore_test(progress.snapshot))
+        progress.snapshot = self.backup.pre_apply()
+        self.backup.restore_test(progress.snapshot)
         progress.proven = True
         before = self.observer.inventory()
         self._run_config_cli(progress, followed)
         after = self.observer.inventory()
         checksums = self.observer.checksums()
-        timing = (
-            f"realm: applied keycloak/*.yaml; pre-apply snapshot {progress.snapshot} "
-            f"({backup_seconds:.0f}s backup, {test_seconds:.0f}s restore test)"
-        )
-        lines = (timing, *_change_lines(before, after, progress.snapshot))
+        changes = tuple(realm_lines.diff(before, after))
         try:
             self.record.write(CONFIG_CLI, {**plan.entry, **_flat(checksums)}, followed)
         except core.CoreError as error:
+            applied = RealmApplied(progress.snapshot, self.clock() - started, changes, None)
             return StepResult(
-                lines,
+                applied,
                 f"realm: applied and observed, but the record could not be written ({error}); "
                 "the next run repeats the step",
             )
-        return StepResult((*lines, *self.only_in_keycloak_lines(after)))
+        seconds = self.clock() - started
+        return StepResult(RealmApplied(progress.snapshot, seconds, changes, self.leftovers(after)))
 
-    def only_in_keycloak_lines(self, after: Inventory) -> list[str]:
+    def leftovers(self, after: Inventory) -> Leftovers:
         """What the step leaves alone, said only once the step has succeeded. A realm file that
         cannot be read as a declaration shortens the list and nothing else."""
+        unread = tuple(
+            name
+            for name, coverage in COVERAGE.items()
+            if isinstance(coverage, Gap) and "." not in name
+        )
         try:
             files = [(self.repository / name).read_text() for name in REALM_FILES]
             declared = [declared_identities.declared_realm(text) for text in files]
         except (OSError, UnicodeDecodeError, declared_identities.DeclaredError):
-            return ["realm: only in Keycloak: not listed, the realm files could not be read"]
-        absent = [realm for realm in declared if realm.realm not in after]
-        found = only_in_keycloak(after, declared)
-        return [
-            *(_only_in_keycloak_line(item) for item in found),
-            *(_absent_realm_line(realm.realm) for realm in absent),
-            *([] if found or absent else [NOTHING_ONLY_IN_KEYCLOAK]),
-            _not_read_line(),
-        ]
-
-    def _timed[T](self, action: Callable[[], T]) -> tuple[T, float]:
-        started = self.clock()
-        return action(), self.clock() - started
+            return Leftovers((), (), False, unread)
+        absent = tuple(realm.realm for realm in declared if realm.realm not in after)
+        return Leftovers(tuple(only_in_keycloak(after, declared)), absent, True, unread)
 
     def _refuse_while_config_cli_runs(self) -> None:
         if compose.has_running_container(self.engine.states(), (CONFIG_CLI,)):
@@ -486,17 +502,6 @@ def _failure(progress: _Progress, cause: str) -> str:
     )
 
 
-def _change_lines(before: Inventory, after: Inventory, snapshot: str | None) -> list[str]:
-    """One line per change; a removal is config-cli resetting a console change to the file."""
-    lines = []
-    for change in realm_lines.diff(before, after):
-        shown = realm_lines.line(change)
-        if change.kind is Kind.REMOVAL:
-            shown += f": reset to the file, pre-apply snapshot {snapshot}"
-        lines.append(shown)
-    return lines or ["realm: no changes"]
-
-
 # --- What exists only in Keycloak ---------------------------------------------------------------
 
 # Keycloak 26.8.1's own objects of the kinds the list compares (`compose.yaml` pins the version),
@@ -522,15 +527,6 @@ BUILT_IN: Mapping[str, declared_identities.Identities] = {
 }
 
 
-@dataclass(frozen=True)
-class OnlyInKeycloak:
-    """One object of a kind the operator creates that the realm files do not declare."""
-
-    realm: str
-    kind: str
-    identity: str
-
-
 def only_in_keycloak(
     inventory: Inventory, declared: Iterable[declared_identities.DeclaredRealm]
 ) -> list[OnlyInKeycloak]:
@@ -554,20 +550,3 @@ def _made_by_the_operator(kind: str, entity: Entity) -> bool:
     if kind != FLOW.name:
         return True
     return bool(entity["fields"]["topLevel"]) and not entity["fields"]["builtIn"]
-
-
-def _only_in_keycloak_line(item: OnlyInKeycloak) -> str:
-    identity = printable(item.identity)
-    return f"realm: only in Keycloak: {printable(item.realm)} {item.kind} {identity}"
-
-
-def _absent_realm_line(realm: str) -> str:
-    return f"realm: only in Keycloak: {printable(realm)} not listed, it was not observed"
-
-
-def _not_read_line() -> str:
-    """What the list cannot see: the observer's named gaps, by their keys in the realm files."""
-    unread = "; ".join(
-        name for name, coverage in COVERAGE.items() if isinstance(coverage, Gap) and "." not in name
-    )
-    return f"{NOT_READ}{unread}"
