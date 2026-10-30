@@ -512,17 +512,19 @@ def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
     assert seen[-1] == (signal.SIG_IGN, 0)
 
 
-def test_the_stack_is_removed_in_a_session_of_its_own(probe, monkeypatch):
+def test_the_stack_is_removed_in_a_session_of_its_own(probe, tmp_path):
     """The group signal of the lock's `timeout` must not reach a `compose down` that runs."""
-    sessions = {}
-
-    def answer(command, **options):
-        sessions["down" if "down" in command else command[1]] = options["start_new_session"]
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr(probe.egress.subprocess, "run", answer)
+    docker = tmp_path / "docker"
+    record = tmp_path / "down-led-its-session"
+    docker.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "if 'down' in sys.argv:\n"
+        f"    open({str(record)!r}, 'w').write(str(os.getsid(0) == os.getpid()))\n"
+    )
+    docker.chmod(0o755)
     run = object.__new__(probe.egress.Probe)
-    run.environment = {}
+    run.environment = {"PATH": str(tmp_path)}
     run.compose_command = lambda *arguments, **_: ["docker", "compose", *arguments]
     run.remove_stack()
-    assert sessions["down"] is True
+    assert record.read_text() == "True"
