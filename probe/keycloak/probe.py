@@ -340,7 +340,7 @@ def http(
         request_headers["Content-Type"] = "application/json"
     if bearer:
         request_headers["Authorization"] = f"Bearer {bearer}"
-    request = Request(url, data=data, method=method, headers=request_headers)  # noqa: S310 - the URL is the probe Keycloak address
+    request = Request(url, data=data, method=method, headers=request_headers)  # noqa: S310 - the URL is an address of the probe stack
     try:
         with opener.open(request, timeout=15) as reply:
             return Response(reply.status, dict(reply.headers), reply.read())
