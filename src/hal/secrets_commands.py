@@ -6,6 +6,7 @@ import argparse
 
 from hal import secrets_rows
 from hal.grammar import Asks, Command, ExitCode
+from hal.output import is_verbose
 from hal.output.command import Verb, command
 from hal.workstation import secrets_view
 from hal.workstation.ports import build_layout_and_ports
@@ -26,9 +27,6 @@ def _configure(parser: argparse.ArgumentParser) -> None:
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
     parser.description = HELP
     parser.add_argument(
-        "-v", "--verbose", action="store_true", help="every entry as a table, every finding alone"
-    )
-    parser.add_argument(
         "--by-service", action="store_true", help="grouped by service: declared dependencies"
     )
 
@@ -39,7 +37,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
     layout, ports = build_layout_and_ports()
     view, report = secrets_view.inspect(layout, ports.probe, ports.now)
     write_state_file(layout.home, layout.secrets_report_file, report)
-    secrets_rows.write(view, layout, verbose=arguments.verbose)
+    secrets_rows.write(view, layout, verbose=is_verbose())
     return ExitCode(1 if view.findings else 0)
 
 
