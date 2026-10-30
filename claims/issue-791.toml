@@ -1,0 +1,8 @@
+claim_id = "c212d5818aeb411c8e7e04de3807c528"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "71bb56aa8c0da5994f19d3fdfd301dc68bb03f9f"
+branch = "claude/issue-791-s2-4c-1-of-50-hal-apply-classifies-a-fil"
+scope = ["probe/keycloak/probe.py", "probe/step-ca/traefik_mcp_follows.py", "probe/switches/probe.py", "src/hal/stack/apply.py", "src/hal/stack/checkout.py", "src/hal/stack/core.py", "src/hal/stack/core_phase.py", "src/hal/stack/plan.py", "src/hal/stack/realm/reconcile.py", "tests/support/stack_apply_fakes.py", "tests/support/stack_core.py", "tests/test_stack_apply.py", "tests/test_stack_checkout.py", "tests/test_stack_core.py", "tests/test_stack_realm_reconcile.py"]
+opened_commit = "f9541b2665573753837d2e9d536475bec47eb1f5"
+whole_reason = "The classifier without its consumers is dead code and two classifiers would be two sources of truth, so the git read, the value, planning, recording, the realm step and the Plan that carries the value land together."
