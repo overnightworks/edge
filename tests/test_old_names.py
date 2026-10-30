@@ -25,6 +25,7 @@ OLD_NAME_PATTERNS: dict[str, re.Pattern[str]] = {
     "home-tools": re.compile(r"\bhome-tools\b"),
     "config-directory": re.compile(r"~/\.config/(home|tidy-home)\b"),
     "state-directory": re.compile(r"~/\.local/state/home\b"),
+    "edge-checkout": re.compile(r"\bgit/edge\b"),
 }
 
 Counts = dict[str, dict[str, int]]

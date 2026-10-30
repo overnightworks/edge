@@ -1,8 +1,8 @@
-"""The live checkout: `~/git/edge` on `main` is the tree the live stack runs from (P6).
+"""The live checkout: `~/srv/hal` on `main` is the tree the live stack runs from (P6).
 
 `hal apply` binds the compose project `edge` to the tree its code runs from, so it runs only
 from the live checkout (#79 rule 1). Whether a tree is that checkout is read from paths alone,
-without git: it is `$HOME/git/edge` once both are resolved, and it is a main worktree, whose `.git`
+without git: it is `$HOME/srv/hal` once both are resolved, and it is a main worktree, whose `.git`
 is a directory where a linked worktree has a `.git` file.
 
 Whether that checkout is a clean `main` is asked of git, through the one runner here (#95 rule 7).
@@ -33,7 +33,7 @@ from pathlib import Path
 from hal.output import printable
 from hal.stack import compose
 
-LIVE_CHECKOUT = "~/git/edge"
+LIVE_CHECKOUT = "~/srv/hal"
 MAIN = "main"
 DIRTY_TREE = "the live checkout has local changes, nothing changed"
 PULL_REQUEST_ROUTE = "a change reaches it through a pull request and `git pull --ff-only`"
@@ -281,7 +281,7 @@ def _porcelain_paths(output: bytes) -> list[str]:
 
 
 def live_checkout(home: Path) -> Path:
-    return home / "git" / "edge"
+    return home / LIVE_CHECKOUT.removeprefix("~/")
 
 
 def not_live_checkout(tree: Path, home: Path) -> str | None:

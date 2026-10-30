@@ -485,14 +485,14 @@ come before the system step, which is the one that asks for sudo:
    restore test and `hal check`) are written as a `.service` and a `.timer` file each into
    `~/.config/systemd/user/`, led by a marker line that says `hal setup` rewrites the file
    and that changes belong in a drop-in (`<unit>.d/*.conf`, which `hal setup` never
-   touches). The `ExecStart` runs `.venv/bin/hal` of the live checkout, `~/git/edge`
+   touches). The `ExecStart` runs `.venv/bin/hal` of the live checkout, `~/srv/hal`
    (`Layout.live_checkout`), whichever checkout runs `hal setup`. systemd reloads once
    after a change (also when only a unit file changed), and each timer is enabled and
    started. A file is replaced by rename, so a unit name never lacks a unit and a loaded
    timer stays active. The step replaces only a regular file whose first line is the
-   marker and the nine links an earlier `hal setup` wrote (six units linked into
-   `~/git/edge/systemd/` and the three `timers.target.wants/` links of the timers, which
-   it repoints at the written files whatever the timers' state). Every other entry of a
+   marker, and the links into the live checkout's `systemd/` with the three
+   `timers.target.wants/` links of the timers, which it repoints at the written files
+   whatever the timers' state; no current `hal setup` writes such links. Every other entry of a
    unit's name (a file without the marker, a link elsewhere, a mask to `/dev/null`, a
    dependency link in a `*.wants/` or `*.requires/` directory) is refused before
    anything changes: `<entry> was not written by hal · move or delete it, then rerun`,
@@ -509,7 +509,7 @@ come before the system step, which is the one that asks for sudo:
    again when `~/.local/bin/ansible-playbook` is missing or uv recorded
    another version.
 8. **System.** The playbook `src/hal/workstation/system/playbook.yml` installs
-   edge's files from `~/git/edge/tunnel/` and the journal retention timer, see below.
+   edge's files from `~/srv/hal/tunnel/` and the journal retention timer, see below.
    It also installs `msmtp` and `ca-certificates` for the mail of `hal check`, purges `rsyslog`
    with its six log files, and makes the journal Docker's default log driver in `/etc/docker/daemon.json`,
    restarting Docker while it does not report `journald`.
@@ -750,7 +750,7 @@ notify = true
 ## Installation
 
 ```
-cd ~/git/edge
+cd ~/srv/hal
 uv sync --locked
 bin/hal setup
 ```
@@ -762,7 +762,7 @@ der Job-Liste `src/hal/workstation/jobs.py` und startet die Timer, darunter `hal
 der `.venv/bin/hal` des Checkouts ausführt; der Link
 unter `~/.local/bin` heißt `hal`, damit `hal` ihn findet; den Link legt der Schritt `path` von `hal setup` an
 und zieht ihn nach, wenn der Checkout umzieht. Die erzeugten systemd-Units rufen
-`~/git/edge/.venv/bin/hal` direkt auf und hängen so an keinem Link. `hal`
+`~/srv/hal/.venv/bin/hal` direkt auf und hängen so an keinem Link. `hal`
 läuft mit dem Python der `.venv` (`requires-python >= 3.14`). Das
 Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
