@@ -2,11 +2,11 @@
 tunnel. `hal` is their one door."""
 
 import os
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from hal.output import Stream, write_line
 from hal.output.command import Verb, command
 from hal.stack import apply, emergency, switches, tunnel
 from hal.stack.external import cli as external_cli
@@ -19,7 +19,7 @@ def tunnel_of_environment(command: str) -> tunnel.Tunnel | None:
     try:
         return tunnel.Tunnel.from_environment(os.environ)
     except tunnel.TunnelError as error:
-        print(f"{command}: cannot plan, {error}", file=sys.stderr)
+        write_line(f"{command}: cannot plan, {error}", stream=Stream.STDERR)
         return None
 
 
@@ -85,7 +85,7 @@ def _apply_then_publish() -> int:
     try:
         local_exit = apply.apply_local(switches.default_state_directory())
         if local_exit != apply.ApplyExit.APPLIED_OR_NOTHING:
-            print(f"{COMMAND}: nothing published", file=sys.stderr)
+            write_line(f"{COMMAND}: nothing published", stream=Stream.STDERR)
             return local_exit
         run.publish_started = True
         run.publish_exit = _published_exit(external_cli.apply_command(Path.home()))
@@ -103,19 +103,21 @@ def _published_exit(publish_exit: int) -> int:
 
 def _say_summary(publish_exit: int) -> None:
     if publish_exit == apply.ApplyExit.APPLIED_OR_NOTHING:
-        print(f"{COMMAND}: done", file=sys.stderr)
+        write_line(f"{COMMAND}: done", stream=Stream.STDERR)
     else:
-        print(f"{COMMAND}: the publish did not end clean (exit {publish_exit})", file=sys.stderr)
+        write_line(
+            f"{COMMAND}: the publish did not end clean (exit {publish_exit})", stream=Stream.STDERR
+        )
 
 
 def _exit_after_interrupt(run: _Run) -> int:
     if run.publish_exit is not None:
         return run.publish_exit
     if run.publish_started:
-        print(
+        write_line(
             f"{COMMAND}: interrupted during the publish; run `{command(Verb.CHECK, 'hosts')}`",
-            file=sys.stderr,
+            stream=Stream.STDERR,
         )
     else:
-        print(f"{COMMAND}: interrupted, nothing published", file=sys.stderr)
+        write_line(f"{COMMAND}: interrupted, nothing published", stream=Stream.STDERR)
     return apply.ApplyExit.REFUSED
