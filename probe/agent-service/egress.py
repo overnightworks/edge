@@ -309,11 +309,11 @@ class Probe:
 
     def run(
         self, command: list[str], *, stdin: str | None = None, check: bool = True,
-        timeout: int = 300,
+        timeout: int = 300, own_session: bool = False,
     ) -> subprocess.CompletedProcess:  # fmt: skip
         result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
             command, input=stdin, capture_output=True, text=True, env=self.environment, cwd=REPO,
-            check=False, timeout=timeout, close_fds=True,
+            check=False, timeout=timeout, close_fds=True, start_new_session=own_session,
         )  # fmt: skip
         if check and result.returncode != 0:
             tail = (result.stderr or result.stdout).strip().splitlines()
@@ -333,8 +333,12 @@ class Probe:
             self.guard.expect(prefix)
         return [*prefix, *arguments]
 
-    def compose(self, *arguments: str, check: bool = True, timeout: int = 300):
-        return self.run(self.compose_command(*arguments), check=check, timeout=timeout)
+    def compose(
+        self, *arguments: str, check: bool = True, timeout: int = 300, own_session: bool = False
+    ):
+        return self.run(
+            self.compose_command(*arguments), check=check, timeout=timeout, own_session=own_session
+        )
 
     def container(self, service: str) -> str:
         found = self.compose("ps", "-q", service).stdout.strip()
@@ -430,7 +434,16 @@ class Probe:
         ).stdout.split()
         if stray:
             self.run(["docker", "rm", "-f", *stray], check=False)
-        self.compose("down", "--volumes", "--remove-orphans", "--timeout", "10", check=False)
+        # its own session: the group signal of `timeout` would otherwise stop the `compose down`
+        self.compose(
+            "down",
+            "--volumes",
+            "--remove-orphans",
+            "--timeout",
+            "10",
+            check=False,
+            own_session=True,
+        )
 
     # --- the packet windows -------------------------------------------------------------------
 

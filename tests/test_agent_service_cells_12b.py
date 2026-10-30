@@ -509,3 +509,19 @@ def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
     with pytest.raises(probe.egress.ProbeFailed):
         run.__enter__()
     assert seen[-1] == (signal.SIG_IGN, 0)
+
+
+def test_the_stack_is_removed_in_a_session_of_its_own(probe, monkeypatch):
+    """The group signal of the lock's `timeout` must not reach a `compose down` that runs."""
+    sessions = {}
+
+    def answer(command, **options):
+        sessions["down" if "down" in command else command[1]] = options["start_new_session"]
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(probe.egress.subprocess, "run", answer)
+    run = object.__new__(probe.egress.Probe)
+    run.environment = {}
+    run.compose_command = lambda *arguments, **_: ["docker", "compose", *arguments]
+    run.remove_stack()
+    assert sessions["down"] is True

@@ -192,8 +192,10 @@ class LoginProbe(ServiceConditions, FakeApp, IssuerProbe):
             *SERVICE_COMMAND,
         ]
 
-    def run(self, command, *, stdin=None, check=True, timeout=300):
-        result = super().run(command, stdin=stdin, check=False, timeout=timeout)
+    def run(self, command, *, stdin=None, check=True, timeout=300, own_session=False):
+        result = super().run(
+            command, stdin=stdin, check=False, timeout=timeout, own_session=own_session
+        )
         self.texts.append(result.stdout + result.stderr)
         if check and result.returncode != 0:
             raise failed_command(command, result.returncode)
