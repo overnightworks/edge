@@ -3,6 +3,8 @@ to show, and the form of a row, a verdict, an error, the indented detail lines u
 `yes` that confirms an action.
 `hal.output.command` owns the program name. It imports nothing else of this repository."""
 
+# ruff: noqa: T201 - this is the one output owner of the hal program
+
 import os
 import sys
 from collections.abc import Sequence
@@ -270,6 +272,17 @@ def write_detail(*lines: str, tone: Tone = Tone.PLAIN) -> None:
     for line in lines:
         text = f"{DETAIL_INDENT}{printable(line)}"
         print(text if tone.value is None else _styled(text, tone.value, stdout))
+
+
+class Stream(Enum):
+    STDOUT = "stdout"
+    STDERR = "stderr"
+
+
+def write_line(text: str, *, stream: Stream = Stream.STDOUT, end: str = "\n") -> None:
+    """`text` as one line on `stream`, exactly as given: for a line whose form its caller owns (a
+    JSON document, a listing, a diagnostic that names its own program)."""
+    print(text, end=end, file=sys.stderr if stream is Stream.STDERR else sys.stdout)
 
 
 def confirmed(purpose: str) -> bool:

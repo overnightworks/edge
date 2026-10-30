@@ -12,7 +12,7 @@ from hal import config as hal_config
 from hal import exposure_rows
 from hal.exposure import exposure, inspection
 from hal.grammar import Asks, Command, ExitCode
-from hal.output import write_error
+from hal.output import write_error, write_line
 from hal.output.command import Verb, command
 from hal.stack.external import cli as external
 from hal.stack.external import host_check
@@ -58,7 +58,7 @@ _HOST_CHECK_EXIT = {
 
 def _run_hosts(as_json: bool) -> ExitCode:
     def emit(text: str) -> None:
-        print(json.dumps({HOSTS: json.loads(text)}, indent=2) if as_json else text)
+        write_line(json.dumps({HOSTS: json.loads(text)}, indent=2) if as_json else text)
 
     outcome = external.run_host_check(Path.home(), as_json=as_json, emit=emit)
     for line in outcome.cause:
@@ -117,7 +117,7 @@ def _run(arguments: argparse.Namespace) -> ExitCode:
         write_error(f"{CHECK}: {EXPOSURE}: cannot check, {error}")
         return ExitCode.FAILURE
     if arguments.json:
-        print(json.dumps({EXPOSURE: inspection.as_json_objects(findings)}, indent=2))
+        write_line(json.dumps({EXPOSURE: inspection.as_json_objects(findings)}, indent=2))
     else:
         exposure_rows.write(findings)
     return ExitCode.FINDINGS if findings else ExitCode.OK

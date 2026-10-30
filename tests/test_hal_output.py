@@ -14,6 +14,7 @@ from hal.output import (
     Group,
     Noun,
     Row,
+    Stream,
     Tone,
     TrailingNoun,
     Verdict,
@@ -25,6 +26,7 @@ from hal.output import (
     write_detail,
     write_error,
     write_groups,
+    write_line,
     write_row,
     write_verdict,
 )
@@ -614,3 +616,24 @@ def test_a_ctrl_c_at_the_prompt_is_not_caught(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(KeyboardInterrupt):
         confirmed("start hopin")
+
+
+@pytest.mark.parametrize(
+    ("stream", "end", "expected_out", "expected_err"),
+    [
+        pytest.param(Stream.STDOUT, "\n", "a line\n", "", id="stdout-is-the-default-stream"),
+        pytest.param(Stream.STDERR, "\n", "", "a line\n", id="stderr-on-request"),
+        pytest.param(Stream.STDOUT, "", "a line", "", id="no-line-end-when-the-text-has-its-own"),
+    ],
+)
+def test_a_raw_line_goes_to_the_chosen_stream_exactly_as_given(
+    capsys: pytest.CaptureFixture[str],
+    stream: Stream,
+    end: str,
+    expected_out: str,
+    expected_err: str,
+) -> None:
+    write_line("a line", stream=stream, end=end)
+
+    captured = capsys.readouterr()
+    assert (captured.out, captured.err) == (expected_out, expected_err)
