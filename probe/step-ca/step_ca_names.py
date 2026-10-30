@@ -1,7 +1,10 @@
-"""The names the step-ca probe (probe.py) and its songmaker route cells (mcp_networks.py)
-share: the compose project, the origins and their URLs, and the curl exit codes the cells read."""
+"""The names the step-ca probe (probe.py) and its cell modules (mcp_networks.py, the songmaker
+route, and traefik_mcp_follows.py) share: the compose project and file, the origins and their
+URLs, the intermediate certificate's place and the curl exit codes the cells read."""
 
 PROJECT = "edge-stepca-probe"
+COMPOSE_FILE = "compose.yaml"
+NOTHING_TO_CHANGE = "nothing to change"  # what `hal apply` says when it has no work
 CA_URL = "https://step-ca:9000"
 CA_HEALTH_URL = f"{CA_URL}/health"
 CONTAINER_USER_ID = 1000  # the step user of the smallstep image
@@ -23,3 +26,6 @@ SONGMAKER_ORIGIN = "songmaker.mcp.internal"
 SONGMAKER_URL = f"https://{SONGMAKER_ORIGIN}/mcp"
 STAND_IN = "songmaker-web"
 STAND_IN_URL = f"http://{STAND_IN}:8080/"  # NOSONAR(S5332)
+STEP_HOME = "/home/step"
+INTERMEDIATE_CERTIFICATE = "certs/intermediate_ca.crt"
+INTERMEDIATE_IN_VOLUME = f"{STEP_HOME}/{INTERMEDIATE_CERTIFICATE}"
