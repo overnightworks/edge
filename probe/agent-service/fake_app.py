@@ -37,11 +37,16 @@ class Mode(StrEnum):
     HOLD = "hold"
 
 
-def with_setting(text: str, key: str, value: str) -> str:
-    """The service's configuration with the one `key = "..."` line set to `value`."""
+def with_setting(text: str, table: str, key: str, value: str) -> str:
+    """The service's configuration with the one `key = "..."` line of `[table]` set to `value`."""
+    section = re.compile(rf"^\[{re.escape(table)}\]\n(?:(?!\[).*\n?)*", re.MULTILINE)
+    sections = list(section.finditer(text))
+    expect(len(sections) == 1, f"service.toml: no single [{table}]")
     line = re.compile(rf'^{re.escape(key)} = ".*"$', re.MULTILINE)
-    expect(len(line.findall(text)) == 1, f"service.toml: no single {key}")
-    return line.sub(lambda _: f'{key} = "{value}"', text)
+    body = sections[0].group()
+    expect(len(line.findall(body)) == 1, f"service.toml: no single {key} in [{table}]")
+    set_body = line.sub(lambda _: f'{key} = "{value}"', body)
+    return text[: sections[0].start()] + set_body + text[sections[0].end() :]
 
 
 class FakeApp:
@@ -63,7 +68,12 @@ class FakeApp:
         for name in (certificate, key):
             name.chmod(0o644)
         self.configuration.write_text(
-            with_setting(self.configuration.read_text(encoding="utf-8"), "mcp_origin", APP_ORIGIN),
+            with_setting(
+                self.configuration.read_text(encoding="utf-8"),
+                "apps.songmaker",
+                "mcp_origin",
+                APP_ORIGIN,
+            ),
             encoding="utf-8",
         )
         program = Path(__file__).resolve().with_name("app_tools.py")
