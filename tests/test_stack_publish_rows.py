@@ -396,7 +396,7 @@ def commands_of(fake: FakeTofu) -> list[str]:
 
 
 def test_an_empty_plan_prints_one_current_row_and_no_tofu_text(fake, capsys, publish_answering):
-    """#754 cell 1 (ruled A): the stream's own lines are not shown."""
+    """The stream's own lines are not shown."""
     configure_plan(fake, plan=0, plan_lines=REAL_EMPTY_PLAN_WITH_WARNING[:2])
     assert publish_answering() == 0
     printed = capsys.readouterr()
@@ -409,7 +409,7 @@ def test_an_empty_plan_prints_one_current_row_and_no_tofu_text(fake, capsys, pub
 def test_an_empty_plan_with_a_warning_prints_the_warning_row_then_the_current_row(
     fake, capsys, publish_answering
 ):
-    """#754 cell 2: the warning's reason is tofu's summary, its explanation dim under it."""
+    """The warning's reason is tofu's summary, its explanation dim under it."""
     configure_plan(fake, plan=0, plan_lines=REAL_EMPTY_PLAN_WITH_WARNING)
     assert publish_answering() == 0
     lines = [said(line) for line in capsys.readouterr().out.splitlines()]
@@ -423,7 +423,7 @@ def test_an_empty_plan_with_a_warning_prints_the_warning_row_then_the_current_ro
 def test_a_plan_with_changes_shows_tofus_rendering_of_the_written_plan_file_before_the_yes(
     fake, capsys, monkeypatch, request
 ):
-    """#754 cell 3: `show` reads the file `plan` wrote, `apply` gets that file, after the diff."""
+    """`show` reads the file `plan` wrote, `apply` gets that file, after the diff."""
     configure_plan(
         fake,
         plan=2,
@@ -446,7 +446,7 @@ def test_a_plan_with_changes_shows_tofus_rendering_of_the_written_plan_file_befo
 
 
 def test_a_warning_of_a_plan_with_changes_stands_before_the_diff(fake, capsys, publish_answering):
-    """#754 cell 4."""
+    """A warning of the plan stands before the diff."""
     configure_plan(
         fake,
         plan=2,
@@ -461,7 +461,7 @@ def test_a_warning_of_a_plan_with_changes_stands_before_the_diff(fake, capsys, p
 def test_a_failed_plan_prints_a_row_for_each_error_and_asks_for_nothing(
     plans, fake, capsys, publish_answering
 ):
-    """#754 cell 5 (ruled A): no `tofu plan failed` line, no show, no apply, the plan file gone."""
+    """No `tofu plan failed` line, no show, no apply, the plan file gone."""
     configure_plan(
         fake,
         plan=1,
@@ -483,7 +483,7 @@ def test_a_failed_plan_prints_a_row_for_each_error_and_asks_for_nothing(
 
 
 def test_a_show_that_fails_ends_like_a_failed_plan(plans, fake, capsys, publish_answering):
-    """#754 cell 6: nothing is applied, the plan file is deleted, the exit is the failed plan's."""
+    """Nothing is applied, the plan file is deleted, the exit is the failed plan's."""
     configure_plan(fake, plan=2, show=1, show_lines=["plan file is unreadable"])
     assert publish_answering() == 2
     lines = [said(line) for line in capsys.readouterr().out.splitlines()]
@@ -496,7 +496,7 @@ def test_a_show_that_fails_ends_like_a_failed_plan(plans, fake, capsys, publish_
 
 
 def test_no_token_or_passphrase_reaches_any_line_of_the_plan(fake, capsys, publish_answering):
-    """#754 cell 7: summary, detail, a crash line and the show text are all redacted."""
+    """Summary, detail, a crash line and the show text are all redacted."""
     secrets_in_text = f"{WRITE_TOKEN} and {PASSPHRASE}"
     configure_plan(
         fake,
@@ -515,7 +515,7 @@ def test_no_token_or_passphrase_reaches_any_line_of_the_plan(fake, capsys, publi
 
 
 def test_a_summary_with_a_control_character_stays_one_escaped_line(fake, capsys, publish_answering):
-    """#754 cell 8: tofu's text is escaped by `hal.output`, whatever it carries."""
+    """Tofu's text is escaped by `hal.output`, whatever it carries."""
     configure_plan(
         fake,
         plan=0,
@@ -531,7 +531,7 @@ def test_a_summary_with_a_control_character_stays_one_escaped_line(fake, capsys,
 def test_a_line_that_is_no_json_stands_under_the_row_of_a_failed_plan(
     fake, capsys, publish_answering
 ):
-    """#754 cell 9: a crash is redacted and escaped like any tofu text."""
+    """A crash is redacted and escaped like any tofu text."""
     configure_plan(fake, plan=1, plan_lines=[f"panic \x1b[1m {WRITE_TOKEN}"])
     assert publish_answering() == 2
     lines = [said(line) for line in capsys.readouterr().out.splitlines()]
@@ -544,7 +544,7 @@ def test_a_line_that_is_no_json_stands_under_the_row_of_a_failed_plan(
 def test_a_line_outside_the_stream_of_an_empty_plan_is_a_warning_before_the_current_row(
     fake, capsys, publish_answering
 ):
-    """#754 gate finding 1: a truncated line is shown, the exit stays 0."""
+    """A truncated line is shown, the exit stays 0."""
     configure_plan(fake, plan=0, plan_lines=["panic: truncated {"])
     assert publish_answering() == 0
     lines = [said(line) for line in capsys.readouterr().out.splitlines()]
@@ -559,7 +559,7 @@ def test_a_line_outside_the_stream_of_an_empty_plan_is_a_warning_before_the_curr
 def test_a_line_outside_the_stream_of_a_plan_with_changes_is_a_warning_before_the_diff(
     fake, capsys, monkeypatch, request
 ):
-    """#754 gate finding 1: the warning stands before the diff and the prompt."""
+    """The warning stands before the diff and the prompt."""
     configure_plan(
         fake,
         plan=2,
@@ -594,7 +594,7 @@ def multiline_passphrase(request) -> None:
 def test_a_passphrase_with_a_newline_in_crash_text_is_not_printed(
     fake, capsys, publish_answering, multiline_passphrase
 ):
-    """#754 gate finding 2: the secret is redacted whole before the text is split into lines."""
+    """The secret is redacted whole before the text is split into lines."""
     configure_plan(fake, plan=1, plan_lines=[f"panic: {MULTILINE_PASSPHRASE} leaked"])
     assert publish_answering() == 2
     printed = capsys.readouterr()
@@ -605,7 +605,7 @@ def test_a_passphrase_with_a_newline_in_crash_text_is_not_printed(
 def test_a_passphrase_with_a_newline_in_a_diagnostic_detail_is_not_printed(
     fake, capsys, publish_answering, multiline_passphrase
 ):
-    """#754 gate finding 2: a value JSON escapes appears only decoded, and is redacted decoded."""
+    """A value JSON escapes appears only decoded, and is redacted decoded."""
     configure_plan(
         fake,
         plan=0,
@@ -630,7 +630,7 @@ JSON_LINE_PASSPHRASE = "alpha\n{}\nbeta"
 def test_a_passphrase_with_a_json_looking_line_is_not_printed_wherever_its_lines_parse(
     fake, capsys, publish_answering, request, plan_exit, plan_text
 ):
-    """#754 gate finding 2: the `{}` line of the secret parses as JSON; the text is masked whole."""
+    """The `{}` line of the secret parses as JSON; the text is masked whole."""
     (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
         JSON_LINE_PASSPHRASE + "\n"
     )
@@ -651,7 +651,7 @@ def test_a_passphrase_with_a_json_looking_line_is_not_printed_wherever_its_lines
 def test_masking_a_secret_never_turns_a_stream_object_into_printed_text(
     fake, capsys, publish_answering, request, plan_exit, plan_lines
 ):
-    """#754 gate finding 2: a passphrase `false` is in the stream's booleans."""
+    """A passphrase `false` is in the stream's booleans."""
     (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text("false\n")
     configure_plan(fake, plan=plan_exit, plan_lines=plan_lines)
     publish_answering()
@@ -663,7 +663,7 @@ def test_masking_a_secret_never_turns_a_stream_object_into_printed_text(
 def test_a_secret_spanning_a_stream_object_and_crash_lines_is_masked_in_each_part(
     fake, capsys, publish_answering, request
 ):
-    """#754 gate finding 2: the object line stays a diagnostic, the crash lines around it mask."""
+    """The object line stays a diagnostic, the crash lines around it mask."""
     object_line = diagnostic_line("warning", "careful")
     secret = f"alpha\n{object_line}\nbeta"
     (request.getfixturevalue("home") / ".secrets/opentofu/state-passphrase").write_text(
@@ -681,7 +681,7 @@ def test_a_secret_spanning_a_stream_object_and_crash_lines_is_masked_in_each_par
 def test_a_diagnostic_without_a_summary_is_refused_before_the_yes(
     plans, fake, capsys, publish_answering, plan_exit
 ):
-    """#754 cell 10: nothing is shown as the plan, nothing is applied, and the exit is 2."""
+    """Nothing is shown as the plan, nothing is applied, and the exit is 2."""
     configure_plan(fake, plan=plan_exit, plan_lines=[json.dumps(diagnostic(summary=None))])
     assert publish_answering() == 2
     out = capsys.readouterr().out
@@ -694,7 +694,7 @@ def test_a_diagnostic_without_a_summary_is_refused_before_the_yes(
 
 @pytest.mark.parametrize("environment", [{"NO_COLOR": "1"}, {"TERM": "dumb"}])
 def test_the_rows_are_the_same_words_without_colour(fake, pty_apply, environment):
-    """#754 cell 12: no ANSI where the environment asks for none, from tofu or from hal."""
+    """No ANSI where the environment asks for none, from tofu or from hal."""
     configure_plan(fake, plan=0, plan_lines=[diagnostic_line("warning", "careful", "why")])
     apply = pty_apply(environment=environment)
     assert apply.finish() == 0
@@ -705,7 +705,7 @@ def test_the_rows_are_the_same_words_without_colour(fake, pty_apply, environment
 def test_an_interrupted_plan_prints_the_interrupt_line_and_none_of_the_stream(
     plans, fake, pty_apply
 ):
-    """#754 cell 11: the stream tofu wrote while stopping is not shown."""
+    """The stream tofu wrote while stopping is not shown."""
     configure_plan(fake, hang_in="plan", plan_lines=REAL_EMPTY_PLAN_WITH_WARNING)
     apply = pty_apply()
     with fake.watch_hang() as wait_until_hanging:
