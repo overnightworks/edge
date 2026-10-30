@@ -1,0 +1,8 @@
+claim_id = "5f1860315f304904b56f21a70c20d238"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "ec12836abddec46e45f71527e3bd756790240b0c"
+branch = "claude/issue-714-s8-of-472-stack-security-markers"
+scope = ["src/hal/stack/app_contract.py", "src/hal/stack/catalog.py", "src/hal/stack/compose.py", "src/hal/stack/external/cloudflare_read.py", "src/hal/stack/realm/observe.py", "src/hal/stack/realm/reconcile.py", "src/hal/stack/setup.py", "src/hal/stack/tunnel.py"]
+opened_commit = "221f0de8b74019ce1370bced2b8ecf622faf0f1a"
+whole_reason = "One package, one rule: eight files whose findings need a reasoned trailing marker each and nothing else; a split would pay eight claims for one-line edits."
