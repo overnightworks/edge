@@ -1,5 +1,5 @@
-"""The core phase of `hal apply --local`: the core services and followers recreated before any
-unit is touched, then the services to recreate, and the followers a switch-on started recorded.
+"""The core phase of `hal apply --local`: the changed core services and followers are recreated
+before any unit is touched, and the followers a switch-on started are recorded.
 """
 
 from collections.abc import Mapping, Sequence
