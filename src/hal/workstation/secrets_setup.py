@@ -279,7 +279,8 @@ def _store_refusal(layout: Layout, entry: SecretEntry, *, unless_unsearchable: b
     refuse the store for. A login's rename replaces such a link unfollowed, so for a login only the directories count.
 
     With `unless_unsearchable`, a directory its owner cannot search (no owner x bit) ends the look with None: the walk
-    cannot read below it, so it reports the entry as not checked instead of naming a refusal it cannot see through.
+    cannot read below it, so it reports the entry as not checked instead of naming a refusal it cannot see through. The
+    place itself is not looked at then: a link there would have made the entry missing, so presence could not read it.
     """
     place = layout.home / entry.place
     for relative in _levels(layout.home, place.parent):
@@ -292,7 +293,7 @@ def _store_refusal(layout: Layout, entry: SecretEntry, *, unless_unsearchable: b
                 return None
             return _refused_below(unfit)
     try:
-        linked = None if entry.create else linked_place(entry.place, place.lstat().st_mode)
+        linked = None if entry.create or unless_unsearchable else linked_place(entry.place, place.lstat().st_mode)
     except FileNotFoundError:
         return None
     return _refused_below(linked) if linked else None

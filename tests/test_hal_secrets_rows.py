@@ -155,6 +155,27 @@ def test_a_link_that_is_no_declared_secret_place_is_no_symlink_finding(
     assert run() == (code, expected)
 
 
+def test_a_linked_secrets_folder_a_home_level_wildcard_matches_is_missing(
+    clean_home: Path, use_manifest: Callable[[str], Path], run
+) -> None:
+    home_level_wildcard = """
+[[secret]]
+name = "vault"
+kind = "tool-login"
+paths = ["~/[.]secrets"]
+read_by = []
+recreate = "r"
+"""
+    use_manifest(TEST_MANIFEST + home_level_wildcard)
+    target = clean_home / "elsewhere"
+    (clean_home / ".secrets").rename(target)
+    (clean_home / ".secrets").symlink_to(target)
+
+    _code, lines = run()
+
+    assert "  ! vault | missing | tool login" in lines
+
+
 def test_a_missing_entry_the_wizard_writes_points_at_hal_setup(add_entries, run) -> None:
     home = add_entries(entry("svc/password", kind="service-password"))
     (home / ".secrets" / "svc" / "password").unlink()

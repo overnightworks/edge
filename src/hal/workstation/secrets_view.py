@@ -409,8 +409,8 @@ def stat_matches(layout: Layout, pattern: PurePosixPath) -> tuple[PathFact, ...]
         wildcard = _has_wildcard(pattern.name)
         names = sorted(os.listdir(layout.home / pattern.parent)) if wildcard else []
         matched = [pattern.parent / name for name in names if fnmatch.fnmatchcase(name, pattern.name)] if wildcard else [pattern]
-        follow = not (layout.home / pattern).is_relative_to(layout.secrets_dir)
-        facts = (PathFact(relative, (layout.home / relative).stat(follow_symlinks=follow).st_mode) for relative in matched)
+        facts = (PathFact(relative, place.stat(follow_symlinks=not place.is_relative_to(layout.secrets_dir)).st_mode)
+                 for relative, place in ((relative, layout.home / relative) for relative in matched))
         return tuple(fact for fact in facts if not stat.S_ISLNK(fact.mode))
     except FileNotFoundError:
         return ()
