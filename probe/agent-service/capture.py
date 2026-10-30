@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """A bounded packet window for the agent-service probe (#189): standard library only, run in a
 container with NET_RAW and nothing else, in the namespace it is asked to watch.
 
@@ -26,6 +25,7 @@ captured), and a TCP port-53 segment that does not hold exactly one whole DNS me
 split across segments). IPv4 non-first fragments carry no port and are not passed.
 """
 
+# ruff: noqa: T201 - this in-container program answers on standard output
 from __future__ import annotations
 
 import contextlib

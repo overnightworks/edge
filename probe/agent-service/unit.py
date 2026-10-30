@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Probe of the agent service unit (#201 U1-U11, #214 U15, #346 P09 and P11a): `agent-service` of
 compose.yaml, with its real `service.toml`, in a throwaway compose project of its own and a
 scratch HOME that holds a dummy login (never a real token).
@@ -24,6 +23,7 @@ The container is asked through the `Inside` class below: the driver sends its so
 `python -I -` inside the container, which has the interpreter of the image and nothing else.
 """
 
+# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import argparse
@@ -73,7 +73,7 @@ from hal.stack import compose
 SERVICE = Target.SERVICE.compose_service
 REFUSAL_SECONDS = 60
 UID = 1000
-CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path
+CONTAINER_TMP = "/tmp"  # NOSONAR(S5443) the service's tmpfs inside the container, not a host path  # noqa: S108 - the service tmpfs inside its container and no host path
 SERVICE_COMMAND = "agent-runtime-service"
 INIT_COMMAND = "docker-init"
 OWNER_ONLY = 0o700
@@ -186,7 +186,7 @@ class Inside:
         copy = os.path.join(directory, "copied-true")
         shutil.copy("/bin/true", copy)
         try:
-            subprocess.run([copy], check=True)
+            subprocess.run([copy], check=True)  # noqa: S603 - runs the copy of a system binary that the probe made
             return {"result": "ran"}
         except OSError as error:
             return {"result": errno.errorcode.get(error.errno or 0, str(error.errno))}
@@ -198,7 +198,7 @@ class Inside:
         """A same-uid child in its own process group with a descendant of its own, SIGKILLed as a
         group: how long until both are gone from /proc (init reaps the orphan)."""
         child = subprocess.Popen(
-            ["sh", "-c", "sleep 300 & echo $!; wait"], stdout=subprocess.PIPE, text=True,
+            ["sh", "-c", "sleep 300 & echo $!; wait"], stdout=subprocess.PIPE, text=True,  # noqa: S607 - sh is found on PATH by design and the script is a literal
             start_new_session=True,
         )  # fmt: skip
         descendant = int(child.stdout.readline())
@@ -317,7 +317,9 @@ class ServiceConditions:
                 owned["uid"] == UID and owned["mode"] == OWNER_ONLY,
                 f"U6: {directory} is owned by {owned['uid']} with mode {owned['mode']:o}",
             )
-        self.hold("U6", f"/tmp and {working_root()} are tmpfs owned by {UID} with mode 0700")
+        self.hold(
+            "U6", f"{CONTAINER_TMP} and {working_root()} are tmpfs owned by {UID} with mode 0700"
+        )
 
     def cell_u7(self) -> None:
         options = {m["point"]: m["options"] for m in self.inside("mounts")["mounts"]}
@@ -675,7 +677,7 @@ class SmokeProbe(IssuerProbe):
         expect(stack.project == PROJECT, f"U16: compose names the project {stack.project}")
         expect(stack.gateway == self.address, f"U16: compose names the gateway {stack.gateway}")
         dummy = (self.token_path / "token").read_text(encoding="utf-8").strip()
-        known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")
+        known = Secrets(self.tokens(), login_token=dummy, client_secret="probe-client-secret")  # noqa: S106 - a dummy secret of the throwaway probe client
         report = Report(known.values(), out=lambda line: print(f"  {line}", flush=True))
         smoke_cells(stack, known, report)
         report.add(*live_egress_cells(stack))

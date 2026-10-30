@@ -57,8 +57,12 @@ server.serve_forever()
 
 
 def openssl(*arguments: str, stdin: bytes | None = None) -> bytes:
-    result = subprocess.run(
-        ["openssl", *arguments], input=stdin, capture_output=True, check=False, timeout=60
+    result = subprocess.run(  # noqa: S603 - argv is built by the program itself and no shell runs
+        ["openssl", *arguments],  # noqa: S607 - openssl is found on PATH by design
+        input=stdin,
+        capture_output=True,
+        check=False,
+        timeout=60,
     )
     expect(result.returncode == 0, f"openssl {arguments[0]} failed: {result.stderr[-200:]!r}")
     return result.stdout

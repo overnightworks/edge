@@ -83,4 +83,4 @@ def check_refusals(
     expect(answers.stdout.splitlines() == expected, f"U17: the answers were {answers.stdout!r}")
     held.append("U17")
     names = [refusal.name for refusal in REFUSALS]
-    print(f"U17 held: {names} answered {expected}", flush=True)
+    print(f"U17 held: {names} answered {expected}", flush=True)  # noqa: T201 - the cell verdict line of this probe

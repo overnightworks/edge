@@ -196,7 +196,7 @@ class HttpsServer(ThreadingServer):
 def main() -> int:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(CERTIFICATE, PRIVATE_KEY)
-    server = HttpsServer(("0.0.0.0", PORT), MODE_FILE, sys.stdout, context)  # NOSONAR(S5332) TLS
+    server = HttpsServer(("0.0.0.0", PORT), MODE_FILE, sys.stdout, context)  # NOSONAR(S5332) TLS  # noqa: S104 - the fake app must listen on every address of its container
     server.serve_forever()  # NOSONAR(S5332) TLS
     return 0
 

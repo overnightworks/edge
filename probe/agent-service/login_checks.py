@@ -8,6 +8,7 @@ clocks.
 Nothing here prints a path, a subprocess's output or an exception's text: every line is a verdict,
 a count, a role name, a docker verb with an exit code, or a fixed reason from `Refusal`."""
 
+# ruff: noqa: T201 - this probe reports its verdicts on standard output
 from __future__ import annotations
 
 import fcntl
@@ -40,9 +41,9 @@ from service_log import LogClasses
 from tree_census import Skip
 
 TOKEN_LIMIT = 16 * 1024
-TOKEN_FILE = "token"
+TOKEN_FILE = "token"  # noqa: S105 - a name or message text and no credential
 ROOTS_CELL = "S00 (roots)"
-TOKEN_CELL = "S00 (token)"
+TOKEN_CELL = "S00 (token)"  # noqa: S105 - a name or message text and no credential
 SKIP_REASONS = frozenset(skip.value for skip in Skip)
 START_SECONDS = 30  # from starting the client to its `event run_started`: only the admission
 R2_CALL_SECONDS = 90  # from `event run_started` to a held call; the paid turn is bounded by it
@@ -58,10 +59,10 @@ class Refusal(StrEnum):
     path."""
 
     NOT_A_DIRECTORY = "--login-directory is not an existing directory"
-    NO_TOKEN_FILE = "--login-directory holds no regular file token"
-    TOKEN_UNREADABLE = "--login-directory: the token file cannot be read as text"
-    TOKEN_TOO_LARGE = "--login-directory: the token file is too large"
-    TOKEN_EMPTY = "--login-directory: the token file is empty"
+    NO_TOKEN_FILE = "--login-directory holds no regular file token"  # noqa: S105 - a name or message text and no credential
+    TOKEN_UNREADABLE = "--login-directory: the token file cannot be read as text"  # noqa: S105 - a name or message text and no credential
+    TOKEN_TOO_LARGE = "--login-directory: the token file is too large"  # noqa: S105 - a name or message text and no credential
+    TOKEN_EMPTY = "--login-directory: the token file is empty"  # noqa: S105 - a name or message text and no credential
     LOGIN_BIND = "the resolved configuration has no single read-only bind of the login directory"
     CONFIGURATION_BIND = (
         "the resolved configuration has no single read-only bind of the scratch service.toml"
@@ -271,7 +272,7 @@ def scratch_parent(login: Login, lock: Path, environment: Mapping[str, str]) -> 
     """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that, or the directory
     the probe lock resolves to, lies in the login directory, because making either there would
     write into it."""
-    parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch
+    parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch  # noqa: S108 - the default scratch parent when TMPDIR is unset
     if login.directory in (parent, *parent.parents):
         raise LoginFailed(Refusal.SCRATCH_IN_LOGIN)
     if login.directory in lock.resolve().parents:
