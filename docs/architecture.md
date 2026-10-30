@@ -867,7 +867,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
 - A call between apps carries a signed, short-lived token whose audience is the callee: an issuer token, or the agent-service capability (agent-runtime decision record 0001). Never a static secret shared between apps.
 
 **§10 rule 4: singleton by default; spreading and scaling are items.**
-- **Contracts and data handover are built scalable from the start; the mechanics follow when they are needed** (ruled 30.10.2026, [hal#755](https://github.com/overnightworks/hal/issues/755)). Every shared service (a service edge runs for several apps; today agent-runtime and speech-runtime):
+- **Contracts and data handover are built scalable from the start; the mechanics follow when they are needed** (ruled 30.10.2026, [hal#755](https://github.com/overnightworks/hal/issues/755)). Every shared service (a service edge runs for several apps, as §10 rule 7 defines them; today the agent service):
   - is reachable over the network;
   - keeps no state that matters only in its process;
   - hands files over through its API;
