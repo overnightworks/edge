@@ -2,7 +2,7 @@
 compose.yaml, with its real `service.toml`, in a throwaway compose project of its own and a
 scratch HOME that holds a dummy login (never a real token).
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+    flock -o -w 1200 /tmp/probe-stack.lock timeout -k 50 1780 \\
         python3 probe/agent-service/unit.py --scratch DIR
 
 U12 is `egress.py --target service`, U13 is `tests/test_agent_service_unit.py`. `--cell smoke`

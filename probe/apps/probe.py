@@ -20,7 +20,7 @@ throwaway HOME) and its origin (a bare repository reached through `url.<file>.in
 probe's own. The probe never runs `hal online`, `hal offline` or `--all`, so no tunnel is named. It
 always removes its containers, volumes, networks and images, found by their compose project.
 
-    flock -o /tmp/probe-stack.lock timeout --kill-after=50 1800 \\
+    flock -o -w 1200 /tmp/probe-stack.lock timeout -k 50 1780 \\
         python3 probe/apps/probe.py --scratch DIR [--switch-only]
 
 Needs an empty or new --scratch directory, `uv` (it runs `uv sync` in the copy) and a Docker that

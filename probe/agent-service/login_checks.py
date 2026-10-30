@@ -10,7 +10,6 @@ a count, a role name, a docker verb with an exit code, or a fixed reason from `R
 
 from __future__ import annotations
 
-import fcntl
 import os
 import signal
 import stat
@@ -71,7 +70,6 @@ class Refusal(StrEnum):
     WRITABLE_ROOT = "the service's root file system is not read-only"
     LOG_DRIVER = "a started service does not log through the local driver"
     SCRATCH_IN_LOGIN = "the scratch directory would lie inside the login directory"
-    LOCK_IN_LOGIN = "the probe lock would be created inside the login directory"
 
 
 class LoginFailed(ProbeFailed):
@@ -269,15 +267,12 @@ def begin_teardown() -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 
-def scratch_parent(login: Login, lock: Path, environment: Mapping[str, str]) -> Path:
-    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that, or the directory
-    the probe lock resolves to, lies in the login directory, because making either there would
-    write into it."""
+def scratch_parent(login: Login, environment: Mapping[str, str]) -> Path:
+    """Where the scratch directory is made: TMPDIR, else /tmp. Refused when that lies in the login
+    directory, because making the scratch directory there would write into it."""
     parent = Path(environment.get("TMPDIR") or "/tmp").resolve()  # NOSONAR(S5443) default scratch  # noqa: S108 - the default scratch parent when TMPDIR is unset
     if login.directory in (parent, *parent.parents):
         raise LoginFailed(Refusal.SCRATCH_IN_LOGIN)
-    if login.directory in lock.resolve().parents:
-        raise LoginFailed(Refusal.LOCK_IN_LOGIN)
     return parent
 
 
@@ -290,19 +285,6 @@ def start_time_bound(seconds: int) -> None:
     signal.signal(signal.SIGALRM, stop_on_signal)
     signal.signal(signal.SIGTERM, stop_on_signal)
     signal.alarm(seconds)
-
-
-@contextmanager
-def probe_lock(path: Path, announce: Callable[[], None]) -> Iterator[None]:
-    """Holds the probe lock exclusively; `announce` runs once when another holder makes it wait.
-    The lock file is inherited by no child."""
-    with open(path, "a", encoding="utf-8") as handle:  # NOSONAR(S5443) the shared probe lock
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            announce()
-            fcntl.flock(handle, fcntl.LOCK_EX)
-        yield
 
 
 def one_read_only_bind(volumes: Sequence[Mapping], target: str, source: Path) -> bool:

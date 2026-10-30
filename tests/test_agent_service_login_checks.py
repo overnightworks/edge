@@ -299,44 +299,21 @@ def test_token_files_are_summed_over_every_mount(probe):
 
 
 @pytest.mark.parametrize(
-    ("lock_in", "tmpdir_in", "reason"),
-    [
-        ("", "elsewhere", "LOCK_IN_LOGIN"),
-        ("inner", "elsewhere", "LOCK_IN_LOGIN"),
-        ("symlink", "elsewhere", "LOCK_IN_LOGIN"),
-        ("", "", "SCRATCH_IN_LOGIN"),
-        ("elsewhere", "inner", "SCRATCH_IN_LOGIN"),
-    ],
-    ids=[
-        "lock in the login directory",
-        "lock below it",
-        "lock a link into it",
-        "scratch in it",
-        "scratch below it",
-    ],
+    "tmpdir_in",
+    ["", "inner"],
+    ids=["scratch in it", "scratch below it"],
 )
-def test_a_lock_or_scratch_directory_in_the_login_directory_is_refused_by_a_fixed_reason(
-    probe, tmp_path, lock_in, tmpdir_in, reason
+def test_a_scratch_directory_in_the_login_directory_is_refused_by_a_fixed_reason(
+    probe, tmp_path, tmpdir_in
 ):
     """#457 row 2: nothing is created inside the login directory, and the reason names no path."""
     directory = make_login(tmp_path / "login")
     (directory / "inner").mkdir()
-    (tmp_path / "elsewhere").mkdir()
     login = probe.checks.read_login(str(directory))
-    (tmp_path / "link").symlink_to(directory / "target")
-    lock_parent = {
-        "": directory,
-        "inner": directory / "inner",
-        "elsewhere": tmp_path,
-        "symlink": tmp_path,
-    }[lock_in]
-    lock = tmp_path / "link" if lock_in == "symlink" else lock_parent / "lock"
-    scratch = {"": directory, "inner": directory / "inner", "elsewhere": tmp_path / "elsewhere"}[
-        tmpdir_in
-    ]
+    scratch = {"": directory, "inner": directory / "inner"}[tmpdir_in]
     with pytest.raises(probe.checks.LoginFailed) as raised:
-        probe.checks.scratch_parent(login, lock, {"TMPDIR": str(scratch)})
-    assert str(raised.value) == probe.checks.Refusal[reason]
+        probe.checks.scratch_parent(login, {"TMPDIR": str(scratch)})
+    assert str(raised.value) == probe.checks.Refusal.SCRATCH_IN_LOGIN
 
 
 # --- B9 (#469) ---------------------------------------------------------------------------------

@@ -9,7 +9,6 @@ import json
 import signal
 import subprocess
 import sys
-import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -450,12 +449,12 @@ def test_the_census_key_joins_the_gate(probe):
 # --- the setup of the command ------------------------------------------------------------------
 
 
-def test_a_lock_that_cannot_be_opened_prints_the_type_alone_and_exits_1(
+def test_a_scratch_directory_that_cannot_be_made_prints_the_type_alone_and_exits_1(
     probe, tmp_path, capsys, restored_signals
 ):
     """#457 row 6: a failure before the gate prints no exception text."""
     login = probe.checks.read_login(str(make_login(tmp_path / "login")))
-    assert probe.cells.run_command(login, tmp_path / "missing" / "lock", {}) == 1
+    assert probe.cells.run_command(login, {"TMPDIR": str(tmp_path / "missing")}) == 1
     captured = capsys.readouterr()
     assert captured.out == "setup FAILED (FileNotFoundError)\nPROBE FAILED: setup\n"
     assert captured.err == ""
@@ -469,12 +468,11 @@ def test_a_scratch_directory_inside_the_login_directory_is_refused_and_nothing_i
     (directory / "inner").mkdir()
     login = probe.checks.read_login(str(directory))
     for inside in (directory, directory / "inner"):
-        assert probe.cells.run_command(login, tmp_path / "lock", {"TMPDIR": str(inside)}) == 1
+        assert probe.cells.run_command(login, {"TMPDIR": str(inside)}) == 1
         assert capsys.readouterr().out == (
             f"setup FAILED: {probe.checks.Refusal.SCRATCH_IN_LOGIN}\nPROBE FAILED: setup\n"
         )
     assert sorted(path.name for path in directory.iterdir()) == ["inner", "token"]
-    assert not (tmp_path / "lock").exists()
 
 
 def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
@@ -511,25 +509,3 @@ def test_a_failed_enter_tears_down_with_the_alarm_cancelled_and_sigterm_ignored(
     with pytest.raises(probe.egress.ProbeFailed):
         run.__enter__()
     assert seen[-1] == (signal.SIG_IGN, 0)
-
-
-# --- the lock ----------------------------------------------------------------------------------
-
-
-def test_the_command_says_it_waits_for_another_holder_and_starts_after_the_release(probe, tmp_path):
-    """#457 row 15: the command says it waits and starts after the release."""
-    lock = tmp_path / "lock"
-    waiting = threading.Event()
-    started = threading.Event()
-
-    def second() -> None:
-        with probe.checks.probe_lock(lock, waiting.set):
-            started.set()
-
-    with probe.checks.probe_lock(lock, lambda: pytest.fail("the first holder waited")):
-        thread = threading.Thread(target=second)
-        thread.start()
-        assert waiting.wait(timeout=10)
-        assert not started.is_set()
-    thread.join(timeout=10)
-    assert started.is_set()
