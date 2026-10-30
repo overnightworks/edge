@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import NamedTuple, Protocol, TextIO
 
 from census_client import Mount, Watched
+from edge_copy import begin_teardown
 from egress import ProbeFailed
 from fake_app import HELD_LINE, RELEASED_PREFIX
 from image import ProbeFailed as ImageProbeFailed
@@ -258,13 +259,6 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
         return 1
     write_line(f"PROBE PASSED: held {', '.join(run.held)}", flush=True)
     return 0
-
-
-def begin_teardown() -> None:
-    """From here an alarm or a SIGTERM cannot abort the teardown and leave the stack, and with it
-    the operator's login bind, standing."""
-    signal.alarm(0)
-    signal.signal(signal.SIGTERM, signal.SIG_IGN)
 
 
 def scratch_parent(login: Login, environment: Mapping[str, str]) -> Path:

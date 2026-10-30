@@ -409,6 +409,7 @@ class Probe:
         copy.chmod(0o644)
 
     def __exit__(self, *_: object) -> None:
+        edge_copy.begin_teardown()
         if self.listener:
             self.listener.close()
         for window in self.windows:
