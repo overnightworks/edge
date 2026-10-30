@@ -156,7 +156,7 @@ The agent service is an L4 service: the one place that holds the subscription lo
 - The realm carries the callers' identity (#183): the realm role `agent-workload` held only by the service accounts of the songmaker, presentator and hopin clients, whose default scopes add the `agent-service` audience, so an app's workload token has the same `azp` as its people's tokens. Whoever holds such a client secret can get that token, which is why the secret stays the app's own file.
 - The container mounts only one directory bind per provider (its login, read-only except the Codex directory, which the service renews and so binds read-write), its configuration file and two tmpfs mounts: `cli_working_directory_root` and `/tmp` (section 4).
 - Its AppArmor/Bubblewrap policy permits writes only below that root.
-- Its egress is exactly two names, through `agent-egress` ([edge#189](https://github.com/overnightworks/edge/issues/189)): an SNI-allowlisting TLS passthrough to the provider endpoint `api.anthropic.com` and the issuer host for the JWKS fetch. The service sits on internal, isolated networks with no route out, no host address and no DNS forwarding. MCP origins stay internal over `mcp`; LiteLLM joins with A2a.
+- Its egress is exactly two names, through `agent-egress` ([edge#189](https://github.com/overnightworks/edge/issues/189)): an SNI-allowlisting TLS passthrough to the provider endpoint `api.anthropic.com` and the issuer host for the JWKS fetch. The service sits on internal, isolated networks with no route out, no host address and no DNS forwarding. MCP origins stay internal over `mcp`. The API route of the agent service reaches its provider through LiteLLM (`docs/agent-service.md`, "The API route").
 
 ---
 
@@ -371,7 +371,7 @@ in the line is edge's, not the app's. Apps' own texts are not read from their re
 
 ### One inventory
 
-`secrets_manifest.toml` (home-tools) stays the one inventory. Values stay in `~/.secrets`. It gains five fields per entry:
+`src/hal/workstation/secrets_manifest.toml` stays the one inventory. Values stay in `~/.secrets`. It gains five fields per entry:
 
 | Field | Meaning | Example |
 |---|---|---|
@@ -952,7 +952,6 @@ Health: `run.health` (section 3).
 | Docker Compose | OCI and compose | low for apps; high for edge (apply, check, backup labels, barrier, watchers and the Traefik provider all speak Compose). presentator's `docker.sock` stays a high cost until agent-presentator#197 removes it (section 5, "How each service joins") |
 | `~/.secrets` | files | home-tools (L1). Apps stay unchanged only once gap 21 (section 7) has moved their secrets to files |
 | GitHub | git | not a swap goal (accepted) |
-| LLM providers and LiteLLM | the agent-service API | behind agent-runtime#18 |
 
 ### Where the operator's wish overreaches
 

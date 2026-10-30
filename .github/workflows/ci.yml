@@ -1,6 +1,7 @@
-# Static checks only: the edge runs on the operator's host, so CI never starts containers.
-# It proves the compose file renders and that the loopback-only, deny-by-default shape holds,
-# and it lints and tests overnightworks-hal against fixture outputs.
+# Static checks, plus one job that starts the pinned front of LiteLLM against a stand-in: the edge
+# runs on the operator's host, so the job `check` never starts containers. It proves the compose
+# file renders and that the loopback-only, deny-by-default shape holds, and it lints and tests
+# overnightworks-hal against fixture outputs.
 name: ci
 
 on:
@@ -94,7 +95,7 @@ jobs:
             case $module_file in "$tool_dir/"*) ;; *) echo "$module imported from $module_file"; exit 1 ;; esac
           done
 
-      - name: Compose renders (default, keycloak, step-ca, probe, agent-service and agent-probe profiles, Keycloak bootstrap and probe overlays)
+      - name: Compose renders (default, keycloak, step-ca, probe, agent-service, agent-probe and litellm profiles, Keycloak bootstrap and probe overlays)
         run: |
           docker compose config -q
           docker compose --profile keycloak config -q
@@ -102,6 +103,9 @@ jobs:
           docker compose --profile probe config -q
           docker compose --profile agent-service config -q
           docker compose --profile agent-probe config -q
+          docker compose --profile litellm config -q
+          docker compose --profile litellm config --services | grep -x litellm
+          docker compose --profile litellm config --services | grep -x litellm-front
           docker compose --profile agent-service config --services | grep -x agent-egress
           docker compose --profile agent-probe config --services | grep -x agent-probe
           docker compose --profile step-ca config --services | grep -x step-ca
@@ -129,7 +133,9 @@ jobs:
           python3 -c 'import sys, yaml; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' \
             traefik.yml keycloak/master.yaml keycloak/realm.yaml \
             keycloak/bootstrap.compose.yaml probe/keycloak/compose.probe.yaml probe/step-ca/compose.probe.yaml step-ca/ca.json \
-            traefik-mcp.yml mcp/dynamic/* agent-service/egress/traefik.yml agent-service/egress/dynamic/*
+            traefik-mcp.yml mcp/dynamic/* agent-service/egress/traefik.yml agent-service/egress/dynamic/* \
+            agent-service/litellm/config.yaml agent-service/litellm/front/traefik.yml \
+            agent-service/litellm/front/dynamic/*
 
       # Traefik listens on loopback only: the tunnel entrypoint 8081 and the local Keycloak admin
       # entrypoint 8090, and nothing implicit. A router that names no entrypoint binds only `edge`,
@@ -262,6 +268,27 @@ jobs:
               sys.exit("traefik-mcp.yml's hardening block differs from traefik.yml's")
           PY
 
+      # litellm-front is the same Traefik as the public one with one entrypoint on :4000: its http
+      # block is the public entrypoint's, and its global and log blocks are the public ones.
+      - name: litellm-front keeps the public Traefik's hardening and reads no secret
+        run: |
+          python3 - <<'PY'
+          import sys, yaml
+          compose = yaml.safe_load(open("compose.yaml"))
+          front = compose["services"]["litellm-front"]
+          if "secrets" in front or "ports" in front or "network_mode" in front:
+              sys.exit("litellm-front reads a secret, publishes a port or has host networking")
+          if sorted(front["networks"]) != ["litellm-api", "litellm-backend"]:
+              sys.exit(f"litellm-front is on {sorted(front['networks'])}")
+          public = yaml.safe_load(open("traefik.yml"))
+          static = yaml.safe_load(open("agent-service/litellm/front/traefik.yml"))
+          for block in ("global", "log"):
+              if public[block] != static[block]:
+                  sys.exit(f"the front's {block} differs from traefik.yml's")
+          if static["entryPoints"]["api"]["http"] != public["entryPoints"]["edge"]["http"]:
+              sys.exit("the front's hardening block differs from traefik.yml's")
+          PY
+
       # OpenTofu runs on the operator's host (the wrapper is X1b); CI installs the same version that
       # external/main.tf pins (tofu_test checks it) and the action verifies the download's sha256.
       # The wrapper is off: later steps read tofu's raw output and exit code.
@@ -389,8 +416,28 @@ jobs:
         run: |
           uv run --locked --no-build --script keycloak/secret-check/secret_check.py .
 
+  # The pinned front of LiteLLM as shipped, against a stand-in backend: the table of
+  # tests/test_litellm_front.py (about 50 MB of images). It re-runs on every Traefik bump.
+  front:
+    runs-on: ubuntu-latest
+    env:
+      DOCKER_GID: "127"
+      EDGE_FRONT_CASES: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+
+      - name: overnightworks-hal installs from the lock file
+        run: uv sync --locked --no-build --no-install-project
+
+      - name: The front forwards only POST /v1/chat/completions
+        run: uv run --no-sync --no-build pytest tests/test_litellm_front.py
+
   quality:
-    needs: [check]
+    needs: [check, front]
     if: always()
     permissions:
       contents: read

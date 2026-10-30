@@ -1,0 +1,31 @@
+# LiteLLM's configuration (compose.yaml, service `litellm`). Three model names the agent service
+# sends in full (`<provider>/<model>`), each mapped to the current id of its family; the families
+# are those of service.toml's [cli.anthropic] models. A change reaches LiteLLM only through a
+# recreate of the container. No callback, cache, database, master key or fallback; the provider
+# key comes from the environment start.sh fills from its file; the hook decides who may call.
+model_list:
+  - model_name: anthropic/opus
+    litellm_params:
+      model: anthropic/claude-opus-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_retries: 0
+  - model_name: anthropic/sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_retries: 0
+  - model_name: anthropic/haiku
+    litellm_params:
+      model: anthropic/claude-haiku-5-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      max_retries: 0
+
+router_settings:
+  num_retries: 0
+
+litellm_settings:
+  turn_off_message_logging: true
+  redact_messages_in_exceptions: true
+
+general_settings:
+  custom_auth: auth.user_api_key_auth

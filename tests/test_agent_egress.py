@@ -9,6 +9,7 @@ pure logic, checked here on synthetic frames.
 """
 
 import importlib.util
+import ipaddress
 import re
 import signal
 import socket
@@ -29,6 +30,7 @@ PROBE = ROOT / "probe" / "agent-service"
 GATEWAY = "agent-egress"
 SERVICE = "agent-service"
 STAND_IN = "agent-probe"
+LITELLM_API, LITELLM_EGRESS = "litellm-api", "litellm-egress"
 OBSERVER = "realm-observer"
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 HOST_SNI = re.compile(r"HostSNI\(`([^`]+)`\)")
@@ -79,8 +81,10 @@ def test_a_member_carries_the_attachments_and_nothing_else_of_the_network(
     """E16: the stand-in and the service merge the one anchor; neither adds a port, a network
     mode or a network."""
     service = compose["services"][member]
+    # The service lists its networks itself, and adds the one to LiteLLM's front (#768).
+    extra_networks = [LITELLM_API] if member == SERVICE else []
 
-    assert service["networks"] == attachments["networks"]
+    assert service["networks"] == [*attachments["networks"], *extra_networks]
     assert service["extra_hosts"] == attachments["extra_hosts"]
     assert not {"ports", "network_mode", "expose"} & service.keys()
 
@@ -117,7 +121,7 @@ def test_the_gateway_is_the_only_service_on_internet(compose):
 
 
 def test_the_gateway_cannot_reach_the_docker_api_and_adds_nothing_to_its_hardening(compose):
-    """E16: no socket, no socket-proxy, a file provider only, no capability, two networks."""
+    """E16: no socket, no socket-proxy, a file provider only, no capability, three networks."""
     gateway = compose["services"][GATEWAY]
     static_config = load("agent-service/egress/traefik.yml")
 
@@ -127,7 +131,7 @@ def test_the_gateway_cannot_reach_the_docker_api_and_adds_nothing_to_its_hardeni
     assert "socket-proxy" not in gateway.get("depends_on", {})
     assert set(static_config["providers"]) == {"file"}
     assert "cap_add" not in gateway
-    assert set(gateway["networks"]) == {"egress", "internet"}
+    assert set(gateway["networks"]) == {"egress", LITELLM_EGRESS, "internet"}
 
 
 def test_the_names_the_service_resolves_are_the_names_the_gateway_passes(attachments, passed_names):
@@ -135,13 +139,30 @@ def test_the_names_the_service_resolves_are_the_names_the_gateway_passes(attachm
     assert set(attachments["extra_hosts"]) == passed_names
 
 
-def test_the_gateways_address_stands_in_compose_and_in_its_static_file(compose):
-    """E16: x-egress-address is the gateway's address on egress and the one entrypoint's host."""
-    address = compose["x-egress-address"]
+def test_the_gateways_addresses_stand_in_compose_and_in_its_static_file(compose):
+    """E16: each entrypoint listens on the gateway's address on its own network."""
     entrypoints = load("agent-service/egress/traefik.yml")["entryPoints"]
+    addresses = {"egress": "x-egress-address", LITELLM_EGRESS: "x-litellm-egress-address"}
 
-    assert compose["services"][GATEWAY]["networks"]["egress"] == {"ipv4_address": address}
-    assert [entrypoint["address"] for entrypoint in entrypoints.values()] == [f"{address}:443"]
+    for network, anchor in addresses.items():
+        address = compose[anchor]
+        assert compose["services"][GATEWAY]["networks"][network] == {"ipv4_address": address}
+        assert ipaddress.ip_address(address) in ipaddress.ip_network(
+            compose["networks"][network]["ipam"]["config"][0]["subnet"]
+        )
+    assert sorted(entrypoint["address"] for entrypoint in entrypoints.values()) == sorted(
+        f"{compose[anchor]}:443" for anchor in addresses.values()
+    )
+
+
+def test_every_router_names_its_entrypoints_and_only_the_provider_is_open_to_litellm(routers):
+    """#768: the issuer is reachable from the agent service alone; the provider from LiteLLM too."""
+    entrypoints = set(load("agent-service/egress/traefik.yml")["entryPoints"])
+
+    assert all(set(router["entryPoints"]) <= entrypoints for router in routers.values())
+    assert [name for name, router in routers.items() if "litellm" in router["entryPoints"]] == [
+        "provider"
+    ]
 
 
 def test_the_gateway_shares_the_public_traefiks_image_and_hardening(compose):

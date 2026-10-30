@@ -18,6 +18,9 @@ x-mcp-origins: &mcp-origins [hello.mcp.internal, songmaker.mcp.internal]
 # Docker DNS and would find itself. The names equal the HostSNI names of
 # agent-service/egress/dynamic/allowed.yml.
 x-egress-address: &egress-address 172.31.252.10
+# The gateway's second address, on the network LiteLLM shares with it: the entrypoint `litellm`
+# of agent-service/egress/traefik.yml. LiteLLM finds the provider through extra_hosts too.
+x-litellm-egress-address: &litellm-egress-address 172.31.239.10
 x-agent-attachments: &agent-attachments
   networks: [agent-songmaker, agent-presentator, agent-hopin, egress, mcp]
   extra_hosts:
@@ -383,10 +386,56 @@ services:
       net.ipv4.ip_unprivileged_port_start: 0
     networks:
       egress: {ipv4_address: *egress-address}
+      litellm-egress: {ipv4_address: *litellm-egress-address}
       internet: {}
     volumes:
       - ./agent-service/egress/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./agent-service/egress/dynamic:/egress/dynamic:ro
+
+  # The one-route front of LiteLLM (agent-service/litellm/front/): the agent service's only way to
+  # the inference gateway. It reads no secret and reaches only `litellm`. Not started by any
+  # unit yet.
+  litellm-front:
+    <<: *traefik
+    profiles: [litellm]
+    restart: unless-stopped
+    networks: [litellm-api, litellm-backend]
+    volumes:
+      - ./agent-service/litellm/front/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./agent-service/litellm/front/dynamic:/litellm-front/dynamic:ro
+
+  # LiteLLM, the agent service's route to the paid API (agent-service/litellm/). It reads the
+  # provider key and the service credential as files, holds no database and reaches only the
+  # front and, through agent-egress, the provider. A change of its files reaches it only through
+  # a recreate. Not started by any unit yet.
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.106.6@sha256:37e2dafb088a7723beb998590682957386dfc83ffea1848486f8e0e5cfac0b06
+    profiles: [litellm]
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    ulimits:
+      core: 0
+    networks: [litellm-backend, litellm-egress]
+    extra_hosts:
+      api.anthropic.com: *litellm-egress-address
+    environment:
+      HOME: /tmp
+      PYTHONPATH: /etc/litellm
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      LITELLM_TELEMETRY: "False"
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=0700,size=64m,nosuid,nodev
+    secrets: [litellm_anthropic_key, agent_service_api_credential]
+    entrypoint: [/etc/litellm/start.sh, /run/secrets/litellm_anthropic_key]
+    volumes:
+      - ./agent-service/litellm/config.yaml:/etc/litellm/config.yaml:ro
+      - ./agent-service/litellm/auth.py:/etc/litellm/auth.py:ro
+      - ./agent-service/litellm/gate.py:/etc/litellm/gate.py:ro
+      - ./agent-service/litellm/start.sh:/etc/litellm/start.sh:ro
 
   # The agent service (the image is built on the PC, docs/agent-service.md,
   # "The image"). One worker, one replica. It runs as 1000:1000 because its reader refuses a
@@ -394,6 +443,7 @@ services:
   # (docs/agent-service.md, "The login"). The unit `agent-service` of fleet.yaml starts it.
   agent-service:
     <<: *agent-attachments
+    networks: [agent-songmaker, agent-presentator, agent-hopin, egress, mcp, litellm-api]
     image: &agent-service-image edge-agent-service:0.12.0-claude-2.1.302-codex-0.163.0
     pull_policy: never
     profiles: [agent-service]
@@ -514,6 +564,12 @@ secrets:
   # agent-service/setup makes it; only the private file reaches the service, never its folder.
   agent_service_signing_key:
     file: ${HOME}/.secrets/agent-service/signing/private.pem
+  # The provider key, read by litellm alone, and the service credential (JSON with `shared_key`),
+  # read by litellm and, once the service has an [api] table, by agent-service.
+  litellm_anthropic_key:
+    file: ${HOME}/.secrets/litellm/anthropic
+  agent_service_api_credential:
+    file: ${HOME}/.secrets/agent-service/api/credential.json
 
 networks:
   edge-probe:
@@ -575,6 +631,22 @@ networks:
       config:
         # Pinned so agent-egress has one address; the probe overlay takes its own free subnet.
         - subnet: 172.31.252.0/24
+  # The agent service and the front of LiteLLM, which is its only member besides the service.
+  litellm-api:
+    internal: true
+    driver_opts: *isolated-bridge
+  # The front and LiteLLM.
+  litellm-backend:
+    internal: true
+    driver_opts: *isolated-bridge
+  # LiteLLM and agent-egress's second entrypoint, the only way out of LiteLLM.
+  litellm-egress:
+    internal: true
+    driver_opts: *isolated-bridge
+    ipam:
+      config:
+        # Pinned so agent-egress has one address on it; the probe moves it to a free /24.
+        - subnet: 172.31.239.0/24
   # agent-egress alone: a plain NAT bridge, the one route to the internet.
   internet:
     driver: bridge

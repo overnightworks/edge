@@ -47,6 +47,11 @@ LIVE_NETWORK_NAME = re.compile(
     rf"^(\s+name:\s+){re.escape(LIVE_NETWORK_PREFIX)}(\w+)\s*$", re.MULTILINE
 )
 GUARDED_COMPOSE_VERBS = {"up", "run", "down"}  # what creates or removes networks
+# The networks of compose.yaml that pin a /24 so agent-egress has one address on each; a probe
+# moves each to a free /24 of its own, so it never collides with the live stack's.
+GATEWAY_NETWORKS = ("egress", "litellm-egress")
+GATEWAY_SUBNET = re.compile(r"^  (?P<network>[\w-]+):\n(?P<block>(?:    .*\n)+)", re.MULTILINE)
+PINNED_PREFIX = re.compile(r"subnet:\s+(\d+\.\d+\.\d+\.)0/24")
 
 
 class ProbeFailed(Exception):
@@ -67,6 +72,41 @@ def namespaced_compose(text: str, project: str) -> str:
     remaining = re.findall(rf"name:\s+{LIVE_NETWORK_PREFIX}\S*", namespaced)
     expect(not remaining, f"a hal_ network name remains after the rewrite: {remaining}")
     return namespaced
+
+
+def live_gateway_prefixes(text: str) -> dict[str, str]:
+    """The first three octets (with the trailing dot) of the /24 each of `GATEWAY_NETWORKS` pins in
+    `text` of compose.yaml. Refuses a text in which one pins none."""
+    blocks = {m["network"]: m["block"] for m in GATEWAY_SUBNET.finditer(text)}
+    prefixes = {
+        network: found[1]
+        for network in GATEWAY_NETWORKS
+        if (found := PINNED_PREFIX.search(blocks.get(network, "")))
+    }
+    expect(
+        set(prefixes) == set(GATEWAY_NETWORKS), f"compose.yaml pins no /24 on {GATEWAY_NETWORKS}"
+    )
+    return prefixes
+
+
+def free_gateway_prefixes(
+    live: Mapping[str, str], candidates: Sequence[str], occupied: Sequence[str]
+) -> dict[str, str]:
+    """For each live prefix of `live` a free /24 of `candidates`, none of them twice."""
+    taken, moved = list(occupied), {}
+    for prefix in live.values():
+        subnet = free_subnet(candidates, taken)
+        taken.append(str(subnet))
+        moved[prefix] = str(subnet.network_address).removesuffix("0")
+    return moved
+
+
+def moved_to_probe_subnets(text: str, moved: Mapping[str, str]) -> str:
+    """`text` with every live prefix of `moved` replaced by its probe prefix, in one pass; refuses a
+    text that names one of them nowhere."""
+    for live in moved:
+        expect(live in text, f"the file does not name {live}")
+    return re.sub("|".join(map(re.escape, moved)), lambda found: moved[found[0]], text)
 
 
 def without_inherited_apps(text: str) -> str:

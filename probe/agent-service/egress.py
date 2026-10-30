@@ -57,7 +57,7 @@ sys.path.insert(0, str(REPO / "agent-service"))  # the observations shared with 
 
 import edge_copy  # noqa: E402
 import egress_observe  # noqa: E402
-from agent_networks import cell_p36, service_networks  # noqa: E402
+from agent_networks import cell_p36, gateway_listeners, service_networks  # noqa: E402
 from edge_copy import GUARDED_COMPOSE_VERBS, ProbeFailed, expect, scratch_directory  # noqa: E402
 from egress_observe import (  # noqa: E402
     PUBLIC_RESOLVER,
@@ -81,8 +81,6 @@ COMPOSE_FILE = REPO / "compose.yaml"
 OVERLAY = REPO / "probe" / "agent-service" / "compose.probe.yaml"
 GATEWAY_STATIC = REPO / "agent-service" / "egress" / "traefik.yml"
 SERVICE_CONFIGURATION = REPO / "agent-service" / "service.toml"
-# The egress network of compose.yaml and the address the gateway's static file names.
-LIVE_EGRESS_PREFIX = "172.31.252."
 PROVIDER = "api.anthropic.com"
 GATEWAY_PORT = 443
 SERVICE_PORT = 8080  # the service's own default; service.toml sets only its host
@@ -99,7 +97,6 @@ HOST_WINDOW_TRIES = 3  # the host's window also sees the operator's traffic and 
 CONTROL_DELAY_SECONDS = 2
 OUTSIDE_NAME = "example.com"
 NOT_FOUND = "HTTP/1.1 404 Not Found"  # Traefik's own answer to a request it has no router for
-EMBEDDED_RESOLVER = "127.0.0.11"
 CLIENT_IMPORTS = "import json, selectors, socket, ssl, struct, sys, time\n"
 
 
@@ -276,9 +273,11 @@ class Probe:
         home.mkdir()
         write_login_folders(home)
         self.scratch_secrets = write_scratch_secrets(home, scratch / "ca")
-        subnet = edge_copy.free_subnet(SUBNET_CANDIDATES, edge_copy.daemon_subnets())
-        self.prefix = str(subnet.network_address).removesuffix("0")
-        self.address = f"{self.prefix}{GATEWAY_HOST_NUMBER}"
+        live = edge_copy.live_gateway_prefixes(COMPOSE_FILE.read_text())
+        self.moved = edge_copy.free_gateway_prefixes(
+            live, SUBNET_CANDIDATES, edge_copy.daemon_subnets()
+        )
+        self.address = f"{self.moved[live['egress']]}{GATEWAY_HOST_NUMBER}"
         self.compose_file = scratch / "compose.yaml"
         self.static_file = scratch / "traefik.yml"
         self.environment = {
@@ -290,6 +289,7 @@ class Probe:
             "PROBE_EGRESS_STATIC": str(self.static_file),
         }
         self.overlays = [OVERLAY]
+        self.profiles = ["agent-service", "agent-probe"]
         self.guard = edge_copy.NetworkGuard(PROJECT, lambda command: self.run(command).stdout)
         self.windows: list[subprocess.Popen] = []
         self.throwaways = 0
@@ -318,7 +318,7 @@ class Probe:
             "docker", "compose", "-p", PROJECT, "--project-directory", str(REPO),
             "--file", str(self.compose_file),
             *(argument for overlay in self.overlays for argument in ("--file", str(overlay))),
-            "--profile", "agent-service", "--profile", "agent-probe",
+            *(argument for profile in self.profiles for argument in ("--profile", profile)),
         ]  # fmt: skip
         if guard or (arguments and arguments[0] in GUARDED_COMPOSE_VERBS):
             self.guard.expect(prefix)
@@ -343,14 +343,14 @@ class Probe:
     def client_on_network(self, network: str, *arguments: str) -> dict:
         return self.throwaway([f"--network={network}"], arguments)
 
-    def throwaway(self, network: list[str], arguments) -> dict:
+    def throwaway(self, network: list[str], arguments, program: str = CLIENT_PROGRAM) -> dict:
         self.throwaways += 1
         name = f"{PROJECT}-throwaway-{self.throwaways}"
         return self.client_with(
             ["run", "--rm", "-i", "--name", name, "--label", LABEL, *network, "--read-only",
              "--user", "65534:65534", "--cap-drop", "ALL", "--security-opt",
              "no-new-privileges:true", self.image],
-            arguments,
+            arguments, program,
         )  # fmt: skip
 
     def client_with(
@@ -386,14 +386,13 @@ class Probe:
         return self
 
     def write_on_probe_subnet(self, source: Path, copy: Path) -> None:
-        """A copy of the file with the live egress subnet replaced by the probe's: the live
-        stack's edge_egress will own 172.31.252.0/24, and Docker refuses a second network on it."""
+        """A copy of the file with the live gateway subnets replaced by the probe's: the live
+        stack's networks own their /24s, and Docker refuses a second network on one."""
         text = source.read_text()
-        expect(LIVE_EGRESS_PREFIX in text, f"{source.name} does not name {LIVE_EGRESS_PREFIX}")
         # The copy lies in the scratch directory that scratch_directory() resolved and required at
         # the command line, and the text comes from the repository's own files; the route tried
         # was resolving the path once at that boundary, which Sonar does not follow across calls.
-        moved = text.replace(LIVE_EGRESS_PREFIX, self.prefix)
+        moved = edge_copy.moved_to_probe_subnets(text, self.moved)
         copy.write_text(  # NOSONAR(S2083)
             edge_copy.namespaced_compose(moved, PROJECT) if source == COMPOSE_FILE else moved
         )
@@ -688,17 +687,11 @@ class Probe:
         )
 
     def cell_e12(self) -> None:
-        found = self.client_in_namespace_of(self.container("agent-egress"), "listeners")
-        # Docker's embedded resolver listens on this loopback address in every container's own
-        # namespace; no other container can reach it.
-        found = {
-            protocol: [name for name in names if not name.startswith(EMBEDDED_RESOLVER + ":")]
-            for protocol, names in found.items()
-        }
-        listening = [f"{self.address}:{GATEWAY_PORT}"]
-        expect(found["tcp"] == listening, f"E12: TCP listeners {found['tcp']}")
-        expect(found["udp"] == [], f"E12: UDP sockets {found['udp']}")
-        self.hold("E12", f"the gateway listens on {self.address}:443/tcp and holds no UDP socket")
+        addresses = re.findall(r'address:\s*"([^"]+)"', self.static_file.read_text())
+        gateway_listeners(self, "agent-egress", addresses)
+        self.hold(
+            "E12", f"the gateway listens on {', '.join(addresses)}/tcp and holds no UDP socket"
+        )
 
     def cell_e11(self) -> None:
         """The allowed names resolve to the gateway (glibc), and the Claude CLI (Bun) reaches the
