@@ -872,6 +872,7 @@ The rules are labelled "§10 rule n", because [edge#50](https://github.com/overn
   - keeps no state that matters only in its process;
   - hands files over through its API;
   - uses the common door (§10 rule 7);
+  - bounds its admission (§10 rule 9);
   - reports its load numbers.
 - A load balancer and a second machine's setup come with the first rented GPU.
 - What stays allowed: an app keeps its own single-instance state (in-process state, SQLite, local files), such as agent-presentator's SQLite and files or hopin's rooms in the goal "Scale" above. That list is about instance count: one instance stays allowed for everyone, and scaling is an item. A shared service may run one replica but keeps no state that matters only in its process.
@@ -916,6 +917,16 @@ Health: `run.health` (section 3).
 - Priority between services is their budget size or their card, ruled by the operator; nothing arbitrates at runtime.
 - **What can be checked:** once two GPU services are compose services edge sees, edge's compose contract check sums the declared budgets per card. Until then each service's own item holds its budget.
 - Moving a GPU service to another card or machine follows §10 rule 4.
+
+**§10 rule 9: a shared service admits a bounded number of jobs** (ruled 30.10.2026, [speech-runtime#69](https://github.com/overnightworks/speech-runtime/issues/69)). It binds every service edge runs for several apps (today agent-runtime and speech-runtime; songmaker once it is a GPU service, [songmaker#2084](https://github.com/overnightworks/songmaker/issues/2084)). Apps only handle 429, inside each service's client package.
+- A service accepts at most as many concurrent jobs as its configuration says (speech: 1 per instance; agent: N).
+- A few jobs may wait briefly; their number and the wait are configured.
+- Anyone beyond that gets 429 at once, with `Retry-After`, before any work starts. A request that is too large gets 413.
+- The numbers come from configuration the platform sets. A service knows nothing about the PC's GPU or the operator's subscription. More instances add capacity (§10 rule 4, [hal#755](https://github.com/overnightworks/hal/issues/755)).
+- Recommended, not required: 503 with `Retry-After` while the service is not ready; passing the wait up to a surface.
+- No shared library or queue service: each service builds its wait where its resource lives.
+- Adoption has no deadline: each covered service has its own item and builds this when there is room.
+- **What can be checked:** each service's own CI sends one request too many and expects 429 with `Retry-After`. There is no static quality rule, because a static check cannot see behaviour. A later compose check may read the declared capacities, as it does for GPU budgets (§10 rule 8).
 
 **Cited, not restated:**
 - backup and the restore test: section 2, L5, and `backup/apps.toml`;
