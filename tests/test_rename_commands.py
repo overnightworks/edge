@@ -10,12 +10,27 @@ from pathlib import Path
 
 import pytest
 from git_support import committed_main, plain_git
-from rename_support import HTTPS, SSH, make_clone, memory_of, origin_of, squeezed, tree_state
-from terminal_support import type_at_prompt
+from support import rename_support
+from support.rename_support import (
+    HTTPS,
+    SSH,
+    make_clone,
+    memory_of,
+    origin_of,
+    squeezed,
+    tree_state,
+)
+from support.terminal_support import type_at_prompt
 
 from hal import cli, rename_commands
 from hal.grammar import Asks, ExitCode
 from hal.rename_commands import RunningProcess, World
+
+(everything, cli_world, fakes, home, locked, repository, through_cli, world) = (
+    rename_support.everything, rename_support.cli_world, rename_support.fakes,
+    rename_support.home, rename_support.locked, rename_support.repository,
+    rename_support.through_cli, rename_support.world,
+)  # fmt: skip
 
 
 def rename(world: World, dry_run: bool = False, old: str = "old", new: str = "fresh") -> ExitCode:
