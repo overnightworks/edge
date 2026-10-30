@@ -3,5 +3,5 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "b85f53d590e16ae600580fdda6010879856fd87f"
 branch = "claude/issue-795-fake-app-setting-per-provider-table"
-scope = ["probe/agent-service/containment.py", "probe/agent-service/fake_app.py"]
+scope = ["probe/agent-service/containment.py", "probe/agent-service/fake_app.py", "tests/test_agent_service_containment.py"]
 opened_commit = "7d522d311ff1fc42a032377a1f2b9bfe22a2f5bd"
