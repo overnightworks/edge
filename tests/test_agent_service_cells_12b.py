@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from probe_support import CONFIGURATION, TOKEN, login_probe_modules, make_login, resolved
+from support.probe_support import CONFIGURATION, TOKEN, login_probe_modules, make_login, resolved
 
 MARKER = "SECRET-MARKER-NOT-TO-BE-PRINTED"
 

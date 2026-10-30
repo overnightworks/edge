@@ -13,7 +13,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from probe_support import CONFIGURATION, LOGIN, TOKEN, login_probe_modules, make_login, resolved
+from support.probe_support import (
+    CONFIGURATION,
+    LOGIN,
+    TOKEN,
+    login_probe_modules,
+    make_login,
+    resolved,
+)
 
 STARTED = ("agent-egress", "agent-issuer", "agent-service")
 

@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from types import ModuleType
 
 import pytest
-from probe_support import probe_imports
+from support.probe_support import probe_imports
 
 OWNER_FAILED = "The owner of the relay of run r1 failed: CapabilityReflected at 3\n"
 RUNNER_FAILED = "The runner of run r1 failed: CapabilityReflected at 3\n"

@@ -10,7 +10,7 @@ from collections.abc import Iterator
 from types import ModuleType
 
 import pytest
-from probe_support import probe_imports
+from support.probe_support import probe_imports
 
 KEY_MARKER = "KEY-MARKER-IN-STDERR"
 
