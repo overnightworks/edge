@@ -432,13 +432,11 @@ SCRIPTED_SHA = b"5" * 40
 class ScriptedGit:
     """Git as the guards and the fetch ask it: a clean `main` equal to origin's unless told
     otherwise; the fetch raises `fetch_error` when one is set; `calls` records each. HEAD tracks
-    each path `ls-tree` is asked about as the tree holds it, a directory or else a file, unless
-    `kinds` says what it tracks (None: nothing)."""
+    each path `ls-tree` is asked about as the tree holds it, a directory or else a file."""
 
     reference: bytes = b"refs/heads/main\n"
     status: bytes = b""
     fetch_error: Exception | None = None
-    kinds: dict[str, checkout.EntryKind | None] = field(default_factory=dict)
     calls: list[list[str]] = field(default_factory=list)
 
     def __call__(
@@ -460,16 +458,7 @@ class ScriptedGit:
         return subprocess.CompletedProcess(arguments, 0, stdout, b"")
 
     def _listing(self, tree: Path, arguments: list[str]) -> bytes:
-        modes = {
-            checkout.EntryKind.FILE: "100644 blob",
-            checkout.EntryKind.DIRECTORY: "040000 tree",
-            checkout.EntryKind.SYMLINK: "120000 blob",
-            checkout.EntryKind.SUBMODULE: "160000 commit",
-        }
-        entries = []
-        for path in arguments[arguments.index("--") + 1 :]:
-            default = checkout.EntryKind.DIRECTORY if (tree / path).is_dir() else None
-            kind = self.kinds.get(path, default or checkout.EntryKind.FILE)
-            if kind is not None:
-                entries.append(f"{modes[kind]} {'0' * 40}\t{path}\0")
-        return "".join(entries).encode()
+        return "".join(
+            f"{'040000 tree' if (tree / path).is_dir() else '100644 blob'} {'0' * 40}\t{path}\0"
+            for path in arguments[arguments.index("--") + 1 :]
+        ).encode()

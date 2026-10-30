@@ -1035,7 +1035,7 @@ class RealmStepStand:
 
     @property
     def configuration(self) -> dict[str, Any]:
-        """As Compose resolves it, with config-cli's entrypoint bind on this stand's copy."""
+        """As Compose resolves it, but config-cli's entrypoint is the stand's copy, not REPO's."""
         config = self.engine.resolved_configuration()
         for mount in config["services"][reconcile.CONFIG_CLI]["volumes"]:
             if mount["target"] == "/opt/edge/entrypoint.sh":

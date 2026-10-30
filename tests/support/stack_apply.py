@@ -387,8 +387,7 @@ def applied_core(core_files, switch, scripted):
 
 @pytest.fixture
 def unreadable_profile_bind(applied_core, monkeypatch):
-    """Finding the services edge follows, which happens only after the yes, fails with a bind that
-    cannot be read."""
+    """The step that finds the services edge follows, which runs only after the yes, fails."""
 
     def refuse(*_: object) -> frozenset[str]:
         raise core.CoreError("cannot read locked/hello.yml (Permission denied)")
