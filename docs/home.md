@@ -293,7 +293,9 @@ Eintrag nennt („unknown“; bleibt unangetastet), und Rechte lockerer als
 den sein Besitzer nicht lesen, betreten oder beschreiben kann („closed-folder“;
 was darin liegt, ist „unknown“), ein Symlink
 auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn durch
-den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
+den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt), ein Symlink
+an der Stelle eines Eintrags unter `~/.secrets` (er zählt als fehlend; „symlinked-folder“; die
+Empfehlung entfernt mit `rm` nur den Link und lässt sein Ziel unangetastet) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
 `<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der
 der Assistent das Speichern verweigert. `hal` setzt nie Rechte und ersetzt nichts;
@@ -326,7 +328,8 @@ Mensch, alles andere der Assistent. Je Token:
    Checkliste der Rechte. Ein erzeugter oder von Hand anzulegender Eintrag druckt nur seine Ergebniszeile.
    Vorher prüft er die Ordner auf dem Weg: Ist einer lockerer als `700`, für
    seinen Besitzer verschlossen, ein Symlink („is a symlink“) oder kein
-   Ordner, nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
+   Ordner, oder steht an der Stelle selbst ein Symlink (Befehl: `rm`, nur der
+   Link), nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
    damit kein frisch angelegtes Token verloren geht.
 2. Nach Enter öffnet er die Seite. GitHubs Formular ist über die dokumentierten
    URL-Parameter vorausgefüllt (Name, Resource owner `overnightworks`, Ablauf,
@@ -548,7 +551,7 @@ or `✓ setup up to date · 5 unchanged · 21s`. The run time is whole seconds r
 a minute, `1h02m` from an hour) and stands after the counts and before the hint; a failed run ends with the error pair and shows none. A step that fails prints its row as `failed` with its own
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup`. For the
-system row the error says what /etc is left as: `/etc unchanged` after a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. After the yes the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed for the agent role or in a dry run. A second
+system row the error says what /etc is left as: `/etc unchanged` after a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open, or a symlink at the secret's own place, fixed by `rm`) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. After the yes the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed for the agent role or in a dry run. A second
 `--dry-run` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/hal/workstation/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen

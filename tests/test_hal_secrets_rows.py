@@ -105,6 +105,77 @@ def test_a_loose_file_is_a_row_with_its_command_bare_under_it(clean_home: Path, 
     ]
 
 
+def test_a_link_at_a_declared_file_is_missing_and_a_finding(clean_home: Path, run) -> None:
+    place = clean_home / ".secrets" / "gitlab"
+    target = clean_home / "elsewhere"
+    target.write_text(FAKE_SECRET_VALUE)
+    place.unlink()
+    place.symlink_to(target)
+
+    code, lines = run()
+
+    assert code == 1
+    assert lines == [
+        "  ! gitlab | missing | token",
+        "    https://gitlab.example/-/user_settings/personal_access_tokens",
+        "  ! gitlab | symlink | is a symlink",
+        "    rm ~/.secrets/gitlab",
+        "  ✓ 2 entries | present | gh checked: valid; the rest not checked",
+        f"! 2 findings · {HINT}",
+    ]
+    assert target.read_text() == FAKE_SECRET_VALUE
+
+
+@pytest.mark.parametrize(
+    ("link", "code", "expected"),
+    [
+        (".config/gh", 0, [HEALTHY.format(count=3), f"✓ no findings · 3 entries · {HINT}"]),
+        (
+            ".secrets/stray-link",
+            1,
+            [
+                "  ! stray-link | unknown | not in the manifest",
+                "    add ~/.secrets/stray-link to the manifest or delete it",
+                HEALTHY.format(count=3),
+                f"! 1 finding · {HINT}",
+            ],
+        ),
+    ],
+    ids=["a stowed login outside ~/.secrets is present", "an undeclared link is only unknown"],
+)
+def test_a_link_that_is_no_declared_secret_place_is_no_symlink_finding(
+    clean_home: Path, run, link: str, code: int, expected: list[str]
+) -> None:
+    place = clean_home / link
+    target = clean_home / "elsewhere"
+    target.write_text(FAKE_SECRET_VALUE)
+    place.unlink(missing_ok=True)
+    place.symlink_to(target)
+
+    assert run() == (code, expected)
+
+
+def test_a_linked_secrets_folder_a_home_level_wildcard_matches_is_missing(
+    clean_home: Path, use_manifest: Callable[[str], Path], run
+) -> None:
+    home_level_wildcard = """
+[[secret]]
+name = "vault"
+kind = "tool-login"
+paths = ["~/[.]secrets"]
+read_by = []
+recreate = "r"
+"""
+    use_manifest(TEST_MANIFEST + home_level_wildcard)
+    target = clean_home / "elsewhere"
+    (clean_home / ".secrets").rename(target)
+    (clean_home / ".secrets").symlink_to(target)
+
+    _code, lines = run()
+
+    assert "  ! vault | missing | tool login" in lines
+
+
 def test_a_missing_entry_the_wizard_writes_points_at_hal_setup(add_entries, run) -> None:
     home = add_entries(entry("svc/password", kind="service-password"))
     (home / ".secrets" / "svc" / "password").unlink()
