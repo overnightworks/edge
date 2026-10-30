@@ -109,6 +109,7 @@ def edge_tree(tree: Path) -> Path:
         setup.chmod(setup.stat().st_mode | stat.S_IXUSR)
     (tree / "fleet.yaml").write_text(f"cloudflare:\n  zone: {ZONE}\n" + ENABLED)
     (tree / "dynamic").mkdir()
+    (tree / "dynamic" / ".gitkeep").touch()
     (tree / "traefik.yml").write_text('entryPoints:\n  edge:\n    address: "127.0.0.1:8081"\n')
     (tree / ".env").write_text(f"EDGE_DOMAIN={ZONE}\nDOCKER_GID={DOCKER_GID}\n")
     return tree
