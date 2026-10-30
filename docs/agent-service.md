@@ -76,7 +76,7 @@ as it was; the folders are opened without following a link and locked for the sw
 `agent-service/setup --check` changes nothing and says the first gap. The token is pasted only
 there, never on a command line or in an issue. The file is a regular file of at most 16 KiB with one line, the token: no JSON,
 no API key (`sk-ant-api…`), nothing group or others can touch. The service refuses to start
-otherwise, naming `cli.anthropic.token_file` and the path, never the content. `hal secrets` lists
+otherwise, naming `cli.anthropic.token_file` and the path, never the content. `hal secrets -v` lists
 the entry `agent-service-claude`.
 
 A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/auth.json`
@@ -87,7 +87,7 @@ and the path; a Codex run gets a copy without the renewal token, and the service
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
 rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
 leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file. What the CLI leaves beside it (`log/`, `tmp/`) is part of the entry, never an unknown file, and a failed login removes only what that run left.
-`hal secrets` lists the entry `agent-service/codex` and shows the renewal command above.
+`hal secrets -v` lists the entry `agent-service/codex` and shows the renewal command above.
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC, so his
@@ -133,7 +133,7 @@ refusal or a leftover of an interrupted run, and 2 when openssl or the host cann
 only when it passes the same check on a throwaway key. A leftover (`*.new`, `*.next.pem`) beside a
 sound pair is cleared by the next plain run; beside a missing or unusable pair only the `*.new` of an
 interrupted creation is, and the `*.next.pem` wait for `--replace-signing-key`. A temporary entry that
-is a link, no regular file or not the service's is never unlinked. `hal secrets` lists both files; a public half at 0644 is no finding.
+is a link, no regular file or not the service's is never unlinked. `hal secrets -v` lists both files; a public half at 0644 is no finding.
 
 **Replacing the key.** `agent-service/setup --replace-signing-key` is the one command for a planned
 rotation, for a key that may have leaked, and for a lost private key (there is no backup: the key protects
