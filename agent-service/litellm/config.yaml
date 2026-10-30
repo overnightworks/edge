@@ -1,8 +1,10 @@
 # LiteLLM's configuration (compose.yaml, service `litellm`). Three model names the agent service
 # sends in full (`<provider>/<model>`), each mapped to the current id of its family; the families
 # are those of service.toml's [cli.anthropic] models. A change reaches LiteLLM only through a
-# recreate of the container. No callback, cache, database, master key or fallback; the provider
-# key comes from the environment start.sh fills from its file; the hook decides who may call.
+# recreate of the container. No callback, cache, database or fallback; the provider key and the
+# master key come from the environment start.sh fills from their files. The master key is one no
+# client knows (LiteLLM refuses to boot without one), so the admin routes stay closed; the hook
+# decides who may call.
 model_list:
   - model_name: anthropic/opus
     litellm_params:

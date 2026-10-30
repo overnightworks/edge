@@ -25,6 +25,7 @@ NEW_NETWORKS = ("litellm-api", "litellm-backend", "litellm-egress")
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 DIGEST_PINNED = re.compile(r"^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$")
 KEY_SECRET, CREDENTIAL_SECRET = "litellm_anthropic_key", "agent_service_api_credential"
+MASTER_SECRET = "litellm_master_key"
 
 
 def load(path: Path) -> dict:
@@ -111,10 +112,11 @@ def test_only_litellm_reads_the_provider_key_and_only_it_and_later_the_service_t
 ):
     holders = {
         secret: [n for n, s in compose["services"].items() if secret in s.get("secrets", [])]
-        for secret in (KEY_SECRET, CREDENTIAL_SECRET)
+        for secret in (KEY_SECRET, MASTER_SECRET, CREDENTIAL_SECRET)
     }
 
     assert holders[KEY_SECRET] == [LITELLM]
+    assert holders[MASTER_SECRET] == [LITELLM]
     assert set(holders[CREDENTIAL_SECRET]) <= {LITELLM, SERVICE}
     assert LITELLM in holders[CREDENTIAL_SECRET]
 
@@ -188,18 +190,28 @@ def stub_path(tmp_path) -> Path:
     directory = tmp_path / "bin"
     directory.mkdir()
     stub = directory / "litellm"
-    stub.write_text('#!/bin/sh\n[ "$ANTHROPIC_API_KEY" = "$(cat "$KEY_FILE")" ] && echo started\n')
+    stub.write_text(
+        '#!/bin/sh\n[ "$ANTHROPIC_API_KEY" = "$(cat "$KEY_FILE")" ] '
+        '&& [ "$LITELLM_MASTER_KEY" = "$(cat "$MASTER_FILE")" ] && echo started\n'
+    )
     stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
     return directory
 
 
-def start(stub_path, key_file: Path):
+def start(stub_path, key_file: Path, master_file: Path | None = None):
+    if master_file is None:
+        master_file = key_file.with_name("master")
+        master_file.write_text(secrets.token_urlsafe(32) + "\n")
     return subprocess.run(
-        [str(LITELLM_DIRECTORY / "start.sh"), str(key_file)],
+        [str(LITELLM_DIRECTORY / "start.sh"), str(key_file), str(master_file)],
         capture_output=True,
         text=True,
         check=False,
-        env={"PATH": f"{stub_path}:/usr/bin:/bin", "KEY_FILE": str(key_file)},
+        env={
+            "PATH": f"{stub_path}:/usr/bin:/bin",
+            "KEY_FILE": str(key_file),
+            "MASTER_FILE": str(master_file),
+        },
     )
 
 
@@ -309,3 +321,16 @@ def test_the_canary_reports_a_refusal_by_its_status_alone(canary, monkeypatch):
     code, lines = run_canary(canary, monkeypatch, StreamedResponse(403, []))
 
     assert (code, lines) == (1, ["answer 403", "marker no"])
+
+
+def test_start_refuses_a_bad_master_key_file_naming_the_path_only(stub_path, tmp_path):
+    key_file, master_file = tmp_path / "key", tmp_path / "master"
+    key_file.write_text(secrets.token_urlsafe(32) + "\n")
+    master_file.write_text("two\nlines\n")
+
+    result = start(stub_path, key_file, master_file)
+
+    assert result.returncode != 0
+    assert result.stderr.strip().splitlines() == [
+        f"litellm: {master_file} does not hold exactly one printable key line"
+    ]

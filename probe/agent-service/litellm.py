@@ -12,9 +12,7 @@ Measured: a run takes about a minute and its teardown a few seconds (K 30 s, CAP
 The scratch HOME holds the throwaway secrets (random values, never printed): the provider key,
 the service credential, the CA and the signing pair. The fake provider (alias api.anthropic.com)
 and the fake issuer (alias auth.hallucinai.de) hold certificates of the scratch CA, which
-LiteLLM's SSL_CERT_FILE trusts. The one deviation from production: the overlay gives LiteLLM a
-random scratch master key, because LiteLLM refuses to boot without one and the shipped config
-names none (the open decision of #768; the probe then drops this line or ships a key).
+LiteLLM's SSL_CERT_FILE trusts. The scratch HOME also holds LiteLLM's master key file.
 
 Evidence: F is the fake provider's request log, R the canary's verdict lines, I `docker inspect`,
 LA LiteLLM's access log. Exit 0: every cell held.
@@ -87,7 +85,7 @@ class LitellmProbe(IssuerProbe):
 
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch)
-        self.profiles.append("litellm")
+        self.profiles = (*self.profiles, "litellm")
         # The throwaway clients and the fakes run the stand-in's plain Python, not the service image
         # IssuerProbe resolved (whose entrypoint is the service).
         resolved = json.loads(self.compose("config", "--format", "json").stdout)
@@ -115,6 +113,7 @@ class LitellmProbe(IssuerProbe):
     def write_secrets(self, home: Path) -> None:
         for relative, text in (
             (Path(".secrets/litellm/anthropic"), self.provider_key + "\n"),
+            (Path(".secrets/litellm/master-key"), f"sk-{secrets.token_hex(32)}\n"),
             (
                 Path(".secrets/agent-service/api/credential.json"),
                 json.dumps({"shared_key": self.credential}),
@@ -195,10 +194,7 @@ class LitellmProbe(IssuerProbe):
                 "services": {
                     SERVICE: {"secrets": ["agent_service_api_credential"]},
                     LITELLM: {
-                        "environment": {
-                            "SSL_CERT_FILE": "/probe/ca.crt",
-                            "LITELLM_MASTER_KEY": f"sk-{secrets.token_hex(16)}",
-                        },
+                        "environment": {"SSL_CERT_FILE": "/probe/ca.crt"},
                         "volumes": [
                             {"type": "bind", "source": str(self.litellm_config),
                              "target": "/etc/litellm/config.yaml", "read_only": True},

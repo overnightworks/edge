@@ -215,8 +215,9 @@ has no `[api]` table.
   the front itself, so LiteLLM's own unauthenticated routes are unreachable. LiteLLM's hook
   (`agent-service/litellm/auth.py`, deciding in `gate.py`) allows that one route with the service
   credential as bearer, no query string and exactly the body keys `model`, `messages` and
-  `tools`, which agent-runtime's one posting function sends. LiteLLM has no database, no master key
-  and no limiter; messages are not logged.
+  `tools`, which agent-runtime's one posting function sends. LiteLLM has no database and no limiter and
+  messages are not logged; it needs a master key to boot, a third file secret that no client
+  holds, so its admin routes stay closed.
 - **What stays reachable.** The front sees every message and the service credential in memory; a
   compromised front could spend credit through LiteLLM, bounded by the prepaid credit. The API
   route has no concurrency cap until agent-runtime#634. LiteLLM reaches only the front and, through

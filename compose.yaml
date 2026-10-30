@@ -429,8 +429,11 @@ services:
       LITELLM_TELEMETRY: "False"
     tmpfs:
       - /tmp:uid=1000,gid=1000,mode=0700,size=64m,nosuid,nodev
-    secrets: [litellm_anthropic_key, agent_service_api_credential]
-    entrypoint: [/etc/litellm/start.sh, /run/secrets/litellm_anthropic_key]
+    secrets: [litellm_anthropic_key, litellm_master_key, agent_service_api_credential]
+    entrypoint:
+      - /etc/litellm/start.sh
+      - /run/secrets/litellm_anthropic_key
+      - /run/secrets/litellm_master_key
     volumes:
       - ./agent-service/litellm/config.yaml:/etc/litellm/config.yaml:ro
       - ./agent-service/litellm/auth.py:/etc/litellm/auth.py:ro
@@ -564,6 +567,10 @@ secrets:
   # agent-service/setup makes it; only the private file reaches the service, never its folder.
   agent_service_signing_key:
     file: ${HOME}/.secrets/agent-service/signing/private.pem
+  # LiteLLM refuses to boot without a master key; this one is generated, read by litellm alone
+  # and known to no client, so its admin routes stay closed.
+  litellm_master_key:
+    file: ${HOME}/.secrets/litellm/master-key
   # The provider key, read by litellm alone, and the service credential (JSON with `shared_key`),
   # read by litellm and, once the service has an [api] table, by agent-service.
   litellm_anthropic_key:

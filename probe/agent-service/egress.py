@@ -265,6 +265,8 @@ CLIENT_PROGRAM = (
 
 
 class Probe:
+    profiles: tuple[str, ...] = ("agent-service", "agent-probe")
+
     def __init__(self, scratch: Path, target: Target = Target.STAND_IN) -> None:
         expect(PROJECT != "edge", "the probe must never run in the live project")
         expect(not any(scratch.iterdir()), f"{scratch} is not empty")
@@ -289,7 +291,6 @@ class Probe:
             "PROBE_EGRESS_STATIC": str(self.static_file),
         }
         self.overlays = [OVERLAY]
-        self.profiles = ["agent-service", "agent-probe"]
         self.guard = edge_copy.NetworkGuard(PROJECT, lambda command: self.run(command).stdout)
         self.windows: list[subprocess.Popen] = []
         self.throwaways = 0
