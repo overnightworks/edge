@@ -81,7 +81,7 @@ def main(role: str) -> None:
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain("/fake/cert.pem", "/fake/key.pem")
     server.socket = context.wrap_socket(server.socket, server_side=True)
-    server.serve_forever()
+    server.serve_forever()  # NOSONAR(S5332) TLS: the context above wraps the socket
 
 
 if __name__ == "__main__":
