@@ -39,6 +39,8 @@ from run_client import (
 from service_log import LogClasses
 from tree_census import Skip
 
+from hal.output import write_line
+
 TOKEN_LIMIT = 16 * 1024
 TOKEN_FILE = "token"  # noqa: S105 - a name or message text and no credential
 ROOTS_CELL = "S00 (roots)"
@@ -208,7 +210,7 @@ def guarded(stage: str, step: Callable[[], object], failed: list[str]) -> bool:
         step()
     # an exception's text may carry a secret, so only `describe` speaks of it
     except Exception as problem:
-        print(describe(stage, problem), flush=True)
+        write_line(describe(stage, problem), flush=True)
         failed.append(stage)
         return False
     return True
@@ -234,12 +236,12 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
         try:
             return guarded(name, step, stopped)
         except KeyboardInterrupt:
-            print("interrupted", flush=True)
+            write_line("interrupted", flush=True)
             stopped.append(name)
             return False
 
     if not stage("setup", lambda: probe.append(open_probe())):
-        print("PROBE FAILED: setup", flush=True)
+        write_line("PROBE FAILED: setup", flush=True)
         return 1
     run = probe[0]
     entered = stage("setup", run.__enter__)  # a failed enter tears itself down
@@ -254,9 +256,9 @@ def run_login(open_probe: Callable[[], LoginRun]) -> int:
             *(f"failed {name}" for name in (*stopped, *run.failed)),
             *(f"not driven {name}" for name in run.not_driven),
         ]
-        print(f"PROBE FAILED: held {', '.join(run.held)}; {'; '.join(problems)}", flush=True)
+        write_line(f"PROBE FAILED: held {', '.join(run.held)}; {'; '.join(problems)}", flush=True)
         return 1
-    print(f"PROBE PASSED: held {', '.join(run.held)}", flush=True)
+    write_line(f"PROBE PASSED: held {', '.join(run.held)}", flush=True)
     return 0
 
 

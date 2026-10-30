@@ -10,6 +10,8 @@ from collections.abc import Mapping
 
 from edge_copy import expect
 
+from hal.output import write_line
+
 VOLUME = "    volumes: [data:/data]\n"
 
 
@@ -48,7 +50,7 @@ class AliasRouting:
             probe.ask("/version", host=f"other.{self.domain}")[0] == 404,
             "R3: an unknown host answers",
         )
-        print("R3 held: Host = name and Host = alias reach the app, an unknown host gets 404")
+        write_line("R3 held: Host = name and Host = alias reach the app, an unknown host gets 404")
         probe.release(dropped)
         probe.apply()
         probe.serves(dropped)
@@ -57,6 +59,6 @@ class AliasRouting:
         )
         errors = self.traefik_errors_since(stamp)
         expect(not errors, f"R4: Traefik logged {errors[:2]}")
-        print(
+        write_line(
             "R3 held: without the label only the name routes; R4 held: no ERR line in Traefik's log"
         )

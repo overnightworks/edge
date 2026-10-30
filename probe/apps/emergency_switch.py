@@ -15,6 +15,7 @@ from collections.abc import Mapping
 import edge_copy
 from edge_copy import HAL_FAILURE, HAL_OK, expect
 
+from hal.output import write_line
 from hal.stack import checkout
 
 
@@ -130,7 +131,9 @@ class EmergencySwitch:
         again = self.hal_without_terminal("stop", probe.key)
         expect(f"· {probe.key} already off since" in squeezed(again), f"D1 again: {again[-300:]}")
         expect(self.barrier_mark() == probe.key, "D1: the repeated stop lost the barrier")
-        print("D1 held: hal stop without a terminal wrote the marker and a proven barrier, stopped")
+        write_line(
+            "D1 held: hal stop without a terminal wrote the marker and a proven barrier, stopped"
+        )
 
     def stopped_app_stays_stopped(self) -> None:
         probe = self.probe
@@ -148,7 +151,7 @@ class EmergencySwitch:
             self.marker.read_bytes() == marker and self.barrier_file.read_bytes() == barrier_bytes,
             "D2: the marker or the barrier changed",
         )
-        print("D2 held: a stopped app with a newer tag waiting stays stopped, nothing fetched")
+        write_line("D2 held: a stopped app with a newer tag waiting stays stopped, nothing fetched")
 
     def start(self) -> None:
         probe = self.probe
@@ -163,7 +166,9 @@ class EmergencySwitch:
         expect(probe.only()["health"] == "healthy", "D7: not healthy")
         probe.serves(probe.deployed()["tag"])
         self.set_hosts(False)
-        print("D7 held: hal start (yes) started, waited for health, opened; refused while disabled")
+        write_line(
+            "D7 held: hal start (yes) started, waited for health, opened; refused while disabled"
+        )
 
     def stop_during_the_build(self) -> None:
         probe = self.probe
@@ -198,7 +203,7 @@ class EmergencySwitch:
         self.set_hosts(False)
         probe.apply()
         expect(probe.deployed()["tag"] == tag, "D4: the app was not updated after the start")
-        print(
+        write_line(
             "D4 held: a stop during the build ran no create, kept the record and the barrier "
             f"Traefik answers (hal 3); hal stop took {stopped_in:.0f} s"
         )
