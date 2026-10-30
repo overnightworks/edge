@@ -279,10 +279,13 @@ class Stream(Enum):
     STDERR = "stderr"
 
 
-def write_line(text: str, *, stream: Stream = Stream.STDOUT, end: str = "\n") -> None:
+def write_line(
+    text: str, *, stream: Stream = Stream.STDOUT, end: str = "\n", flush: bool = False
+) -> None:
     """`text` as one line on `stream`, exactly as given: for a line whose form its caller owns (a
-    JSON document, a listing, a diagnostic that names its own program)."""
-    print(text, end=end, file=sys.stderr if stream is Stream.STDERR else sys.stdout)
+    JSON document, a listing, a diagnostic that names its own program); `flush` for a reader that
+    follows the output as it comes."""
+    print(text, end=end, file=sys.stderr if stream is Stream.STDERR else sys.stdout, flush=flush)
 
 
 def confirmed(purpose: str) -> bool:
