@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import BinaryIO
 
 import pytest
-from workstation_secrets_support import never_run
-from workstation_support import FAKE_MISE, STALE_MISE, TASK_MESSAGE, FakeClock, RecordingDownload, Sandbox, bin_entries, cut_off_mid_transfer, fail_to_write, plant_mise
-from workstation_support import run_captured_hal_setup, run_hal_setup, serve_half, serve_wrong_bytes, time_out
+from support.workstation_secrets_support import never_run
+from support.workstation_support import FAKE_MISE, STALE_MISE, TASK_MESSAGE, FakeClock, RecordingDownload, Sandbox, bin_entries, cut_off_mid_transfer, fail_to_write, plant_mise
+from support.workstation_support import run_captured_hal_setup, run_hal_setup, serve_half, serve_wrong_bytes, time_out
 
 import hal.workstation
 from hal import cli as hal_cli

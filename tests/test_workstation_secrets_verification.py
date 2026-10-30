@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from workstation_secrets_support import FakeTerminal, never_run, run_wizard, squeezed
+from support.workstation_secrets_support import FakeTerminal, never_run, run_wizard, squeezed
 from support import workstation_secrets_wizard
 from support.workstation_secrets_wizard import PASSPHRASE_FILE, PASTED_VALUE, files_under
 

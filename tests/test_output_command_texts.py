@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from git_support import SOURCE
+from support.git_support import SOURCE
 
 from hal import cli
 from hal.output.command import PROGRAM, Verb, command

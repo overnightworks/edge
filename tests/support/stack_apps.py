@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 import support.throwaway_home as throwaway_home
-from app_support import (
+from support.app_support import (
     FLEET,
     KEY,
     Origin,

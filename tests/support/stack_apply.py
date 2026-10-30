@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
-from git_support import (
+from support.git_support import (
     committed_main,
     plain_git,
     with_origin,

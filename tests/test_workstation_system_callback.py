@@ -7,7 +7,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 import pytest
-from workstation_support import StubSudo
+from support.workstation_support import StubSudo
 
 from hal.workstation import system_step
 from hal.workstation.setup import ANSIBLE_SOURCE

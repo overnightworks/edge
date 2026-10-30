@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
-from workstation_support import RunnerWithCleanLogs, home_check
+from support.git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
+from support.workstation_support import RunnerWithCleanLogs, home_check
 
 from hal import check_commands, cli, exposure_rows
 from hal.exposure import inspection

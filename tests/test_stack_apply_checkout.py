@@ -2,7 +2,7 @@
 real git repository on the scripted boundaries of `tests/support/stack_apply.py`."""
 
 import pytest
-from git_support import advance, checkout_state, subjects
+from support.git_support import advance, checkout_state, subjects
 from support.stack_apply import (
     DISABLED,
     ENABLED,

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from workstation_support import PASSWORD_CANARY, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, write_backup_status, write_hal_config
+from support.workstation_support import PASSWORD_CANARY, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, write_backup_status, write_hal_config
 
 from hal import alarm_commands
 from hal import cli as hal_cli

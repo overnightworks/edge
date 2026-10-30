@@ -14,7 +14,7 @@ from pathlib import Path
 
 from hal.stack import checkout
 
-SOURCE = Path(__file__).resolve().parents[1] / "src"
+SOURCE = Path(__file__).resolve().parents[2] / "src"
 HAL_SOURCE = SOURCE / "hal"
 IGNORED = ".env\n/dynamic/switch-*\n.venv/\n__pycache__/\n"
 # What a fetch of origin's main may write to `.git`, by path or directory (#98 rule 5).

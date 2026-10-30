@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from workstation_support import Sandbox, run_hal_setup, split_at_the_prompt
+from support.workstation_support import Sandbox, run_hal_setup, split_at_the_prompt
 
 from hal.grammar import ExitCode
 from hal.workstation.layout import Layout

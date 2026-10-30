@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pytest
-from workstation_support import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status, write_hal_config
+from support.workstation_support import INSPECT_CANARY, PASSWORD_CANARY, REPORT_DISPLAY, TEST_MANIFEST, ProbeThatCannotStart, RunnerWithCleanLogs, Sandbox, home_check, message_of, no_container_restarts, restarting_containers, set_up_mail, write_backup_status, write_hal_config
 
 from hal.workstation import check, mail
 from hal.workstation.layout import Layout, run_command

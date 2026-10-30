@@ -11,7 +11,7 @@
 "docs/backup.md" = 5
 "src/hal/backup/runner.py" = 1
 "src/hal/backup/settings.py" = 1
-"tests/backup_support.py" = 3
+"tests/support/backup_support.py" = 3
 "tests/test_backup_restore_safety.py" = 4
 "tests/test_backup_runner.py" = 11
 "tests/test_backup_sqlite.py" = 2

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 from support.workstation_secrets_report import findings_of, report_of
-from workstation_secrets_support import (
+from support.workstation_secrets_support import (
     FakeCli,
     FakeSync,
     FakeTerminal,
@@ -19,7 +19,7 @@ from workstation_secrets_support import (
     run_wizard,
     squeezed,
 )
-from workstation_support import FakeProbe, run_hal_secrets
+from support.workstation_support import FakeProbe, run_hal_secrets
 
 from hal.output.command import Verb, command
 from hal.workstation import secrets_setup, secrets_view
