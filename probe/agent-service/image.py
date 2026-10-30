@@ -52,7 +52,7 @@ SHIPPED_CONFIGURATION = REPOSITORY / "agent-service" / "service.toml"
 # The ARG-name prefix of each provider's CLI pins in the Dockerfile, and what its `--version` says.
 DOCKERFILE_PREFIXES = {"anthropic": "CLAUDE", "openai": "CODEX"}
 VERSION_REPORTS = {"anthropic": "{version} (Claude Code)", "openai": "codex-cli {version}"}
-RUN_STEP = re.compile(r"^RUN .*?(?=^\S)", re.MULTILINE | re.DOTALL)
+RUN_STEP = re.compile(r"^RUN [^\n]*(?:\n(?!\S)[^\n]*)*", re.MULTILINE)
 SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
 BUILD_SECONDS = 1500
