@@ -648,7 +648,7 @@ below and rsyslog's conffiles are home's own and are not backed up. `/etc/docker
   with it, when the rescue's restart fails too; and a run interrupted between the write and the rescue with Docker down
   (a hanging restart skips the rescue on Ctrl-C) makes the next apply refuse, because Docker does not answer. Then remove
   `log-driver` from `/etc/docker/daemon.json` by hand; the backup holds the old bytes.
-- **Proof.** `scripts/system-proof/run.sh <edge checkout> <evidence dir>` drives
+- **Proof.** `flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>`, once with part `fresh` and once with `prepared`, drives
   the step in a throwaway systemd container, never on this PC. Its cells D1-D8 also drive the mail of `hal check` there:
   the real `msmtp` against a throwaway SMTP sink and a test CA, with STARTTLS, implicit TLS, no TLS, an untrusted certificate,
   a rejected login and a stalled server. Its cells R0-R7 drive rsyslog's removal there: the image carries rsyslog, an

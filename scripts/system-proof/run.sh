@@ -3,19 +3,28 @@
 # account (#331, cells A1-1 to A1-9), of the mail of `hal check` (#390, cells D1-D8), of rsyslog's removal (#422, cells R0-R7) and of a real Docker engine and the journal as its default log driver (DK1-DK7, #432): a throwaway Ubuntu 26.04 with systemd as PID 1, never the live PC, never the
 # real /etc or ~/.secrets.
 #
-#   scripts/system-proof/run.sh <edge checkout> <evidence dir>
+#   flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 \
+#       scripts/system-proof/run.sh <edge checkout> <evidence dir> <part>
 #
-# <edge checkout> is a clone whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it.
-# It takes /tmp/probe-stack.lock itself (flock -o, so no child holds it), waits while the load is high, keeps the
-# container ids in the evidence dir and removes both containers, with their volumes and nothing else, on exit. The sudo password is generated per run.
+# <part> is `fresh` (the first container: install, fresh, both reboots and their stages) or `prepared` (the second:
+# install, prepared, both sudos); each call runs and judges only its own container's cells. <edge checkout> is a clone
+# whose `origin/main` (or $EDGE_REF) carries tunnel/; only `git archive` reads it.
+# The script takes no lock: the fleet form above does. CAP 1800 plus K 30 stays within 1830, and K 30 is more than the
+# teardown of a cut run needs (it left no container within 30 s). Measured under that form on a loaded machine: wheel
+# and image build about 15 s, `fresh` about 1725 s; both parts in one call needed more than the cap, so the proof is
+# cut by its two containers. The wait for a low load and every stage run inside the cap, so the cap bounds them, and
+# the EXIT trap runs on its TERM.
+# It keeps the container ids in the evidence dir and removes its container, with its volumes and nothing else, on exit.
+# The sudo password is generated per run.
 set -euo pipefail
-
-if [[ -z ${SYSTEM_PROOF_LOCKED:-} ]]; then
-    exec env SYSTEM_PROOF_LOCKED=1 flock -o /tmp/probe-stack.lock "$0" "$@"
-fi
 
 edge_checkout=${1:?the edge checkout to read tunnel/ from}
 evidence=${2:?the directory for the evidence}
+part=${3:?the part to run: fresh or prepared}
+case $part in
+    fresh | prepared) ;;
+    *) echo "usage: run.sh <edge checkout> <evidence dir> <fresh|prepared>" >&2; exit 2 ;;
+esac
 edge_ref=${EDGE_REF:-origin/main}
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
@@ -81,23 +90,28 @@ reboot() {
 }
 
 : >"$evidence/cells.txt"
-fresh=$(start_container fresh)
-stage "$fresh" install
-stage "$fresh" fresh
-reboot "$fresh"
-stage "$fresh" after-marker-reboot
-reboot "$fresh"
-stage "$fresh" after-unmarked-reboot
+container=$(start_container "$part")
+stage "$container" install
+if [[ $part == fresh ]]; then
+    stage "$container" fresh
+    reboot "$container"
+    stage "$container" after-marker-reboot
+    reboot "$container"
+    stage "$container" after-unmarked-reboot
+else
+    stage "$container" prepared
+    stage "$container" sudo-classic
+    stage "$container" sudo-rs
+fi
 
-prepared=$(start_container prepared)
-stage "$prepared" install
-stage "$prepared" prepared
-stage "$prepared" sudo-classic
-stage "$prepared" sudo-rs
-
-judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b and P1-P10 under both sudos (suffix c and r) printed a held line and none printed a failed one
-    local cells=$1 cell missing=()
-    for cell in {1..13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b P{1..10}{c,r}; do
+judge() {  # judge <part> <cells file>: every cell of the part printed a held line and none printed a failed one
+    # fresh: cells 1 and 3-13, S1, A1-1 to A1-9, D1-D8, R0-R7, DK1-DK7, T1-T5, T5b; prepared: cell 2 and P1-P10 under both sudos (suffix c and r)
+    local part=$1 cells=$2 cell missing=() expected
+    case $part in
+        fresh) expected=({1,3,4,5,6,7,8,9,10,11,12,13} S1 A1-{1..9} D{1..8} R{0..7} DK{1..7} T{1..5} T5b) ;;
+        prepared) expected=(2 P{1..10}{c,r}) ;;
+    esac
+    for cell in "${expected[@]}"; do
         grep -q "^cell $cell: held: " "$cells" || missing+=("$cell")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -111,4 +125,4 @@ judge() {  # judge <cells file>: every cell 1-13, S1, A1-1 to A1-9, D1-D8, R0-R7
     return 0
 }
 
-judge "$evidence/cells.txt"
+judge "$part" "$evidence/cells.txt"
