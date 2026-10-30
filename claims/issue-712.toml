@@ -1,0 +1,8 @@
+claim_id = "0b9b4d386f1b4f46a2e01fbb962673a4"
+agent = "Claude 5763e9c2-b20b-4993-a623-4a0d99f67142"
+role = "builder"
+base = "ec12836abddec46e45f71527e3bd756790240b0c"
+branch = "claude/issue-712-s6-of-472-probe-markers-and-shebangs"
+scope = ["probe/apps/alias_routing.py", "probe/apps/emergency_switch.py", "probe/apps/probe.py", "probe/keycloak/backchannel_cell.py", "probe/keycloak/backchannel_client.py", "probe/keycloak/device_grant_cell.py", "probe/keycloak/probe.py", "probe/keycloak/test_rp.py", "probe/step-ca/health.py", "probe/step-ca/mcp_networks.py", "probe/step-ca/probe.py", "probe/switches/built_image.py", "probe/switches/probe.py"]
+opened_commit = "a9f8758fc3d5eecb683c16024173701aeaf38a55"
+whole_reason = "One program family: thirteen probe files whose findings share one rule set and one reasoned-marker form; each file is a one-line edit per finding, and a split would pay thirteen claims for them."
