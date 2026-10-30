@@ -247,8 +247,9 @@ def test_a_line_that_is_not_a_json_object_is_kept_apart_and_other_types_are_igno
     ],
 )
 def test_a_diagnostic_without_severity_or_summary_is_refused_not_guessed(broken):
+    lines = stream_lines(diagnostic(), broken)
     with pytest.raises(tofu.MalformedPlanStream):
-        tofu.read_plan_stream(stream_lines(diagnostic(), broken), {})
+        tofu.read_plan_stream(lines, {})
 
 
 def test_a_missing_detail_reads_as_empty():

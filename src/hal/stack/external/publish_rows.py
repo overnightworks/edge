@@ -36,19 +36,17 @@ def warning_rows(stream: tofu.PlanStream, token_values: dict[str, str]) -> tuple
     )
 
 
-def unparsed_rows(stream: tofu.PlanStream) -> tuple[Row, ...]:
+def unparsed_row(stream: tofu.PlanStream) -> Row | None:
     """One warning row for the lines tofu wrote outside its stream, which a plan that went on must
-    not swallow; none when there are none."""
+    not swallow; None when there are none."""
     if not stream.unparsed:
-        return ()
-    return (
-        Row(
-            Glyph.NEEDS_YOU,
-            SUBJECT,
-            PublishEvent.WARNING,
-            "tofu printed text outside its stream",
-            details=stream.unparsed,
-        ),
+        return None
+    return Row(
+        Glyph.NEEDS_YOU,
+        SUBJECT,
+        PublishEvent.WARNING,
+        "tofu printed text outside its stream",
+        details=stream.unparsed,
     )
 
 
