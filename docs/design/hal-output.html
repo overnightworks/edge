@@ -1129,14 +1129,14 @@ Type <span class="w">yes</span> to apply 1 change: yes
 <span class="g">  +</span> app.example.de  create         <span class="d">CNAME → tunnel</span>
 <span class="b">  ~</span> www.example.de  update         <span class="d">ttl 300 → auto</span>
 <span class="r">  -</span> old.example.de  delete         <span class="d">A 203.0.113.7</span>
-Type <span class="w">yes</span> to apply 8 changes: <span class="u">yes</span>
+Type <span class="w">yes</span> to apply 8 changes: yes
 <span class="d">…</span></pre>
         <p class="was">Acht Zeilen: drei Setups, eine Rechtsseite, ein Einschalten, drei Cloudflare-Zeilen mit dem Lese-Token; <code>~</code>/<code>!</code>-Zeilen stehen sonst wie heute. Nichts läuft vor diesem yes.</p>
       </figure>
       <figure id="f-one-yes-handoff">
         <figcaption><span class="tag new">neu #361</span> Y7: nach dem yes übergibt hal jedes Setup an dein Terminal und nimmt es danach wieder auf</figcaption>
 <pre class="term"><span class="d">…</span>
-Type <span class="w">yes</span> to apply 8 changes: <span class="u">yes</span>
+Type <span class="w">yes</span> to apply 8 changes: yes
 <span class="c">  ›</span> step-ca         setup          <span class="d">step-ca/init runs in your terminal</span>
 <span class="sys">Password for the CA key:</span>  <span class="n">← die Frage des Skripts, nicht von hal</span>
 <span class="g">  ✓</span> step-ca         set up         <span class="d">CA key made · 6s</span>
@@ -1157,12 +1157,12 @@ Type <span class="w">yes</span> to apply 8 changes: <span class="u">yes</span>
 <span class="g">  +</span> keycloak        setup          <span class="d">keycloak/go-live · starts Keycloak</span>
 <span class="hd">units</span>
 <span class="y">  !</span> keycloak        realm skipped  <span class="d">the realm observer failed (…)</span>
-Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
+Type <span class="w">yes</span> to apply 1 change: yes
 <span class="c">  ›</span> keycloak        setup          <span class="d">keycloak/go-live runs in your terminal</span>
 <span class="g">  ✓</span> keycloak        set up         <span class="d">Keycloak answers · 41s</span>
 <span class="hd">units</span>
-<span class="b">  ~</span> keycloak        realm          <span class="d">1 change · group /ops added</span>
-Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
+<span class="b">  ~</span> keycloak        realm apply    <span class="d">keycloak/*.yaml · group /ops added</span>
+Type <span class="w">yes</span> to apply 1 change: yes
 <span class="g">  ✓</span> keycloak        realm applied  <span class="d">1 change · snapshot 37c2a560 proven · 11s</span>
 <span class="d">…</span></pre>
         <p class="was">Das erste yes zählt nur die Setup-Zeile; die gelbe Realm-Zeile zählt nicht. Nach dem Setup liest hal neu: nur die Zeile, die der gezeigte Plan nicht hatte, wird gedruckt und gefragt. Hat der neue Plan keine solche Zeile, läuft hal ohne zweite Frage weiter.</p>
@@ -1170,7 +1170,7 @@ Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
       <figure id="f-one-yes-stop">
         <figcaption><span class="tag new">neu #361</span> Y2: ein Halt vor Cloudflare, <code>· Cloudflare not touched</code></figcaption>
 <pre class="term"><span class="d">…</span>
-Type <span class="w">yes</span> to apply 5 changes: <span class="u">yes</span>
+Type <span class="w">yes</span> to apply 5 changes: yes
 <span class="g">  ✓</span> legal           pages written  <span class="d">datenschutz, nutzungsbedingungen</span>
 <span class="hd">core</span>
 <span class="r">  ✗</span> traefik         not running    <span class="d">exited within 5s of the start</span>
@@ -1189,7 +1189,7 @@ Type <span class="w">yes</span> to apply 5 changes: <span class="u">yes</span>
 <span class="g">  +</span> app.example.de  create         <span class="d">CNAME → tunnel</span>
 <span class="b">  ~</span> www.example.de  update         <span class="d">ttl 300 → auto</span>
 <span class="r">  -</span> old.example.de  delete         <span class="d">A 203.0.113.7</span>
-Type <span class="w">yes</span> to apply 4 changes: <span class="u">yes</span></pre>
+Type <span class="w">yes</span> to apply 4 changes: yes</pre>
         <p class="was">Löschen und Ändern stehen wie bei tofu mit <code>-</code> und <code>~</code> da, mit dem Wert, der weicht. Die Zeilen zählen im einen yes.</p>
       </figure>
       <figure id="f-one-yes-cf-same">
@@ -1210,7 +1210,7 @@ Type <span class="w">yes</span> to apply 4 changes: <span class="u">yes</span></
 <span class="hd">cloudflare</span>
 <span class="y">  !</span> plan            changed        <span class="d">not what you saw: 1 new row · write token</span>
 <span class="g">  +</span> api.example.de  create         <span class="d">CNAME → tunnel</span>
-Type <span class="w">yes</span> to apply 1 change: <span class="u">yes</span>
+Type <span class="w">yes</span> to apply 1 change: yes
 <span class="g">  ✓</span> api.example.de  created        <span class="d">CNAME → tunnel · 2s</span>
 <span class="d">…</span></pre>
         <p class="was">Sagst du etwas anderes als genau <code>yes</code>, endet der Lauf mit <code>error: aborted, nothing changed in Cloudflare</code> und <code>next: hal apply</code>; der lokale Teil bleibt gemacht.</p>
