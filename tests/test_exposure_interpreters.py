@@ -1,5 +1,6 @@
 """A listener run by an interpreter is named by its script or module, and the allow-list agrees."""
 
+import json
 import subprocess
 
 import pytest
@@ -15,14 +16,50 @@ TWO_SCRIPTS = """\
 tcp LISTEN 0 128 0.0.0.0:8001 0.0.0.0:* users:(("python3.12",pid=501,fd=3)) <->
 tcp LISTEN 0 128 0.0.0.0:8002 0.0.0.0:* users:(("python3.12",pid=502,fd=3)) <->
 """
-NOT_AN_INTERPRETER = """\
-tcp LISTEN 0 128 0.0.0.0:22 0.0.0.0:* users:(("sshd",pid=900,fd=3)) <->
-"""
 WSDD = ("python3", "/usr/bin/wsdd", "--no-host", "--discovery")
+PID = 4242
+
+
+def one_socket(process: str, protocol: str = "udp", port: int = 41000) -> str:
+    state = "LISTEN" if protocol == "tcp" else "UNCONN"
+    owner = f'users:(("{process}",pid={PID},fd=3))'
+    return f"{protocol} {state} 0 0 0.0.0.0:{port} 0.0.0.0:* {owner} <->\n"
 
 
 def allowing(owner: str) -> str:
     return f'[[allow]]\nprotocol = "udp"\nowner = "{owner}"\nreason = "a known listener"\n'
+
+
+def publishing(port: int) -> str:
+    """`docker inspect` of one running container that publishes a TCP port on every address."""
+    return json.dumps(
+        [
+            {
+                "Name": "/web",
+                "State": {"Running": True},
+                "Config": {"ExposedPorts": {}, "Labels": None},
+                "HostConfig": {
+                    "PublishAllPorts": False,
+                    "PortBindings": {f"{port}/tcp": [{"HostIp": "", "HostPort": str(port)}]},
+                },
+            }
+        ]
+    )
+
+
+@pytest.fixture
+def subjects_on(monkeypatch, tmp_path):
+    """The subject of each finding on a host with these sockets, command lines and allow-list."""
+
+    def inspect(sockets, read_command_line, allow_list="", docker="[]") -> list[str]:
+        monkeypatch.setattr(host, "docker_inspect_json", lambda: docker)
+        monkeypatch.setattr(host, "socket_listeners", lambda: sockets)
+        monkeypatch.setattr(host, "command_line", read_command_line)
+        allow_list_file = tmp_path / "allow-list.toml"
+        allow_list_file.write_text(allow_list, encoding="utf-8")
+        return [finding.subject for finding in inspection.inspect(allow_list_file)]
+
+    return inspect
 
 
 # (listener output, command lines by pid, allow-list, the subject of each finding)
@@ -51,6 +88,38 @@ CASES = {
         "",
         ["python3"] * 3,
     ),
+    **{
+        f"{' '.join(command_line[:2])} is inline code, so the interpreter is named": (
+            one_socket(command_line[0]),
+            {PID: command_line},
+            "",
+            [command_line[0]],
+        )
+        for command_line in (
+            ("perl", "-E", "say 1"),
+            ("node", "-p", "1+1"),
+            ("node", "--eval", "require('dgram')"),
+            ("node", "--print", "1+1"),
+        )
+    },
+    "an option's value before the script is not the script": (
+        one_socket("node"),
+        {PID: ("node", "--require", "./hook.js", "server.js")},
+        "",
+        ["server.js"],
+    ),
+    "a warning filter before the script is not the script": (
+        one_socket("python3"),
+        {PID: ("python3", "-W", "ignore", "app.py")},
+        "",
+        ["app.py"],
+    ),
+    "a process that is no interpreter is named by its process": (
+        one_socket("sshd", "tcp", 22),
+        {PID: ("sshd", "/usr/bin/other")},
+        "",
+        ["sshd"],
+    ),
     "two scripts under one interpreter are two programs": (
         TWO_SCRIPTS,
         {501: ("python3.12", "/srv/alpha.py"), 502: ("python3.12", "beta.py")},
@@ -69,6 +138,12 @@ CASES = {
         allowing("wsdd"),
         [],
     ),
+    "a script named like a system unit is not permitted by that unit's entry": (
+        one_socket("python3"),
+        {PID: ("python3", "/home/u/avahi-daemon.service")},
+        allowing("avahi-daemon.service"),
+        ["avahi-daemon.service"],
+    ),
 }
 
 
@@ -76,48 +151,28 @@ CASES = {
     ("sockets", "command_lines", "allow_list", "subjects"), CASES.values(), ids=CASES.keys()
 )
 def test_the_finding_names_the_program_the_listener_runs(
-    sockets, command_lines, allow_list, subjects, monkeypatch, tmp_path
+    sockets, command_lines, allow_list, subjects, subjects_on
 ):
-    monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
-    monkeypatch.setattr(host, "socket_listeners", lambda: sockets)
-    monkeypatch.setattr(host, "command_line", command_lines.get)
-    allow_list_file = tmp_path / "allow-list.toml"
-    allow_list_file.write_text(allow_list, encoding="utf-8")
-
-    findings = inspection.inspect(allow_list_file)
-
-    assert [finding.subject for finding in findings] == subjects
+    assert subjects_on(sockets, command_lines.get, allow_list) == subjects
 
 
-def test_a_command_line_is_read_once_per_process(monkeypatch, tmp_path):
+def test_a_script_named_like_dockers_unit_on_a_published_port_is_reported(subjects_on):
+    sockets = one_socket("python3", "tcp", 8080)
+    script = {PID: ("python3", "/home/u/docker.service")}
+
+    assert "docker.service" in subjects_on(sockets, script.get, docker=publishing(8080))
+
+
+def test_a_command_line_is_read_once_per_process(subjects_on):
     reads = []
 
     def read(pid: int) -> tuple[str, ...]:
         reads.append(pid)
         return WSDD
 
-    monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
-    monkeypatch.setattr(host, "socket_listeners", lambda: WSDD_SOCKETS)
-    monkeypatch.setattr(host, "command_line", read)
-    allow_list_file = tmp_path / "allow-list.toml"
-    allow_list_file.write_text("", encoding="utf-8")
-
-    inspection.inspect(allow_list_file)
+    subjects_on(WSDD_SOCKETS, read)
 
     assert reads == [93017]
-
-
-def test_no_command_line_is_read_for_a_process_that_is_no_interpreter(monkeypatch, tmp_path):
-    def read(pid: int) -> tuple[str, ...]:
-        raise AssertionError(f"read the command line of {pid}")
-
-    monkeypatch.setattr(host, "docker_inspect_json", lambda: "[]")
-    monkeypatch.setattr(host, "socket_listeners", lambda: NOT_AN_INTERPRETER)
-    monkeypatch.setattr(host, "command_line", read)
-    allow_list_file = tmp_path / "allow-list.toml"
-    allow_list_file.write_text("", encoding="utf-8")
-
-    assert [finding.subject for finding in inspection.inspect(allow_list_file)] == ["sshd"]
 
 
 def test_the_host_reads_the_arguments_a_running_process_was_started_with():

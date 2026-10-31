@@ -29,7 +29,7 @@ written) and reads `/proc/<pid>/cmdline` of a listener's process when it is an i
 Stopped containers count too, since their publications and labels return when they start; only the
 duplicate check looks at running containers alone. docker-proxy's socket for a running container's
 publication is not reported again as a listener, and `docker.service` never belongs on the allow-list.
-A listener run by an interpreter is named by its script or module (`wsdd`, not `python3`); an allow-list `owner` matches that name and the process name. When the command line cannot be read, or is inline code, the finding names the process.
+A listener run by an interpreter is named by its script or module (`wsdd`, not `python3`); an allow-list `owner` matches that name and the process name, but a script named like a systemd unit (`avahi-daemon.service`) never matches that unit's entry, since any user can name a script. When the command line cannot be read, or is inline code, the finding names the process.
 The rows name the subject, the protocol and a count, never an address, a port or the `problem` code;
 `--json` lists each socket. It is one object, `{"exposure": [...]}`, whose list is deduplicated and stably ordered, with objects holding `problem`, `subject`, `protocol`,
 `address`, `port` and `edge_name` (`null` where they do not apply; `port` is a string such as

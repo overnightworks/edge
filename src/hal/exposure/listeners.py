@@ -14,7 +14,7 @@ _LOCAL_ADDRESS_COLUMN = 4
 _SYSTEM_SLICE = "/system.slice/"
 _VERSION_SUFFIX = re.compile(r"[\d.]+$")
 _MODULE_OPTION = "-m"
-_INLINE_CODE_OPTIONS = ("-c", "-e")
+_INLINE_CODE_OPTIONS = frozenset({"-c", "-e", "-E", "-p", "--eval", "--print"})
 
 CommandLineReader = Callable[[int], tuple[str, ...] | None]
 
@@ -27,6 +27,39 @@ class Interpreter(StrEnum):
     NODEJS = "nodejs"
     PERL = "perl"
     RUBY = "ruby"
+
+
+# The options of each interpreter whose value is a separate argument before the script.
+_NODE_OPTIONS_WITH_VALUE = frozenset(
+    {"-r", "--require", "--import", "--loader", "-C", "--conditions"}
+)
+_OPTIONS_WITH_VALUE = {
+    Interpreter.PYTHON: frozenset({"-W", "-X", "--check-hash-based-pycs"}),
+    Interpreter.NODE: _NODE_OPTIONS_WITH_VALUE,
+    Interpreter.NODEJS: _NODE_OPTIONS_WITH_VALUE,
+    Interpreter.PERL: frozenset({"-I"}),
+    Interpreter.RUBY: frozenset({"-I", "-r", "-C"}),
+}
+
+
+class UnitType(StrEnum):
+    """The unit types of systemd.unit(5); a name with one of them as suffix names a unit."""
+
+    SERVICE = ".service"
+    SOCKET = ".socket"
+    DEVICE = ".device"
+    MOUNT = ".mount"
+    AUTOMOUNT = ".automount"
+    SWAP = ".swap"
+    TARGET = ".target"
+    PATH = ".path"
+    TIMER = ".timer"
+    SLICE = ".slice"
+    SCOPE = ".scope"
+
+
+def _is_unit_name(name: str) -> bool:
+    return name.endswith(tuple(UnitType))
 
 
 @dataclass(frozen=True)
@@ -52,9 +85,11 @@ class Listener:
         """One name matches as user and as root: the process, the program an interpreter runs, or
         a unit of the system slice.
 
-        A unit elsewhere, such as another user's `systemd-run --user --unit`, never matches.
+        A unit elsewhere, such as another user's `systemd-run --user --unit`, never matches, and
+        neither does a script any user can name like a unit.
         """
-        return owner in (self.process, self.program, self._system_unit())
+        program = self.program if self.program and not _is_unit_name(self.program) else None
+        return owner in (self.process, program, self._system_unit())
 
     def _unit(self) -> str | None:
         return (self.cgroup.rpartition("/")[2] or None) if self.cgroup else None
@@ -70,9 +105,11 @@ def parse_listeners(ss_output: str, read_command_line: CommandLineReader) -> lis
     listeners = []
     for line in (line for line in ss_output.splitlines() if line.strip()):
         listener = _parse_line(line)
-        if listener.process_id is not None and _is_interpreter(listener.process):
+        interpreter = _interpreter(listener.process)
+        if listener.process_id is not None and interpreter is not None:
             if listener.process_id not in programs:
-                programs[listener.process_id] = _program_in(read_command_line(listener.process_id))
+                command_line = read_command_line(listener.process_id)
+                programs[listener.process_id] = _program_in(command_line, interpreter)
             listener = replace(listener, program=programs[listener.process_id])
         listeners.append(listener)
     return listeners
@@ -100,20 +137,25 @@ def _parse_columns(line: str) -> Listener:
     )
 
 
-def _is_interpreter(process: str | None) -> bool:
-    return process is not None and _VERSION_SUFFIX.sub("", process) in set(Interpreter)
+def _interpreter(process: str | None) -> Interpreter | None:
+    if process is None:
+        return None
+    name = _VERSION_SUFFIX.sub("", process)
+    return Interpreter(name) if name in set(Interpreter) else None
 
 
-def _program_in(command_line: tuple[str, ...] | None) -> str | None:
-    """The module after `-m`, else the first argument that is no option, as its file name;
-    None for inline code or when no command line could be read."""
+def _program_in(command_line: tuple[str, ...] | None, interpreter: Interpreter) -> str | None:
+    """The module after `-m`, else the first argument that is neither an option nor its value, as
+    its file name; None for inline code or when no command line could be read."""
     arguments = iter(command_line[1:] if command_line else ())
     for argument in arguments:
         if argument == _MODULE_OPTION:
             return next(arguments, None)
         if argument in _INLINE_CODE_OPTIONS:
             return None
-        if not argument.startswith("-"):
+        if argument in _OPTIONS_WITH_VALUE[interpreter]:
+            next(arguments, None)
+        elif not argument.startswith("-"):
             return PurePath(argument).name or None
     return None
 
