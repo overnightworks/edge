@@ -34,6 +34,7 @@ class DockerHost:
     images: set[str] = field(default_factory=set)
     commands: list[list[str]] = field(default_factory=list)
     answers: bool = True
+    tags_builds: bool = True
 
     def __call__(self, command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
@@ -51,7 +52,8 @@ class DockerHost:
                 command, 1, "[]", f"Error: No such image: {command[3]}"
             )
         assert command[:2] == ["docker", "build"], command
-        self.images.add(command[command.index("-t") + 1])
+        if self.tags_builds:
+            self.images.add(command[command.index("-t") + 1])
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def builds(self) -> list[list[str]]:
@@ -193,10 +195,26 @@ def lay_signing_pair(home: Path, index: int = 0) -> None:
         (directory / name).chmod(mode)
 
 
+def api_directory(home: Path) -> Path:
+    return home / ".secrets" / "agent-service" / "api"
+
+
+def credential_path(home: Path) -> Path:
+    return api_directory(home) / "credential.json"
+
+
+def lay_api_credential(home: Path, shared_key: str = "dummy-shared-key-0123456789") -> None:
+    directory = api_directory(home)
+    directory.mkdir(mode=0o700, exist_ok=True)
+    credential_path(home).write_text(json.dumps({"shared_key": shared_key}))
+    credential_path(home).chmod(0o600)
+
+
 def write_token(home: Path, contents: bytes | str, mode: int = 0o600) -> None:
-    """The login of a set-up host, with the signing pair beside it."""
+    """The login of a set-up host, with the signing pair and the API credential beside it."""
     make_login_directory(home)
     lay_signing_pair(home)
+    lay_api_credential(home)
     path = token_path(home)
     path.write_bytes(contents if isinstance(contents, bytes) else contents.encode())
     path.chmod(mode)
