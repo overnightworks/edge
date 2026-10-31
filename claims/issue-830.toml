@@ -1,0 +1,7 @@
+claim_id = "02c2deeaf4784017a97ced159bd9cac5"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "0784fc7a2d3d7810e7c5e42f7a5bee5149a3beed"
+branch = "claude/issue-830-the-daily-hal-check-report-shows-one-exp"
+scope = ["src/hal/check_commands.py", "src/hal/exposure_rows.py", "tests/test_workstation_check_exposure.py"]
+opened_commit = "bf8bbd719f9b1709be026dbedfe8b8cc057be71c"
