@@ -1,7 +1,8 @@
 """The agent service image probe (#192, cells I1 to I8).
 
-Builds the image without cache, then drives it as the PC would: a changed hash fails the build,
-both CLIs run as uid 1000 on a read-only root, the real entrypoint starts with both CLI tables
+Builds the image with `--no-cache` (the CLI files are served by digest), then drives it as the PC
+would: a changed hash fails the build, both CLIs run as uid 1000 on a read-only root, the real
+entrypoint starts with both CLI tables
 and answers an unauthenticated `POST /runs` with 401, the image holds no login, and the installed
 packages are exactly the lock's, and a dropped configuration field stops the start. Run it from
 the repository root, in the probe-stack lock:

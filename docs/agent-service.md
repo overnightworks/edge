@@ -25,7 +25,7 @@ A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git
 only writer of `requirements.txt`. A bump of either CLI changes its pin in the Dockerfile and its
 `version` in `service.toml`; every bump changes the image name, which carries the release and both CLI
 versions, in `compose.yaml` and in the build line above together. A base-image digest bump alone keeps
-the name, so setup builds nothing. `probe/agent-service/image.py` builds without cache and starts the
+the name, so setup builds nothing. `probe/agent-service/image.py` builds with `--no-cache` (the CLI files are served by digest) and starts the
 entrypoint from the clean image.
 
 ## The service
