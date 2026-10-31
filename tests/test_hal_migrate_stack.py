@@ -17,19 +17,22 @@ CORE = ("socket-proxy", "traefik")
 NAMED_VOLUMES = ("keycloak-data", "backup")  # fixed names `compose.yaml` gives its volumes
 STALE_VOLUMES = ("socket-proxy-run", "traefik-mcp-acme")
 OTHER_PROJECT_VOLUME = "hal-extra_socket-proxy-run"
+FIXED_NETWORKS = ("hal_app-one", "hal_app-two")  # networks `compose.yaml` gives a fixed name
 TEN_CONTAINERS = tuple(f"service-{number}" for number in range(10))
 
 
 @dataclass
 class FakeDocker:
     """The containers, networks and volumes of Compose projects. `named` is the project
-    `compose.yaml` names; `fail` holds the call to refuse: `down`, `up`, `volume rm <name>`."""
+    `compose.yaml` names; `fail` holds the call to refuse: `down`, `up`, `rm <volume>`, or
+    `down networks`, a `down` that removes the containers and fails before the networks."""
 
     named: str = "hal"
     containers: dict[str, list[str]] = field(default_factory=dict)
     networks: dict[str, list[str]] = field(default_factory=dict)
     volumes: dict[str, str] = field(default_factory=dict)  # name -> project label
     resolved_volumes: tuple[str, ...] = ()
+    resolved_networks: tuple[str, ...] = ()
     core_up: set[str] = field(default_factory=set)
     fail: set[str] = field(default_factory=set)
     calls: list[list[str]] = field(default_factory=list)
@@ -38,8 +41,15 @@ class FakeDocker:
         self.calls.append(argv)
         key = self._key(argv)
         if key in self.fail:
-            return subprocess.CompletedProcess(argv, 1, "", f"{key} refused by the daemon\n")
-        return subprocess.CompletedProcess(argv, 0, self._answer(argv), "")
+            return self._refused(argv, key)
+        answer = self._answer(argv)
+        if key == "down" and "down networks" in self.fail:
+            return self._refused(argv, "down networks")
+        return subprocess.CompletedProcess(argv, 0, answer, "")
+
+    @staticmethod
+    def _refused(argv, key):
+        return subprocess.CompletedProcess(argv, 1, "", f"{key} refused by the daemon\n")
 
     @staticmethod
     def _options(argv):
@@ -74,13 +84,16 @@ class FakeDocker:
             case "config":
                 services = {name: {} for name in CORE} | {"keycloak": {"profiles": ["auth"]}}
                 volumes = {key: {"name": key} for key in self.resolved_volumes}
-                return json.dumps({"name": self.named, "services": services, "volumes": volumes})
+                networks = {key: {"name": key} for key in self.resolved_networks}
+                resolved = {"services": services, "volumes": volumes, "networks": networks}
+                return json.dumps({"name": self.named, **resolved})
             case "ps":
                 running = [{"Service": name, "State": "running"} for name in CORE]
                 return json.dumps(running if project in self.core_up else [])
             case "down":
                 self.containers[project] = []
-                self.networks[project] = []
+                if "down networks" not in self.fail:
+                    self.networks[project] = []
             case "up":
                 self.core_up.add(project)
         return ""
@@ -100,17 +113,18 @@ class FakeDocker:
 
 
 def stack_of(source: str, named: str) -> FakeDocker:
-    """Ten containers and two networks of `source`, its four volumes of which `compose.yaml`
-    names two, and a volume of a project whose name is alike."""
+    """Ten containers of `source`, its four networks and four volumes of which `compose.yaml`
+    names two each, and a volume of a project whose name is alike."""
     volumes = {f"{source}_{name}": source for name in STALE_VOLUMES}
     volumes |= {name: source for name in NAMED_VOLUMES}
     volumes[OTHER_PROJECT_VOLUME] = "hal-extra"
     return FakeDocker(
         named=named,
         containers={source: [f"{source}-{name}" for name in TEN_CONTAINERS]},
-        networks={source: [f"{source}_default", f"{source}_internal"]},
+        networks={source: [f"{source}_default", f"{source}_internal", *FIXED_NETWORKS]},
         volumes=volumes,
         resolved_volumes=NAMED_VOLUMES,
+        resolved_networks=(f"{named}_default", *FIXED_NETWORKS),
     )
 
 
@@ -136,6 +150,19 @@ def through_cli(docker, capsys, monkeypatch):
     return run
 
 
+def plan_rows(out: str) -> dict[tuple[str, str], set[str]]:
+    """The rows of the plan shown before `Type yes`: (subject, event) -> the names below it."""
+    rows: dict[tuple[str, str], set[str]] = {}
+    names: set[str] = set()
+    for line in out.partition("Type yes")[0].splitlines():
+        if line.startswith("    "):
+            names.add(line.strip())
+        else:
+            _, subject, event, *_ = line.split()
+            names = rows.setdefault((subject, event), set())
+    return rows
+
+
 def removed_volumes(docker) -> set[str]:
     return {change.removeprefix("rm ") for change in docker.changes() if change.startswith("rm ")}
 
@@ -154,6 +181,17 @@ def test_the_plan_names_the_stack_and_one_yes_moves_it(through_cli, docker):
         "up",
     ]
     assert out.splitlines()[-1] == f"next: {command(Verb.APPLY)}"
+
+
+def test_the_plan_removes_what_compose_yaml_does_not_name_and_keeps_what_it_names(through_cli):
+    _, out, _ = through_cli()
+
+    rows = plan_rows(out)
+    assert rows[("volumes", "remove")] == {f"edge_{name}" for name in STALE_VOLUMES}
+    assert rows[("volumes", "keep")] == set(NAMED_VOLUMES)
+    assert rows[("networks", "remove")] == {"edge_default", "edge_internal"}
+    assert rows[("networks", "keep")] == set(FIXED_NETWORKS)
+    assert OTHER_PROJECT_VOLUME not in out.partition("Type yes")[0]
 
 
 def test_the_core_of_the_named_project_is_started_without_recreating(through_cli, docker):
@@ -189,22 +227,23 @@ def test_a_volume_of_another_project_with_a_similar_name_is_not_removed(through_
 
 
 @pytest.mark.parametrize(
-    ("answer", "at_terminal"),
-    [(None, False), ("Yes", True), ("y", True), (None, True)],
+    ("answer", "at_terminal", "expected"),
+    [
+        (None, False, ExitCode.REFUSED),
+        ("Yes", True, ExitCode.FINDINGS),
+        ("y", True, ExitCode.FINDINGS),
+        (None, True, ExitCode.FINDINGS),
+    ],
     ids=["no-terminal", "wrong-case", "short", "closed-stdin"],
 )
 def test_without_a_terminal_or_the_exact_yes_nothing_changes(
-    through_cli, docker, answer, at_terminal
+    through_cli, docker, answer, at_terminal, expected
 ):
     code, _, err = through_cli(answer=answer, at_terminal=at_terminal)
 
-    assert code != ExitCode.OK
+    assert code == expected
     assert "nothing changed" in err
     assert docker.changes() == []
-
-
-def test_no_terminal_exits_with_the_refusal_code(through_cli):
-    assert through_cli(at_terminal=False)[0] == ExitCode.REFUSED
 
 
 def test_a_compose_yaml_naming_neither_project_is_refused(through_cli, docker):
@@ -216,8 +255,10 @@ def test_a_compose_yaml_naming_neither_project_is_refused(through_cli, docker):
     assert "nothing changed" in err
 
 
-def test_nothing_of_the_source_and_a_running_core_is_nothing_to_move(through_cli, docker):
-    docker.named, docker.containers, docker.networks, docker.volumes = "edge", {}, {}, {}
+@pytest.mark.parametrize("networks", [(), FIXED_NETWORKS], ids=["none", "fixed-names"])
+def test_nothing_of_the_source_and_a_running_core_is_nothing_to_move(through_cli, docker, networks):
+    docker.named, docker.containers, docker.volumes = "edge", {}, {}
+    docker.networks, docker.resolved_networks = {"hal": list(networks)}, FIXED_NETWORKS
     docker.core_up = {"edge"}
 
     code, out, err = through_cli()
@@ -241,6 +282,10 @@ def test_a_failing_step_stops_before_the_next_and_names_the_cause(through_cli, d
     ("failing", "left"),
     [
         ("down", ["down", "rm edge_socket-proxy-run", "rm edge_traefik-mcp-acme", "up"]),
+        (
+            "down networks",
+            ["down", "rm edge_socket-proxy-run", "rm edge_traefik-mcp-acme", "up"],
+        ),
         ("rm edge_traefik-mcp-acme", ["rm edge_traefik-mcp-acme", "up"]),
         ("up", ["up"]),
     ],
@@ -275,10 +320,13 @@ def test_the_route_back_takes_hal_down_and_starts_the_core_of_edge(through_cli, 
     assert docker.core_up == {"edge"}
 
 
-def test_down_names_every_profile_and_the_source_and_never_removes_volumes(through_cli, docker):
+def test_down_names_every_profile_the_source_and_orphans_and_never_removes_volumes(
+    through_cli, docker
+):
     through_cli()
 
     argv = docker.call_of("down")
     assert argv[argv.index("-p") + 1] == "edge"
     assert argv[argv.index("--profile") + 1] == "*"
+    assert "--remove-orphans" in argv[argv.index("down") :]
     assert {"--volumes", "-v"}.isdisjoint(argv)

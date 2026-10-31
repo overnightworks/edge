@@ -4,7 +4,7 @@ is `stack`: the stack leaves the Compose project it ran under and starts under t
 
 import argparse
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 
 from hal.grammar import Asks, Command, ExitCode, add_dry_run
@@ -47,20 +47,18 @@ def real_world() -> World:
 
 
 def _write_plan(plan: Plan) -> None:
-    source = f"project {plan.source}"
-    if plan.containers:
-        write_row(Row(Glyph.REMOVE, "containers", Event.REMOVE, source, details=plan.containers))
-        write_row(Row(Glyph.REMOVE, "networks", Event.REMOVE, source, details=plan.networks))
-    if plan.kept_volumes:
-        kept = Row(Glyph.UNCHANGED, "volumes", Event.KEEP, "named by compose.yaml")
-        write_row(replace(kept, details=plan.kept_volumes))
-    if plan.removed_volumes:
-        write_row(
-            Row(Glyph.REMOVE, "volumes", Event.REMOVE, "not named by compose.yaml",
-                details=plan.removed_volumes)
-        )  # fmt: skip
-    if plan.core:
-        write_row(Row(Glyph.ADD, "core", Event.START, f"project {plan.target}", details=plan.core))
+    named, unnamed = "named by compose.yaml", "not named by compose.yaml"
+    rows = (
+        (Glyph.REMOVE, "containers", Event.REMOVE, f"project {plan.source}", plan.containers),
+        (Glyph.UNCHANGED, "networks", Event.KEEP, named, plan.kept_networks),
+        (Glyph.REMOVE, "networks", Event.REMOVE, unnamed, plan.removed_networks),
+        (Glyph.UNCHANGED, "volumes", Event.KEEP, named, plan.kept_volumes),
+        (Glyph.REMOVE, "volumes", Event.REMOVE, unnamed, plan.removed_volumes),
+        (Glyph.ADD, "core", Event.START, f"project {plan.target}", plan.core),
+    )
+    for glyph, subject, event, fact, names in rows:
+        if names:
+            write_row(Row(glyph, subject, event, fact, details=names))
 
 
 def _write_done(stage: Stage, names: tuple[str, ...], plan: Plan) -> None:
