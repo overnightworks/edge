@@ -18,11 +18,13 @@ tcp LISTEN 0 128 0.0.0.0:8002 0.0.0.0:* users:(("python3.12",pid=502,fd=3)) <->
 """
 WSDD = ("python3", "/usr/bin/wsdd", "--no-host", "--discovery")
 PID = 4242
+USER_CGROUP = "/user.slice/user-1000.slice/user@1000.service/app.slice/app.scope"
 
 
 def one_socket(process: str, protocol: str = "udp", port: int = 41000) -> str:
+    """One socket of a process in the user's own cgroup, as ss shows it to that user."""
     state = "LISTEN" if protocol == "tcp" else "UNCONN"
-    owner = f'users:(("{process}",pid={PID},fd=3))'
+    owner = f'users:(("{process}",pid={PID},fd=3)) cgroup:{USER_CGROUP}'
     return f"{protocol} {state} 0 0 0.0.0.0:{port} 0.0.0.0:* {owner} <->\n"
 
 
@@ -144,6 +146,12 @@ CASES = {
         allowing("avahi-daemon.service"),
         ["avahi-daemon.service"],
     ),
+    "a process named like a system unit is not permitted by that unit's entry": (
+        one_socket("docker.service"),
+        {},
+        allowing("docker.service"),
+        ["docker.service"],
+    ),
 }
 
 
@@ -156,11 +164,17 @@ def test_the_finding_names_the_program_the_listener_runs(
     assert subjects_on(sockets, command_lines.get, allow_list) == subjects
 
 
-def test_a_script_named_like_dockers_unit_on_a_published_port_is_reported(subjects_on):
-    sockets = one_socket("python3", "tcp", 8080)
-    script = {PID: ("python3", "/home/u/docker.service")}
+@pytest.mark.parametrize(
+    ("process", "command_lines"),
+    [("python3", {PID: ("python3", "/home/u/docker.service")}), ("docker.service", {})],
+    ids=["a script", "a process"],
+)
+def test_a_listener_named_like_dockers_unit_on_a_published_port_is_reported(
+    process, command_lines, subjects_on
+):
+    sockets = one_socket(process, "tcp", 8080)
 
-    assert "docker.service" in subjects_on(sockets, script.get, docker=publishing(8080))
+    assert "docker.service" in subjects_on(sockets, command_lines.get, docker=publishing(8080))
 
 
 def test_a_command_line_is_read_once_per_process(subjects_on):

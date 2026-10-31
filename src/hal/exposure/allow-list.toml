@@ -2,8 +2,9 @@
 # `reason`, and a `port`, an `owner`, or both. `owner` matches the process name,
 # the script or module an interpreter runs, or the socket's system unit (under
 # system.slice), so one entry holds whether `hal check exposure` runs as the
-# user or as root. A script named like a unit (`avahi-daemon.service`) never
-# matches that unit's entry: any user can name a script.
+# user or as root. An `owner` that names a unit (`avahi-daemon.service`)
+# matches only that system unit, never a process or script named like it: any
+# user can name either.
 # Docker publications are never allow-listed: they must bind 127.0.0.1 or ::1.
 
 [[allow]]

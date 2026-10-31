@@ -85,11 +85,13 @@ class Listener:
         """One name matches as user and as root: the process, the program an interpreter runs, or
         a unit of the system slice.
 
-        A unit elsewhere, such as another user's `systemd-run --user --unit`, never matches, and
-        neither does a script any user can name like a unit.
+        A unit name matches only a unit of the system slice, which only root can place: never a
+        unit elsewhere, such as another user's `systemd-run --user --unit`, nor a process or
+        script any user can name like a unit.
         """
-        program = self.program if self.program and not _is_unit_name(self.program) else None
-        return owner in (self.process, program, self._system_unit())
+        if _is_unit_name(owner):
+            return owner == self._system_unit()
+        return owner in (self.process, self.program)
 
     def _unit(self) -> str | None:
         return (self.cgroup.rpartition("/")[2] or None) if self.cgroup else None
