@@ -12,8 +12,12 @@ CREDENTIAL_FILE = Path("/run/secrets/agent_service_api_credential")
 HTTP_UNAUTHORIZED = 401
 
 
-# LiteLLM calls the hook with both arguments; the bearer is read from the request itself.
-async def user_api_key_auth(request: Request, api_key: str) -> UserAPIKeyAuth:
+# LiteLLM calls the hook as `user_custom_auth(request=request, api_key=api_key)`; the bearer is read
+# from the request itself.
+async def user_api_key_auth(
+    request: Request,
+    api_key: str,  # NOSONAR(S1172) LiteLLM passes it by keyword, so the name is its interface
+) -> UserAPIKeyAuth:
     verdict = decide(
         method=request.method,
         path=request.url.path,
