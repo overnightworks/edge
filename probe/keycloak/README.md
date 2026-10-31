@@ -104,9 +104,10 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   (TC2); Decline ends in `access_denied` with no session and no stored time (TC3); Accept stores the time as Unix seconds,
   which an admin reads and the account REST, both tokens and an admin PUT do not show or change (TC4); a later
   sign-in to hopin and presentator asks nothing (TC5); asked again, Decline removes the old time and Accept stores a new one (TC6).
-  Cells SP1 to SP6 and SP8 (#837) also run in proof 10: hopin's workload token carries the `speech-service` audience and
-  `speech-workload` only when it asks for `speech-service-audience` (SP1, SP2); a member's person token carries the audience and
-  `/services/speech-service` only when asked, and its ID token never the audience (SP3, SP4); songmaker and presentator are refused the scope and
+  Cells SP1 to SP6 and SP8 (#837) also run in proof 10: hopin's workload token carries the `speech-service` audience
+  only when it asks for `speech-service-audience`, and `speech-workload` either way, as its service account's role (SP1, SP2); a
+  member's person token carries the audience only when asked and `/services/speech-service` either way, as the default `groups`
+  scope gives it, and its ID token never the audience (SP3); a non-member's token without the scope carries no audience (SP4); songmaker and presentator are refused the scope and
   never get the audience (SP5); `agent-service` and `speech-service` are bearer-only with every flow off (W4, SP6); the group has no subgroup (SP8).
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing beyond the realm's `songmaker`, `hopin` and `presentator` clients, which callers must not create

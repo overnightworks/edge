@@ -234,7 +234,7 @@ RESIDUE_OF_THE_APPLY = [
     "hallucinai: addition service-account realm role service-account-"
     f"{ENABLED_SERVICE_ACCOUNT_CLIENT}/default-roles-hallucinai",
     "hallucinai: addition service-account realm role service-account-"
-    f"{ENABLED_SERVICE_ACCOUNT_CLIENT}/{WORKLOAD_ROLES[SPEECH_SERVICE]}",
+    f"{service_audience_cell.SPEECH_CALLER}/{WORKLOAD_ROLES[SPEECH_SERVICE]}",
     f"hallucinai: addition service-account user service-account-{ENABLED_SERVICE_ACCOUNT_CLIENT}",
     f"master: removal flow {CONSOLE_SUBFLOW}",
     f"master: removal flow step {FORMS_FLOW}/auth-otp-form#1",
@@ -244,7 +244,7 @@ DROPPED_CLIENT = "hopin"
 DROPPED_GROUP = "services"
 ROLE_HOLDERS = {  # the realm roles earlier applies created, with the service accounts holding each
     AGENT_WORKLOAD_ROLE: [f"service-account-{client.client_id}" for client in APP_CLIENTS],
-    WORKLOAD_ROLES[SPEECH_SERVICE]: [f"service-account-{ENABLED_SERVICE_ACCOUNT_CLIENT}"],
+    WORKLOAD_ROLES[SPEECH_SERVICE]: [f"service-account-{service_audience_cell.SPEECH_CALLER}"],
 }
 CHANGED_CONFIG = "browser-mfa-without-passkey"
 # 6.5.1 reads the managed-role switch only when the file has a roles section, so an empty

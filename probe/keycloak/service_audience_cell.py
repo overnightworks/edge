@@ -1,4 +1,4 @@
-"""Cells SP1-SP6, SP8 and W4 of probe.py (#837, #674): a service's audience reaches a token only
+"""Cells SP1-SP6, SP8 and W4 of probe.py: a service's audience reaches a token only
 through the client scope that names it. The agent service's scope is a default of every app
 client; the speech service's is an optional scope of hopin alone, so a token carries
 `speech-service` only when hopin asks for it, and songmaker and presentator cannot ask. Each
