@@ -25,7 +25,6 @@ images busybox:1.36 and busybox:1.37.0.
 
 from __future__ import annotations
 
-import argparse
 import grp
 import json
 import os
@@ -304,10 +303,9 @@ def prove(drive: Drive) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=edge_copy.scratch_directory, required=True)
-    arguments = parser.parse_args(argv)
-    return edge_copy.run_probe(arguments.scratch, Drive, prove, "PROBE PASSED: #482 D1a-D1d hold")
+    return edge_copy.run_main(
+        __doc__.splitlines()[0], argv, Drive, prove, "PROBE PASSED: #482 D1a-D1d hold"
+    )
 
 
 if __name__ == "__main__":
