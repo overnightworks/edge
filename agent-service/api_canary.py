@@ -10,12 +10,12 @@ marker.
 
 With `--cancel` it holds the stream open for smoke.py's hold, then closes it, reads the run's record
 (`GET /runs/{id}`) until it has ended and prints `status <state>`: a client that closes its stream
-sees no terminal frame. Exit 0 when that state is `cancelled`.
+sees no terminal frame. A refused or unusable record prints `status other`, and no ended record
+within the polls `status not_ended`. Exit 0 when the ended record's state is `cancelled`.
 """
 
 import argparse
 import http.client
-import json
 import re
 import sys
 import time
@@ -27,6 +27,7 @@ from smoke import (
     SERVICE_PORT,
     WORKLOAD_TOKEN_HEADER,
     frames,
+    read_run_record,
     read_tokens,
     request_body,
     text_of,
@@ -36,29 +37,30 @@ TIMEOUT_SECONDS = 120
 STATUS_POLLS = 60
 STATUS_POLL_SECONDS = 0.5
 CANCELLED = "cancelled"
-RUN_ID = re.compile(r"[0-9a-f-]{36}")
+NOT_ENDED = "not_ended"
+OTHER = "other"
 CLOSED_WORD = re.compile(r"[a-z_]{1,40}")
 
 
 def closed(word: object) -> str:
-    return word if isinstance(word, str) and CLOSED_WORD.fullmatch(word) else "other"
+    return word if isinstance(word, str) and CLOSED_WORD.fullmatch(word) else OTHER
 
 
-def run_status(headers: dict[str, str], run_id: str) -> str:
-    """The state of the run's record once it has ended, `running` if it has not within the polls."""
-    state = "running"
+def ended_state(headers: dict[str, str], run_id: object) -> str:
+    """The state of the run's record once it has ended; `other` for a refused or unusable
+    record, NOT_ENDED when no record ended within the polls."""
     for _ in range(STATUS_POLLS):
         connection = http.client.HTTPConnection(SERVICE_HOST, SERVICE_PORT, timeout=TIMEOUT_SECONDS)
-        connection.request("GET", f"/runs/{run_id}", None, headers)
-        response = connection.getresponse()
-        if response.status != http.HTTPStatus.OK:
-            return "other"
-        record = json.loads(response.read())
-        state = closed(record.get("state"))
+        try:
+            status, record = read_run_record(connection, run_id, headers)
+        except ValueError:
+            return OTHER
+        if status != http.HTTPStatus.OK:
+            return OTHER
         if record.get("ended_at") is not None:
-            break
+            return closed(record.get("state"))
         time.sleep(STATUS_POLL_SECONDS)
-    return state
+    return NOT_ENDED
 
 
 def cancel_after_start(
@@ -66,11 +68,7 @@ def cancel_after_start(
 ) -> int:
     time.sleep(CANCEL_HOLD_SECONDS)
     connection.close()
-    state = (
-        run_status(headers, run_id)
-        if isinstance(run_id, str) and RUN_ID.fullmatch(run_id)
-        else "other"
-    )
+    state = ended_state(headers, run_id)
     print(f"status {state}", file=out, flush=True)
     return 0 if state == CANCELLED else 1
 

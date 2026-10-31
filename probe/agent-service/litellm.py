@@ -57,6 +57,10 @@ FRONT_STATIC = "/etc/traefik/traefik.yml"
 ENTRYPOINT_ADDRESS = re.compile(r'address:\s*"([^"]+)"')
 START_LISTENER = re.compile(r"--host (\S+) --port (\d+)")
 WILDCARD_SOCKETS = ("0.0.0.0", "[::]")
+# The secret files under the scratch HOME, where compose.yaml's `secrets` read them.
+PROVIDER_KEY_FILE = Path(".secrets/litellm/anthropic")
+MASTER_KEY_FILE = Path(".secrets/litellm/master-key")
+CREDENTIAL_FILE = Path(".secrets/agent-service/api/credential.json")
 HTTP_PROGRAM = """\
 import json, socket, sys
 method, path, bearer, body = sys.argv[1:5]
@@ -132,12 +136,9 @@ class LitellmProbe(IssuerProbe):
 
     def write_secrets(self, home: Path) -> None:
         for relative, text in (
-            (Path(".secrets/litellm/anthropic"), self.provider_key + "\n"),
-            (Path(".secrets/litellm/master-key"), f"sk-{secrets.token_hex(32)}\n"),
-            (
-                Path(".secrets/agent-service/api/credential.json"),
-                json.dumps({"shared_key": self.credential}),
-            ),
+            (PROVIDER_KEY_FILE, self.provider_key + "\n"),
+            (MASTER_KEY_FILE, f"sk-{secrets.token_hex(32)}\n"),
+            (CREDENTIAL_FILE, json.dumps({"shared_key": self.credential})),
         ):
             folder = home
             for part in relative.parent.parts:

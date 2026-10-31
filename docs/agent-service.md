@@ -231,15 +231,17 @@ has no `[api]` table.
   secrets (provider key, master key and service credential) are files mounted at create time.
 - **A failure ends the run by name.** LiteLLM, the front or the gateway stopped, an upstream 500,
   529, timeout, reset or broken answer, an untrusted certificate, a refused credential and
-  Anthropic's billing refusal all end the run as `failed: provider_unavailable` on route `api`;
+  Anthropic's refusal of a used-up balance (a 402 `billing_error`, or a 400 saying the credit
+  balance is too low) all end the run as `failed: provider_unavailable` on route `api`;
   the run never falls back to the subscription. A used-up balance therefore looks like an outage
   until the operator checks his credit. A cancelled run ends `cancelled` and starts no further provider
   request; the cancel does not close the request in flight, which may finish and is billed.
 - **Rotating a key is a recreate.** A replaced provider key file reaches LiteLLM only through its
   recreate, until then it keeps sending the old key. A replaced service credential reaches each
   reader only through its own recreate, LiteLLM first, then `agent-service`; in between every run
-  fails `provider_unavailable`. A missing or empty key file stops LiteLLM's start with a line that
-  names the path only.
+  fails `provider_unavailable`. Compose refuses to create LiteLLM's container when the provider
+  key file is missing; an empty one makes the container exit non-zero with a line that names the
+  path only.
 - **Proof:** `probe/agent-service/litellm.py` runs the whole path on a fake-only stack (its
   docstring gives the command line): the fake Anthropic and a fake issuer sit on `internet`, made
   internal, and the probe refuses to start otherwise. Re-run it for every LiteLLM, Traefik or Docker

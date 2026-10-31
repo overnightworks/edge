@@ -13,12 +13,13 @@ never a value of the request, and its answer holds only values it builds itself.
 
 The `provider` role re-reads `/fake/control.json` on every request, so one container serves every
 cell of the failure probe (probe/agent-service/litellm_failures.py). The file holds `mode`:
-`answer` (the default), `status` (with `status`: 500 or 529), `billing`, `broken` (a 200 whose body
-is no JSON), `reset` (the connection is reset) or `hold` (the request is held until the client
-disconnects, and the log gets `held disconnected` afterwards); and optionally `provider_key` and
-`credential`, which stand in for the values of `expect.json`. The
-error bodies are Anthropic's own shapes, https://docs.anthropic.com/en/api/errors: 500
-`api_error`, 529 `overloaded_error`, 402 `billing_error`.
+`answer` (the default), `status` (with `status`: 500 or 529), `billing`, `low_credit`, `broken` (a
+200 whose body is no JSON), `reset` (the connection is reset) or `hold` (the request is held until
+the client disconnects, and the log gets `held disconnected` afterwards); and optionally
+`provider_key` and `credential`, which stand in for the values of `expect.json`. The error bodies
+are Anthropic's own shapes, https://docs.anthropic.com/en/api/errors: 500 `api_error`, 529
+`overloaded_error`, 402 `billing_error`; `low_credit` is the other answer a used-up balance gets,
+as clients report it: 400 `invalid_request_error` saying the credit balance is too low.
 """
 
 import http.server
@@ -38,7 +39,13 @@ ANSWER_MODEL = "claude-probe"
 CONTROL = "/fake/control.json"
 HOLD_SECONDS = 120
 HOLD_POLL_SECONDS = 0.2
-ERRORS = {500: "api_error", 529: "overloaded_error", 402: "billing_error"}
+ERRORS = {
+    400: "invalid_request_error", 402: "billing_error", 500: "api_error", 529: "overloaded_error",
+}  # fmt: skip
+LOW_CREDIT = (
+    "Your credit balance is too low to access the Anthropic API. "
+    "Please go to Plans & Billing to upgrade or purchase credits."
+)
 
 
 def control() -> dict:
@@ -49,9 +56,9 @@ def control() -> dict:
         return {}
 
 
-def error_body(status: int) -> bytes:
+def error_body(status: int, text: str = "probe") -> bytes:
     return json.dumps({
-        "type": "error", "error": {"type": ERRORS[status], "message": "probe"},
+        "type": "error", "error": {"type": ERRORS[status], "message": text},
     }).encode()  # fmt: skip
 
 
@@ -120,6 +127,8 @@ def handler(role: str, expect: dict) -> type[http.server.BaseHTTPRequestHandler]
                 return steering["status"], error_body(steering["status"])
             if mode == "billing":
                 return 402, error_body(402)
+            if mode == "low_credit":
+                return 400, error_body(400, LOW_CREDIT)
             if mode == "broken":
                 return 200, b"{not json"
             if mode == "reset":

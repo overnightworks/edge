@@ -6,7 +6,7 @@ paid: the probe refuses to start unless `internet` is internal and holds only th
     flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 \\
         python3 probe/agent-service/litellm_failures.py --scratch DIR
 
-Measured: a run takes about 16 minutes (F10 waits for the fake's 120 s hold limit) and its
+Measured: a run takes about 8 minutes (F10 waits for the fake's 120 s hold limit) and its
 teardown a few seconds (K 30 s, CAP 1800 s).
 
 Evidence: F is the fake provider's request log, R the canary's verdict lines, I `docker inspect`,
@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from litellm import (
     CANARY_SECONDS,
+    CREDENTIAL_FILE,
     DEFAULT_APP,
     FAKE_PROVIDER,
     FRONT,
@@ -38,8 +39,10 @@ from litellm import (
     LABEL,
     LISTENING,
     LITELLM,
+    MASTER_KEY_FILE,
     PROJECT,
     PROVIDER_HOST,
+    PROVIDER_KEY_FILE,
     REPO,
     ROUTE,
     SERVICE,
@@ -74,26 +77,32 @@ class FailureProbe(LitellmProbe):
     """litellm.py's stack, with the provider and the keys made to fail."""
 
     def __init__(self, scratch: Path) -> None:
+        self.corpus: list[str] = []
         super().__init__(scratch)
         self.scratch = scratch
         self.home = Path(self.environment["HOME"])
-        self.master_key = (self.home / ".secrets/litellm/master-key").read_text().strip()
+        self.master_key = (self.home / MASTER_KEY_FILE).read_text().strip()
         self.every_value = [self.provider_key, self.credential, self.master_key]
-        self.corpus: list[str] = []
 
     # --- plumbing -----------------------------------------------------------------------------
 
     def steer(self, **steering: object) -> None:
         self.steer_fake(provider_key=self.provider_key, credential=self.credential, **steering)
 
-    def canary(self, app: str, options: tuple[str, ...] = ()) -> dict[str, str]:
-        result = super().canary(app, options)
-        self.corpus.append(json.dumps(result))
+    def record(self, *texts: str) -> None:
+        """The one way into the corpus F15 and F16 search."""
+        self.corpus.extend(texts)
+
+    def run(self, command: list[str], **options: object) -> subprocess.CompletedProcess:
+        """Every command the probe runs: its stdout and stderr enter the corpus. A command that
+        fails its check ends the probe before F15, so only the outputs F15 can see are kept."""
+        result = super().run(command, **options)
+        self.record(result.stdout or "", result.stderr or "")
         return result
 
     def hold(self, cell: str, how: str) -> None:
         super().hold(cell, how)
-        self.corpus.append(f"{cell} held: {how}")
+        self.record(f"{cell} held: {how}")
 
     def containers_of(self, service: str) -> list[str]:
         """Every container of `service`, stopped ones included."""
@@ -102,12 +111,29 @@ class FailureProbe(LitellmProbe):
             "--filter", f"label=com.docker.compose.service={service}",
         ]).stdout.split()  # fmt: skip
 
+    def every_container(self) -> list[str]:
+        """Every container of the probe, stopped ones included: the project's, the issuers' among
+        them, and the ones it labels."""
+        found: list[str] = []
+        for label in (f"com.docker.compose.project={PROJECT}", LABEL):
+            found += self.run(["docker", "ps", "-aq", "--filter", f"label={label}"]).stdout.split()
+        return list(dict.fromkeys(found))
+
+    def harvest_containers(self, containers: list[str]) -> None:
+        """I and L of `containers` into the corpus, through `run`."""
+        for container in containers:
+            self.run(["docker", "inspect", container])
+            self.run(["docker", "logs", container], check=False)
+
     def harvest(self, *services: str) -> None:
         """Keeps I and L of the containers of `services` before a recreate takes them away."""
-        for container in (found for service in services for found in self.containers_of(service)):
-            self.corpus.append(self.run(["docker", "inspect", container]).stdout)
-            logs = self.run(["docker", "logs", container], check=False)
-            self.corpus.append(logs.stdout + logs.stderr)
+        self.harvest_containers([c for service in services for c in self.containers_of(service)])
+
+    def values_in_corpus(self, values: list[str]) -> list[str]:
+        """The `values` that I and L of every container and the probe's output hold."""
+        self.harvest_containers(self.every_container())
+        text = "\n".join(self.corpus)
+        return [value for value in values if value in text]
 
     def recreate_litellm(self) -> None:
         self.harvest(LITELLM)
@@ -131,7 +157,7 @@ class FailureProbe(LitellmProbe):
             expect(time.monotonic() < deadline, "the front does not answer")
             time.sleep(1)
 
-    def replace_by_rename(self, relative: str, contents: str, mode: int = 0o600) -> None:
+    def replace_by_rename(self, relative: Path, contents: str, mode: int = 0o600) -> None:
         """A new file at the secret's path: a new inode, as a writer that renames makes it."""
         target = self.home / relative
         draft = target.with_name(target.name + ".new")
@@ -203,16 +229,20 @@ class FailureProbe(LitellmProbe):
         expect(run["exit"] == "0", f"F2: the stack did not recover: {run}")
 
     def cells_provider_failures(self) -> None:
-        for cell, steering, how in (
-            ("F3", {"mode": "status", "status": 500}, "upstream 500"),
-            ("F4", {"mode": "status", "status": 529}, "upstream 529"),
-            ("F6", {"mode": "reset"}, "connection reset"),
-            ("F7", {"mode": "billing"}, "Anthropic's billing refusal"),
-            ("F8", {"mode": "broken"}, "200 with a broken body"),
+        """F3, F4 and F6 to F8: one run per answer of the fake, F7 with both answers of a used-up
+        balance."""
+        for cell, steerings, how in (
+            ("F3", ({"mode": "status", "status": 500},), "upstream 500"),
+            ("F4", ({"mode": "status", "status": 529},), "upstream 529"),
+            ("F6", ({"mode": "reset"},), "connection reset"),
+            ("F7", ({"mode": "billing"}, {"mode": "low_credit"}),
+             "a used-up balance as 402 billing_error and as 400 credit balance too low"),
+            ("F8", ({"mode": "broken"},), "200 with a broken body"),
         ):  # fmt: skip
-            self.steer(**steering)
-            self.failed_run(cell, provider_sees=1)
-            self.hold(cell, f"{how}: F 1, provider_unavailable")
+            for steering in steerings:
+                self.steer(**steering)
+                self.failed_run(cell, provider_sees=1)
+            self.hold(cell, f"{how}: F 1 per answer, provider_unavailable")
         self.cell_f5()
 
     def cell_f5(self) -> None:
@@ -283,24 +313,24 @@ class FailureProbe(LitellmProbe):
     def cells_f11_f12_f18(self) -> None:
         malformed = secrets.token_hex(12)
         self.every_value.append(malformed)
-        credential_file = ".secrets/agent-service/api/credential.json"
-        for cell, contents, mode, how in (
-            ("F11", f"not a credential {malformed}", 0o600, "a malformed credential"),
-            ("F12", self.credential_document(malformed), 0o000, "an unreadable credential"),
+        for cell, value, contents, mode, how in (
+            ("F11", malformed, f"not a credential {malformed}", 0o600, "a malformed credential"),
+            ("F12", self.credential, self.credential_document(self.credential), 0o000,
+             "the valid credential made unreadable"),
         ):  # fmt: skip
-            self.replace_by_rename(credential_file, contents, mode)
+            self.replace_by_rename(CREDENTIAL_FILE, contents, mode)
             self.recreate_litellm()
             status = self.http("POST", ROUTE, self.credential, self.good_body())
             expect(status == 401, f"{cell}: the front answered {status}")
             self.failed_run(cell, provider_sees=0)
-            expect(malformed not in self.log_of(LITELLM), f"{cell}: a log line holds a value")
+            expect(value not in self.log_of(LITELLM), f"{cell}: a log line holds a value")
             self.hold(cell, f"{how}: 401, provider_unavailable, F 0, no value in LiteLLM's log")
-        self.cell_f18(credential_file)
+        self.cell_f18()
 
-    def cell_f18(self, credential_file: str) -> None:
+    def cell_f18(self) -> None:
         old, new = self.credential, secrets.token_urlsafe(32)
         self.every_value.append(new)
-        self.replace_by_rename(credential_file, self.credential_document(new))
+        self.replace_by_rename(CREDENTIAL_FILE, self.credential_document(new))
         self.recreate_litellm()
         self.credential = new
         expect(self.http("POST", ROUTE, old, self.good_body()) == 401, "F18: the old one passed")
@@ -317,7 +347,7 @@ class FailureProbe(LitellmProbe):
     def cell_f17(self) -> None:
         new = secrets.token_urlsafe(32)
         self.every_value.append(new)
-        self.replace_by_rename(".secrets/litellm/anthropic", new + "\n")
+        self.replace_by_rename(PROVIDER_KEY_FILE, new + "\n")
         self.provider_key = new
         self.steer()
         before = len(self.provider_requests())
@@ -332,30 +362,31 @@ class FailureProbe(LitellmProbe):
         self.hold("F17", "only the new key reaches the provider, after the recreate")
 
     def cells_f13_f14(self) -> None:
-        key = self.home / ".secrets/litellm/anthropic"
+        key = self.home / PROVIDER_KEY_FILE
         kept = key.read_text()
+        resolved = json.loads(self.compose("config", "--format", "json").stdout)["services"]
+        key_in_container = resolved[LITELLM]["entrypoint"][1]  # start.sh's provider key file
+        self.harvest(LITELLM)
+        self.compose("rm", "--stop", "--force", LITELLM)
         key.unlink()
-        self.harvest(LITELLM)
-        refused = self.compose(
-            "up", "--detach", "--force-recreate", "--no-deps", LITELLM, check=False
-        )
+        refused = self.compose("up", "--detach", "--no-deps", LITELLM, check=False)
         text = refused.stderr + refused.stdout
-        self.corpus.append(text)
-        expect(refused.returncode != 0, "F13: Compose created the container")
+        expect(refused.returncode != 0, "F13: Compose did not refuse")
         expect(str(key) in text, f"F13: the refusal does not name the secret: {text[-300:]}")
+        expect(not self.containers_of(LITELLM), "F13: Compose created a container")
+        expect(not (key.exists() or key.is_symlink()), "F13: Compose made the key's path")
         refusal = text.strip().splitlines()[-1].replace(str(self.home), "$HOME")
-        self.hold("F13", f"Compose refuses to create the container: {refusal}")
+        self.hold("F13", f"Compose refuses and creates no container and no path: {refusal}")
         write_new(key, b"", 0o600)
-        self.compose("up", "--detach", "--force-recreate", "--no-deps", LITELLM, check=False)
+        self.compose("up", "--detach", "--no-deps", LITELLM, check=False)
         time.sleep(5)
-        self.harvest(LITELLM)
         (container,) = self.containers_of(LITELLM)
         state = json.loads(self.run(["docker", "inspect", container]).stdout)[0]
         expect(state["State"]["ExitCode"] != 0, "F14: the container did not exit")
         logs = self.run(["docker", "logs", container], check=False)
         named = [line for line in logs.stderr.splitlines() if line.startswith("litellm: ")]
         expect(
-            named and all("/run/secrets/litellm_anthropic_key" in line for line in named),
+            named and all(key_in_container in line for line in named),
             f"F14: the log lines name no path: {named[:2]}",
         )
         self.hold("F14", "the container exits non-zero and its line names the path only")
@@ -367,8 +398,8 @@ class FailureProbe(LitellmProbe):
         self.steer(mode="hold")
         before = len(self.provider_requests())
         process = subprocess.Popen(  # noqa: S603 - argv is built by the program itself
-            self.canary_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-            env=self.environment, cwd=REPO,
+            self.canary_command(), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, env=self.environment, cwd=REPO,
         )  # fmt: skip
         process.stdin.write(self.canary_input(DEFAULT_APP))
         process.stdin.close()
@@ -377,7 +408,8 @@ class FailureProbe(LitellmProbe):
             expect(time.monotonic() < deadline, "F20: the run never reached the provider")
             time.sleep(1)
         self.recreate_litellm()
-        out, _ = process.communicate(timeout=CANARY_SECONDS)
+        out, err = process.communicate(timeout=CANARY_SECONDS)
+        self.record(out, err)
         run = self.verdicts(out, process.returncode)
         expect(run.get("code") == UNAVAILABLE, f"F20: {run}")
         self.steer()
@@ -386,21 +418,25 @@ class FailureProbe(LitellmProbe):
         self.hold("F20", "the run in flight is provider_unavailable, the next one succeeds")
 
     def cells_f15_f16(self) -> None:
-        for service in (SERVICE, FRONT, LITELLM, GATEWAY, FAKE_PROVIDER):
-            self.harvest(service)
-        text = "\n".join(self.corpus)
-        found = [value for value in self.every_value if value in text]
+        found = self.values_in_corpus(self.every_value)
         expect(not found, f"F15: {len(found)} secret values found in I, L, R or the output")
-        self.hold("F15", f"{len(self.every_value)} values absent from I, L, R and the output")
+        size = sum(len(text) for text in self.corpus)
+        self.hold(
+            "F15",
+            f"{len(self.every_value)} values absent from {size} characters of every command's"
+            " output and every container's I and L",
+        )
         planted = self.every_value[0]
         plant = self.run([
             "docker", "create", "--network", "none", "--label", LABEL,
             "-e", f"PLANT={planted}", self.image, "true",
         ]).stdout.strip()  # fmt: skip
-        inspected = self.run(["docker", "inspect", plant]).stdout
-        self.run(["docker", "rm", plant])
-        expect(planted in inspected, "F16: the planted copy was not found")
-        self.hold("F16", "a planted copy is found in I")
+        try:
+            found = self.values_in_corpus([planted])
+        finally:
+            self.run(["docker", "rm", plant])
+        expect(found == [planted], "F16: the planted copy was not found")
+        self.hold("F16", "a planted copy in a labelled container is found through the same search")
 
     def cell_f19(self) -> None:
         container = self.container(LITELLM)
