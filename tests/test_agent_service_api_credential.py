@@ -263,12 +263,14 @@ def test_replacement_with_yes_swaps_the_key_and_names_the_recreates(
     assert make_setup().replace_api_credential() == 0
 
     new_key = accepted_key(gate, home)
-    assert new_key is not None and new_key != old_key
+    assert new_key is not None
+    assert new_key != old_key
     assert mode_of(credential_path(home)) == 0o600
     assert [path.name for path in api_directory(home).iterdir()] == ["credential.json"]
     said = "\n".join(terminal.said)
     assert "recreate litellm" in terminal.said[-1]
-    assert old_key not in said and new_key not in said
+    assert old_key not in said
+    assert new_key not in said
 
 
 def test_replacement_replaces_a_refused_credential(make_setup, home, terminal, gate):
