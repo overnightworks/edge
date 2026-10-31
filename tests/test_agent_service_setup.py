@@ -210,6 +210,18 @@ def test_a_secret_file_of_another_owner_names_its_owner_whether_or_not_it_can_be
     assert str(path_of(home)) in terminal.said[-1]
 
 
+@pytest.mark.parametrize("secret_file", SECRET_FILES)
+def test_a_secret_file_of_the_right_owner_that_cannot_be_opened_makes_the_check_cannot_tell(
+    make_setup, home, terminal, refuse_opening, secret_file
+):
+    path_of, _ = SECRET_FILES[secret_file]
+    write_token(home, DUMMY_TOKEN)
+    refuse_opening(path_of(home))
+
+    assert make_setup().check() == 2
+    assert str(path_of(home)) in terminal.said[-1]
+
+
 def test_a_host_with_every_gap_at_once_is_set_up_in_one_run(make_setup, home, docker, terminal):
     docker.images.clear()
     write_token(home, "a refused token with spaces", mode=0o644)
@@ -234,6 +246,29 @@ def test_a_fix_that_leaves_its_gap_stops_the_run_after_one_try(make_setup, home,
     docker.tags_builds = False
 
     assert make_setup().run(renew=False) == 1
+    assert len(docker.builds()) == 1
+    assert IMAGE in terminal.said[-1]
+
+
+def test_two_fixes_that_recreate_each_others_gap_stop_the_run_at_the_first_repeat(
+    make_setup, home, docker, terminal
+):
+    write_token(home, DUMMY_TOKEN)
+    docker.images.clear()
+    setup = make_setup()
+    build, narrow = setup.build_image, setup.narrow
+
+    def build_and_open_the_secrets_folder() -> None:
+        build()
+        (home / ".secrets").chmod(0o755)
+
+    def narrow_and_lose_the_image(path: Path, mode: int) -> None:
+        narrow(path, mode)
+        docker.images.clear()
+
+    setup.build_image, setup.narrow = build_and_open_the_secrets_folder, narrow_and_lose_the_image
+
+    assert setup.run(renew=False) == 1
     assert len(docker.builds()) == 1
     assert IMAGE in terminal.said[-1]
 

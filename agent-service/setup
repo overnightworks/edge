@@ -472,15 +472,15 @@ class AgentServiceSetup:
         def fix_everything() -> None:
             self.signing.preflight()
             self.api_credential.preflight()
-            fixed = None
+            fixed: set[Gap] = set()
             while (gap := self.first_gap()) is not None or (renew and not self.pasted):
                 if gap is None:
                     self.paste_token()
-                elif gap == fixed:
+                elif gap in fixed:
                     raise StepFailure(f"{gap.line}, still after its fix")
                 else:
                     self.fix(gap)
-                    fixed = gap
+                    fixed.add(gap)
             self.signing.ensure()
             self.api_credential.ensure()
             self.tools.say("agent-service/setup: set up")
