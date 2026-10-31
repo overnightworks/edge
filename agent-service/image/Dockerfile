@@ -4,6 +4,7 @@
 FROM docker.io/curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38f7bdd16d9bf9be350700c7a29ac06 AS claude-download
 ARG CLAUDE_VERSION=2.1.302
 ARG CLAUDE_SHA256=60d7eb7f12fbb28a52533fe8be5884097403562aa02dc73991a021c7067e29a5
+# NOSONAR(S7026) ADD --checksum serves a cached source by its digest without fetching, so an absent or bumped version would not fail the build (image probe I3); curl with sha256sum -c keeps that check.
 RUN curl --fail --silent --show-error --location \
         --proto '=https' --proto-redir '=https' --output /tmp/claude \
         "https://downloads.claude.ai/claude-code-releases/${CLAUDE_VERSION}/linux-x64/claude" \
@@ -13,6 +14,7 @@ FROM docker.io/curlimages/curl:8.23.0@sha256:a134550be58ab783810e613ae96fd253c38
 ARG CODEX_VERSION=0.163.0
 ARG CODEX_SHA256=beb339e8ecd9ba057a6bb2dc81ad8ca474812edfbf0fc5056ca818797648dde4
 # The static musl executable is taken out of its archive by name.
+# NOSONAR(S7026) ADD --checksum serves a cached source by its digest without fetching, so an absent or bumped version would not fail the build (image probe I3); curl with sha256sum -c keeps that check.
 RUN curl --fail --silent --show-error --location \
         --proto '=https' --proto-redir '=https' --output /tmp/codex.tar.gz \
         "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-x86_64-unknown-linux-musl.tar.gz" \
