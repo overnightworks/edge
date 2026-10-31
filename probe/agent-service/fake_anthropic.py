@@ -14,12 +14,16 @@ never a value of the request, and its answer holds only values it builds itself.
 The `provider` role re-reads `/fake/control.json` on every request, so one container serves every
 cell of the failure probe (probe/agent-service/litellm_failures.py). The file holds `mode`:
 `answer` (the default), `status` (with `status`: 500 or 529), `billing`, `low_credit`, `broken` (a
-200 whose body is no JSON), `reset` (the connection is reset) or `hold` (the request is held until
-the client disconnects, and the log gets `held disconnected` afterwards); and optionally
-`provider_key` and `credential`, which stand in for the values of `expect.json`. The error bodies
-are Anthropic's own shapes, https://docs.anthropic.com/en/api/errors: 500 `api_error`, 529
-`overloaded_error`, 402 `billing_error`; `low_credit` is the other answer a used-up balance gets,
-as clients report it: 400 `invalid_request_error` saying the credit balance is too low.
+200 whose body is no JSON), `reset` (the connection is reset), `hold` (the request is held until
+the client disconnects or `hold_seconds` (default 120) have passed, and the log gets `held
+disconnected` or `held timed out` afterwards; the held request is then answered) or `echo` (an
+error of `status` whose message is the request's body, as an upstream that quotes its input); and
+optionally `provider_key`, `credential` and `marker`, which stand in for the values of
+`expect.json`, and `request_canary`, whose occurrences in a request the log line counts.
+The error bodies are Anthropic's own shapes, https://docs.anthropic.com/en/api/errors: 500
+`api_error`, 529 `overloaded_error`, 402 `billing_error`; `low_credit` is the other answer a
+used-up balance gets, as clients report it: 400 `invalid_request_error` saying the credit balance
+is too low.
 """
 
 import http.server
@@ -62,9 +66,9 @@ def error_body(status: int, text: str = "probe") -> bytes:
     }).encode()  # fmt: skip
 
 
-def wait_for_disconnect(connection: socket.socket) -> str:
-    """Holds until the client closes its side, and says so; gives up after HOLD_SECONDS."""
-    deadline = time.monotonic() + HOLD_SECONDS
+def wait_for_disconnect(connection: socket.socket, seconds: float) -> str:
+    """Holds until the client closes its side, and says so; gives up after `seconds`."""
+    deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         readable, _, _ = select.select([connection], [], [], HOLD_POLL_SECONDS)
         if readable:
@@ -91,6 +95,7 @@ def provider_record(expect: dict, request: http.server.BaseHTTPRequestHandler, b
         "identity_hits": sum(raw.count(value.encode()) for value in expect["identity"]),
         "jwt_hits": len(JWT.findall(raw)),
         "uuid_hits": len(UUID.findall(raw)),
+        "request_canary_hits": raw.count(expect.get("request_canary", "").encode() or b"\0"),
     }
 
 
@@ -112,7 +117,7 @@ def handler(role: str, expect: dict) -> type[http.server.BaseHTTPRequestHandler]
                 steering = control()
                 record = provider_record({**expect, **steering}, self, body)
                 print(json.dumps(record), flush=True)  # noqa: T201 - this in-container program prints its own request log
-                status, reply = self.provider_answer(steering)
+                status, reply = self.provider_answer(steering, body)
             if status:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
@@ -120,11 +125,15 @@ def handler(role: str, expect: dict) -> type[http.server.BaseHTTPRequestHandler]
                 self.end_headers()
                 self.wfile.write(reply)
 
-        def provider_answer(self, steering: dict) -> tuple[int, bytes]:
+        def provider_answer(self, steering: dict, body: bytes) -> tuple[int, bytes]:
             """The status and body of the mode; status 0 means the connection was reset instead."""
             mode = steering.get("mode", "answer")
             if mode == "status":
                 return steering["status"], error_body(steering["status"])
+            if mode == "echo":
+                return steering["status"], error_body(
+                    steering["status"], body.decode("utf-8", "replace")
+                )
             if mode == "billing":
                 return 402, error_body(402)
             if mode == "low_credit":
@@ -138,8 +147,9 @@ def handler(role: str, expect: dict) -> type[http.server.BaseHTTPRequestHandler]
                 self.connection.close()
                 return 0, b""
             if mode == "hold":
-                print(f"held {wait_for_disconnect(self.connection)}", flush=True)  # noqa: T201 - this in-container program prints its own request log
-            return 200, message(expect)
+                seconds = steering.get("hold_seconds", HOLD_SECONDS)
+                print(f"held {wait_for_disconnect(self.connection, seconds)}", flush=True)  # noqa: T201 - this in-container program prints its own request log
+            return 200, message({**expect, **steering})
 
         do_GET = do_POST
 

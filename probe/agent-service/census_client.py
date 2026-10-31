@@ -110,8 +110,7 @@ class CensusClient:
         return tuple(counts)
 
     def ask(self, settings: dict) -> dict:
-        full = json.dumps({"key": self.key.hex(), **settings})
-        program = Path(tree_census.__file__).read_text(encoding="utf-8") + f"\nemit({full!r})\n"
+        program = tree_census.program({"key": self.key.hex(), **settings})
         command = ["docker", "exec", "-i", self.container, "python", "-I", "-"]
         result = self.probe.run(command, stdin=program, check=False, timeout=240)
         mode = settings["mode"]
