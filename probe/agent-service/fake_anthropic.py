@@ -71,7 +71,7 @@ def wait_for_disconnect(connection: socket.socket) -> str:
             try:
                 if connection.recv(1) == b"":
                     return "disconnected"
-            except (OSError, ssl.SSLError):
+            except OSError:
                 return "disconnected"
     return "timed out"
 

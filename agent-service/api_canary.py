@@ -19,6 +19,7 @@ import http.client
 import re
 import sys
 import time
+from collections.abc import Iterable
 
 from smoke import (
     ANSWER_PROMPT,
@@ -26,6 +27,7 @@ from smoke import (
     SERVICE_HOST,
     SERVICE_PORT,
     WORKLOAD_TOKEN_HEADER,
+    Frame,
     frames,
     read_run_record,
     read_tokens,
@@ -73,6 +75,30 @@ def cancel_after_start(
     return 0 if state == CANCELLED else 1
 
 
+def read_answer(
+    answer: Iterable[Frame],
+    connection: http.client.HTTPConnection,
+    headers: dict[str, str],
+    arguments: argparse.Namespace,
+    out,
+) -> int:
+    """The verdict lines of one answer's frames, then the exit code of the run."""
+    seen, ended = False, ""
+    for frame in answer:
+        ended = frame.event
+        print(f"event {closed(frame.event)}", file=out, flush=True)
+        if frame.event == "run_started":
+            print(f"route {closed(frame.data.get('route'))}", file=out, flush=True)
+            if arguments.cancel:
+                return cancel_after_start(connection, headers, frame.data.get("run_id"), out)
+        if frame.event == "failed":
+            print(f"code {closed(frame.data.get('code'))}", file=out, flush=True)
+        if frame.event in {"assistant_text", "succeeded"}:
+            seen = seen or arguments.marker in text_of(frame, "text")
+    print(f"marker {'yes' if seen else 'no'}", file=out, flush=True)
+    return 0 if ended == "succeeded" and seen else 1
+
+
 def main(argv: list[str], stdin=sys.stdin, out=sys.stdout) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--marker", required=True)
@@ -88,21 +114,8 @@ def main(argv: list[str], stdin=sys.stdin, out=sys.stdout) -> int:
     connection.request("POST", "/runs", request_body(ANSWER_PROMPT), headers)
     response = connection.getresponse()
     print(f"answer {response.status}", file=out, flush=True)
-    seen, ended = False, ""
-    if response.status == http.HTTPStatus.OK:
-        for frame in frames(response):
-            ended = frame.event
-            print(f"event {closed(frame.event)}", file=out, flush=True)
-            if frame.event == "run_started":
-                print(f"route {closed(frame.data.get('route'))}", file=out, flush=True)
-                if arguments.cancel:
-                    return cancel_after_start(connection, headers, frame.data.get("run_id"), out)
-            if frame.event == "failed":
-                print(f"code {closed(frame.data.get('code'))}", file=out, flush=True)
-            if frame.event in {"assistant_text", "succeeded"}:
-                seen = seen or arguments.marker in text_of(frame, "text")
-    print(f"marker {'yes' if seen else 'no'}", file=out, flush=True)
-    return 0 if ended == "succeeded" and seen else 1
+    answer = frames(response) if response.status == http.HTTPStatus.OK else ()
+    return read_answer(answer, connection, headers, arguments, out)
 
 
 if __name__ == "__main__":

@@ -449,9 +449,10 @@ def smoke(canary):
         (404, {}),
         (200, ["cancelled"]),
         (200, b"{not json"),
+        (404, b"not json"),
         "over the limit",
     ],
-    ids=["refused", "no object", "no JSON", "over the limit"],
+    ids=["refused", "no object", "no JSON", "refused without JSON", "over the limit"],
 )
 def test_the_canary_with_cancel_reports_a_refused_or_unusable_record_as_other(
     canary, smoke, monkeypatch, record
