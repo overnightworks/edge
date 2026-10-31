@@ -2,6 +2,7 @@
 fake Docker that answers like the CLI and records what it was asked."""
 
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 
@@ -158,8 +159,8 @@ def plan_rows(out: str) -> dict[tuple[str, str], set[str]]:
         if line.startswith("    "):
             names.add(line.strip())
         else:
-            _, subject, event, *_ = line.split()
-            names = rows.setdefault((subject, event), set())
+            glyph_and_subject, event, *_ = re.split(r"\s{2,}", line.strip())
+            names = rows.setdefault((glyph_and_subject.split()[1], event), set())
     return rows
 
 
@@ -190,7 +191,7 @@ def test_the_plan_removes_what_compose_yaml_does_not_name_and_keeps_what_it_name
     assert rows[("volumes", "remove")] == {f"edge_{name}" for name in STALE_VOLUMES}
     assert rows[("volumes", "keep")] == set(NAMED_VOLUMES)
     assert rows[("networks", "remove")] == {"edge_default", "edge_internal"}
-    assert rows[("networks", "keep")] == set(FIXED_NETWORKS)
+    assert rows[("networks", "take over")] == set(FIXED_NETWORKS)
     assert OTHER_PROJECT_VOLUME not in out.partition("Type yes")[0]
 
 
