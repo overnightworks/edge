@@ -23,6 +23,14 @@ AGENT_SERVICE_DOCUMENT = (REPOSITORY / "docs" / "agent-service.md").read_text(en
 
 RELEASE_WHEELS = ("agent-runtime", "agent-runtime-client", "agent-runtime-service")
 DIGEST_PINNED_IMAGE = re.compile(r"^FROM \S+@sha256:[0-9a-f]{64}\b", re.MULTILINE)
+STAGES = [
+    stage
+    for stage in re.split(r"^(?=FROM )", DOCKERFILE, flags=re.MULTILINE)
+    if stage.startswith("FROM ")
+]
+# An instruction with its continuation lines.
+ADD_STEP = re.compile(r"^ADD [^\n]*(?:\n(?!\S)[^\n]*)*", re.MULTILINE)
+RUN_STEP = re.compile(r"^RUN [^\n]*(?:\n(?!\S)[^\n]*)*", re.MULTILINE)
 
 
 def load_probe() -> ModuleType:
@@ -35,11 +43,15 @@ def load_probe() -> ModuleType:
 
 
 PROBE_MODULE = load_probe()
-COPIED_CLI = re.compile(r"^COPY --from=\S+ --chown=0:0 --chmod=0555 \S+ \S+$", re.MULTILINE)
 
 
 def dockerfile_argument(name: str) -> str:
     return re.search(rf"^ARG {name}=(\S+)$", DOCKERFILE, re.MULTILINE).group(1)
+
+
+def download_stage(prefix: str) -> str:
+    """The build stage that declares the CLI pins whose ARG names start with `prefix`."""
+    return next(stage for stage in STAGES if f"\nARG {prefix}_VERSION=" in stage)
 
 
 def lock_requirements() -> list[str]:
@@ -53,19 +65,33 @@ def release_tag() -> str:
     return re.match(r"# agent-runtime (v\S+), commit [0-9a-f]{40}\n", LOCK).group(1)
 
 
-def test_every_base_image_is_pinned_by_digest():
-    base_images = re.findall("^FROM ", DOCKERFILE, re.MULTILINE)
-    assert len(DIGEST_PINNED_IMAGE.findall(DOCKERFILE)) == len(base_images)
+def test_every_stage_starts_from_a_digest_pinned_image_or_an_earlier_stage():
+    earlier_stages = set()
+    for stage in STAGES:
+        base, _, name = stage.partition("\n")[0].removeprefix("FROM ").partition(" AS ")
+        assert DIGEST_PINNED_IMAGE.match(stage) or base in earlier_stages
+        earlier_stages.add(name)
 
 
 @pytest.mark.parametrize("prefix", PROBE_MODULE.DOCKERFILE_PREFIXES.values())
-def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_on_its_output_file(prefix):
+def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_while_it_is_fetched(
+    prefix,
+):
     assert re.fullmatch(r"\d+\.\d+\.\d+", dockerfile_argument(f"{prefix}_VERSION"))
     assert re.fullmatch(r"[0-9a-f]{64}", dockerfile_argument(f"{prefix}_SHA256"))
-    output = PROBE_MODULE.checked_download(prefix)
-    assert f'echo "${{{prefix}_SHA256}}  {output}" | sha256sum -c -' in PROBE_MODULE.download_step(
-        prefix
-    )
+    (download,) = ADD_STEP.findall(download_stage(prefix))
+    assert download.startswith(f"ADD --checksum=sha256:${{{prefix}_SHA256}} ")
+    assert re.search(rf'"https://\S+\${{{prefix}_VERSION}}\S*"', download)
+
+
+@pytest.mark.parametrize(("provider", "prefix"), PROBE_MODULE.DOCKERFILE_PREFIXES.items())
+def test_each_download_stage_holds_a_version_check_that_exits_1_on_a_mismatch(provider, prefix):
+    (check,) = RUN_STEP.findall(download_stage(prefix))
+    expected = PROBE_MODULE.VERSION_REPORTS[provider].format(version=f"${{{prefix}_VERSION}}")
+    assert f'expected="{expected}"' in check
+    assert '--version)"' in check
+    assert 'if [ "${reported}" != "${expected}" ]; then' in check
+    assert "exit 1" in check
 
 
 @pytest.mark.parametrize("moving_name", ["latest", "stable", "install.sh", "claude.ai/install"])
@@ -73,10 +99,9 @@ def test_the_recipe_never_names_a_moving_cli_release(moving_name):
     assert moving_name not in DOCKERFILE
 
 
-def test_every_cli_is_installed_root_owned_and_not_writable_once_per_download():
-    downloads = re.findall(r"^RUN curl ", DOCKERFILE, re.MULTILINE)
-    assert len(COPIED_CLI.findall(DOCKERFILE)) == len(downloads)
-    assert len(re.findall(r"^COPY --from=", DOCKERFILE, re.MULTILINE)) == len(downloads)
+def test_every_cli_is_installed_root_owned_and_not_writable():
+    installs = re.findall(r"^COPY --from=\S+ --chown=0:0 --chmod=0555 ", DOCKERFILE, re.MULTILINE)
+    assert len(installs) == len(PROBE_MODULE.DOCKERFILE_PREFIXES)
 
 
 def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards():
@@ -85,9 +110,12 @@ def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards()
     assert "&& pip check" in DOCKERFILE
 
 
-def test_the_recipe_runs_only_the_download_and_the_hashed_install():
-    steps = re.findall(r"^RUN (\S+ \S+)", DOCKERFILE, re.MULTILINE)
-    assert steps == ["curl --fail", "curl --fail", "pip install"]
+def test_the_recipe_holds_only_bare_base_stages_download_stages_and_a_final_running_pip_install():
+    downloads = {download_stage(prefix) for prefix in PROBE_MODULE.DOCKERFILE_PREFIXES.values()}
+    bare_bases = {stage for stage in STAGES if "\n" not in stage.strip()}
+    (*_, final) = STAGES
+    assert set(STAGES) == bare_bases | downloads | {final}
+    assert [step.split()[1:3] for step in RUN_STEP.findall(final)] == [["pip", "install"]]
 
 
 @pytest.mark.parametrize("package_manager", ["apt", "apt-get", "apk"])
