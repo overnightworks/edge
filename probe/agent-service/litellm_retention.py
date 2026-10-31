@@ -397,8 +397,8 @@ class RetentionProbe(FailureProbe):
         static = self.run(["docker", "exec", front, "cat", FRONT_STATIC]).stdout
         expect("accessLog" not in static and "level: INFO" in static, "B11: the front's log")
         self.hold("B11", "LiteLLM: message logging off, redaction on, custom_auth only, retries 0, "
-                  "no callback, cache, database or spend setting, no such environment name, log level CRITICAL; the "
-                  "front: INFO and no access log")  # fmt: skip
+                  "no callback, cache, database or spend setting, no such environment name, "
+                  "log level CRITICAL; the front: INFO and no access log")  # fmt: skip
 
 
 def main() -> int:
