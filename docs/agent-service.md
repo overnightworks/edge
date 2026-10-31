@@ -162,6 +162,47 @@ while songmaker-web is not on the network (otherwise as in "The service"), then
 songmaker-web with songmaker's own deploy command. A file bind keeps the old inode, so only a recreate
 reaches a container, never a restart. There is no grace period.
 
+## The API credential
+
+The API route's bearer is one service credential that `litellm` checks and, once the route is on,
+the service sends. Only `agent-service/setup` makes it, in the operator's terminal after `hal apply`
+has asked:
+
+```
+~/.secrets/agent-service/api/                   0700, uid 1000
+~/.secrets/agent-service/api/credential.json    0600, uid 1000, UTF-8 JSON, only the field shared_key
+```
+
+**The contract.** The file is what agent-runtime's reader accepts (`docs/operations.md` of
+agent-runtime): UTF-8 JSON with only `shared_key` and/or `app_keys`, no duplicate field, `app_keys` an
+object, every value of the credential syntax. The rules live once on the hal side, in
+`agent-service/litellm/gate.py` (`shared_key_of`), and setup judges the bytes it read through them,
+so `--check` never says "set up" for a file the hook refuses. A missing credential is made with
+`secrets.token_urlsafe(32)` through `credential.json.new` (created exclusively), then `link(2)`,
+which refuses any existing entry. Every path is reached without following a link, under one lock on
+the folder. A plain run and `--renew` never replace a credential, and nothing is printed of it. Setup
+refuses, in one line that names the file, and changes nothing, `--renew` and the token included:
+
+- a credential the reader refuses (not UTF-8 JSON, an unknown or duplicate field, `app_keys` not an
+  object, a value outside the syntax): the line names `agent-service/setup --replace-api-credential`;
+- a wrong owner, a mode other than 0600, a link or no regular file: the line asks for the operator's
+  own fix, because setup never narrows or unlinks those.
+
+`agent-service/setup --check` changes nothing and exits 0 for an accepted credential and 1 for the
+first gap, a refusal or a leftover `credential.json.new`, which the next plain run clears.
+`credential.next.json` waits for `--replace-api-credential`.
+
+**Replacing the credential.** `agent-service/setup --replace-api-credential` works only at a terminal,
+says what it does and goes on after a typed `yes`. It writes `credential.next.json`, checks it with
+the reader and renames it over `credential.json`; the old key is not erased from the disk. It ends
+by naming the recreates: `litellm`, and `agent-service` as well while `service.toml` has an `[api]`
+table. Both containers read the file at create time, and the old credential gets 401 at LiteLLM
+after its recreate, so the order is LiteLLM first. A lost credential needs no backup: it protects no
+stored data.
+
+The master key `~/.secrets/litellm/master-key` is not made here: `hal setup` generates it (a
+`service-password`, never shown) and creates only a missing file.
+
 ## What a turn leaves behind
 
 The service has no writable persistent mount but the Codex login directory (a renewal rewrites `auth.json` there, nothing a turn leaves). The CLI's per-run home and work directories and `/tmp`
@@ -220,8 +261,8 @@ has no `[api]` table.
   them), no `anthropic-` header (LiteLLM forwards `anthropic-version` and `anthropic-beta` to the
   provider) and exactly the body keys `model`, `messages` and `tools`, which agent-runtime's one posting
   function sends. LiteLLM has no database and no limiter and
-  messages are not logged; it needs a master key to boot, a third file secret that no client
-  holds, so its admin routes stay closed.
+  messages are not logged; it needs a master key to boot, a third file secret that `hal setup`
+  generates and no client holds, so its admin routes stay closed.
 - **What stays reachable.** The front sees every message and the service credential in memory; a
   compromised front could spend credit through LiteLLM, bounded by the prepaid credit. The API
   route has no concurrency cap until agent-runtime#634. LiteLLM reaches only the front and, through
