@@ -11,8 +11,8 @@ from support.terminal_support import type_at_prompt
 
 from hal import cli, migrate_commands
 from hal.grammar import ExitCode
-from hal.migrate_commands import World
 from hal.output.command import Verb, command
+from hal.stack import compose
 
 CORE = ("socket-proxy", "traefik")
 NAMED_VOLUMES = ("keycloak-data", "backup")  # fixed names `compose.yaml` gives its volumes
@@ -136,10 +136,11 @@ def docker() -> FakeDocker:
 
 @pytest.fixture
 def through_cli(docker, capsys, monkeypatch):
-    """`hal migrate stack` through `hal.cli.main` with a person who types `yes` unless told
-    otherwise: the exit code and both streams."""
+    """`hal migrate stack` through `hal.cli.main`, its real world on the fake Docker, with a person
+    who types `yes` unless told otherwise: the exit code and both streams."""
     terminal = []
-    monkeypatch.setattr(migrate_commands, "real_world", lambda: World(docker, lambda: terminal[0]))
+    monkeypatch.setattr(compose, "run_docker", docker)
+    monkeypatch.setattr(migrate_commands, "at_terminal", lambda: terminal[0])
 
     def run(*arguments: str, answer: str | None = "yes", at_terminal: bool = True):
         terminal[:] = [at_terminal]
@@ -264,6 +265,17 @@ def test_a_compose_yaml_naming_neither_project_is_refused(through_cli, docker):
     code, out, err = through_cli()
 
     assert (code, out, docker.changes()) == (ExitCode.REFUSED, "", [])
+    assert "nothing changed" in err
+
+
+@pytest.mark.parametrize("failing", ["config", "read"], ids=["compose-config", "docker-listing"])
+def test_a_failing_docker_read_names_the_cause_and_changes_nothing(through_cli, docker, failing):
+    docker.fail = {failing}
+
+    code, out, err = through_cli()
+
+    assert (code, out, docker.changes()) == (ExitCode.FAILURE, "", [])
+    assert f"{failing} refused by the daemon" in err
     assert "nothing changed" in err
 
 
