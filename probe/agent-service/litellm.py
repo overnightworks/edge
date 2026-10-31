@@ -20,7 +20,6 @@ LA LiteLLM's access log. Exit 0: every cell held.
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import secrets
@@ -35,7 +34,7 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "agent-service"))
 
 from agent_networks import gateway_listeners, listeners_of  # noqa: E402
-from egress import LABEL, PROJECT, ProbeFailed, expect, run_probe, scratch_directory  # noqa: E402
+from egress import LABEL, PROJECT, ProbeFailed, expect, run_scratch_probe  # noqa: E402
 from issuer import ISSUER_ORIGIN, ISSUER_SERVICE, SERVICE, IssuerProbe  # noqa: E402
 from refusals import API_GROUP  # noqa: E402
 from scratch_secrets import issue_certificate, write_new  # noqa: E402
@@ -499,10 +498,7 @@ class LitellmProbe(IssuerProbe):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=scratch_directory, required=True)
-    arguments = parser.parse_args()
-    return run_probe(lambda: LitellmProbe(arguments.scratch))
+    return run_scratch_probe(__doc__.splitlines()[0], LitellmProbe)
 
 
 if __name__ == "__main__":

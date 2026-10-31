@@ -82,13 +82,16 @@ and `:443`: `egress` (`172.31.252.10` of the network `egress`, for the agent ser
 (`172.31.239.10` of `litellm-egress`, for LiteLLM). The router `provider` of `allowed.yml` is bound to
 both entrypoints, `issuer` to `egress` alone, so LiteLLM reaches the provider and nothing else. The
 three networks of the API route (`litellm-api`, `litellm-backend`, `litellm-egress`) are internal and
-isolated like the others; the isolation exclusions between them are proven only by a later slice
-(#299 S1d). Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config
+isolated like the others, and the exclusions between them hold: the service reaches LiteLLM only
+through the front; LiteLLM reaches the front and, beyond it, only the provider's name on
+entrypoint 2, and neither the service, entrypoint 1, the issuer, `mcp` nor the internet; the front
+reaches LiteLLM, and the service's `litellm-api` address answers it. Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config
 path, so `hal apply` recreates it alone while the unit `agent-service` is on; no plain
 `docker compose up -d` starts it.
 
 **Proof:** `probe/agent-service/egress.py` (with `--target service` for the real service and a dummy
 login) starts a throwaway project on a free /24 for each gateway network, never a live subnet, drives the cells
 for allowed and refused names, observed through the packet windows of `probe/agent-service/capture.py`
-each with a positive control, and removes everything. CI holds the static facts in
+each with a positive control, and removes everything. `probe/agent-service/litellm_network.py` proves
+the exclusions of the API route on a fake-only stack, each with its control. CI holds the static facts in
 `tests/test_agent_egress.py`.

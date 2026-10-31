@@ -25,7 +25,6 @@ images busybox:1.36 and busybox:1.37.0.
 
 from __future__ import annotations
 
-import argparse
 import grp
 import json
 import os
@@ -106,7 +105,8 @@ class Drive:
         return result.stdout
 
     def compose(self, *arguments: str) -> str:
-        return self.docker("compose", "--profile", "*", *arguments)
+        every_profile = ("--profile", "*", *arguments)
+        return self.docker(*edge_copy.guarded_compose(self.copy, self.guard, every_profile))
 
     def engine(self) -> compose.Compose:
         """edge's own Compose reader, over the copy and the drive's project."""
@@ -304,10 +304,9 @@ def prove(drive: Drive) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=edge_copy.scratch_directory, required=True)
-    arguments = parser.parse_args(argv)
-    return edge_copy.run_probe(arguments.scratch, Drive, prove, "PROBE PASSED: #482 D1a-D1d hold")
+    return edge_copy.run_main(
+        __doc__.splitlines()[0], argv, Drive, prove, "PROBE PASSED: #482 D1a-D1d hold"
+    )
 
 
 if __name__ == "__main__":
