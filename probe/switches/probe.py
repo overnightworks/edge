@@ -153,9 +153,10 @@ class Probe:
         return result
 
     def compose(self, *arguments: str) -> subprocess.CompletedProcess[bytes]:
-        if self.guard is not None and edge_copy.GUARDED_COMPOSE_VERBS & set(arguments):
-            self.guard.expect(edge_copy.copy_compose_command(self.copy), once=False)
-        return self.docker("compose", *arguments)
+        command = [*edge_copy.copy_compose_prefix(self.copy), *arguments]
+        if self.guard is not None:
+            self.guard.expect_call(command)
+        return self.docker(*command[1:])
 
     def container_ids(self) -> dict[str, str]:
         """The container id of each service that has one."""
@@ -224,11 +225,11 @@ class Probe:
         if self.guard is None:
             return
         self.compose("--profile", "*", "down", "--volumes", "--remove-orphans")
+        left = {"containers": self.container_ids(), "volumes": self.volumes()}
+        expect(not any(left.values()), f"the teardown left {left}")
         self.guard.expect_clean_teardown()
         live = edge_copy.expect_live_project_unchanged(self.live_before, REPO)
-        write_line(
-            f"#592 V7 held: nothing of {PROJECT} is left, hal_ networks as before. V8: {live}"
-        )
+        write_line(f"#592 V7 held: {PROJECT} left nothing, hal_ networks as before. V8: {live}")
 
     # --- what a client of the tunnel sees ----------------------------------------------------
 

@@ -59,6 +59,8 @@ PINNED_PREFIX = re.compile(r"subnet:\s+(\d+\.\d+\.\d+\.)0/24")
 # The loopback address a probe's Traefik listens on beside the live one: `lo` routes all of
 # 127.0.0.0/8, and the live listeners are bound to 127.0.0.1 only.
 PROBE_HOST = "127.0.0.2"
+# The hosts of an entrypoint that listens on every address, the probe host's included.
+WILDCARD_HOSTS = {"", "0.0.0.0", "[::]"}
 
 
 class ProbeFailed(Exception):
@@ -86,8 +88,8 @@ def beside_the_live_edge(text: str, project: str) -> str:
     kept) and the Docker provider's constraint narrowed to `<live constraint> &&
     Label(<PROJECT_LABEL>, <project>)`, so a Traefik started from it listens beside the live one
     and routes only the probe's project. Every other byte stays. Refuses a text with no
-    entrypoint address or no Docker constraint, an address already on `PROBE_HOST`, and a value
-    found other than once."""
+    entrypoint address or no Docker constraint, an address already on `PROBE_HOST` or on every
+    address (it would hold the probe host's port too), and a value found other than once."""
     try:
         document = yaml.safe_load(text)
         addresses = [entry["address"] for entry in document["entryPoints"].values()]
@@ -97,6 +99,8 @@ def beside_the_live_edge(text: str, project: str) -> str:
             f"traefik.yml names no entrypoint address or Docker constraint: {error!r}"
         ) from error
     expect(bool(addresses), "traefik.yml names no entrypoint")
+    wildcard = [address for address in addresses if address.rpartition(":")[0] in WILDCARD_HOSTS]
+    expect(not wildcard, f"{wildcard} listen on every address, {PROBE_HOST} among them")
     narrowed = f"{constraint} && Label(`{PROJECT_LABEL}`, `{project}`)"
     moved = {address: f"{PROBE_HOST}:{address.rpartition(':')[2]}" for address in addresses}
     moved[constraint] = narrowed
@@ -231,12 +235,17 @@ def expect_project_networks(resolved: dict, project: str) -> None:
     expect(not foreign, f"networks outside the project {project}: {foreign}")
 
 
-def copy_compose_command(copy: Path) -> list[str]:
-    """Compose as edge calls it in `copy`: its project directory and file, every profile."""
+def copy_compose_prefix(copy: Path) -> list[str]:
+    """Compose as edge calls it in `copy`: its project directory and file, named so that no
+    inherited `COMPOSE_FILE` selects another."""
     return [
-        "docker", "compose", "--project-directory", str(copy), "--file",
-        str(copy / "compose.yaml"), "--profile", "*",
+        "docker", "compose", "--project-directory", str(copy), "--file", str(copy / "compose.yaml"),
     ]  # fmt: skip
+
+
+def copy_compose_command(copy: Path) -> list[str]:
+    """`copy_compose_prefix` with every profile."""
+    return [*copy_compose_prefix(copy), "--profile", "*"]
 
 
 def daemon_subnets() -> list[str]:
@@ -281,12 +290,18 @@ class NetworkGuard:
         key = tuple(prefix)
         if not once or key not in self.checked:
             resolved = json.loads(self.run([*prefix, "config", "--format", "json"]))
-            expect(
-                resolved["name"] == self.project,
-                f"the project is {resolved['name']!r}, not {self.project}",
-            )
+            name = resolved.get("name")
+            expect(name is not None, f"the resolved configuration names no project: {prefix}")
+            expect(name == self.project, f"the project is {name!r}, not {self.project}")
             expect_project_networks(resolved, self.project)
             self.checked.add(key)
+
+    def expect_call(self, command: list[str]) -> None:
+        """Checks a compose `command` that starts or removes something with its own files and
+        profiles, everything before its verb, so the guard resolves what the call runs."""
+        verbs = [index for index, word in enumerate(command) if word in GUARDED_COMPOSE_VERBS]
+        if verbs:
+            self.expect(command[: verbs[0]], once=False)
 
     def expect_clean_teardown(self) -> None:
         """No network of the project is left, and the live `hal_*` networks are the same as when
