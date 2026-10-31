@@ -3,6 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "e11c3dd09da942aebca602668f13a94b090a0fea"
 branch = "claude/issue-827-hal-check-names-a-listener-by-the-progra"
-scope = ["src/hal/exposure/check.py", "src/hal/exposure/host.py", "src/hal/exposure/listeners.py", "tests/test_exposure_check.py"]
+scope = ["docs/backup.md", "src/hal/exposure/allow-list.toml", "src/hal/exposure/check.py", "src/hal/exposure/host.py", "src/hal/exposure/inspection.py", "src/hal/exposure/listeners.py", "tests/test_exposure_interpreters.py", "tests/test_hal_check.py"]
 opened_commit = "091dd81cb35fe7bdc57954b99faee4769822cd5d"
 whole_reason = "The name a finding shows, the host read that gives it and the allow-list match that uses it move together, or an entry the operator wrote stops matching."
