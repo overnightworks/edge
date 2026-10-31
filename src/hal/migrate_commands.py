@@ -52,7 +52,7 @@ def _write_plan(plan: Plan) -> None:
     taken_over = f"{named}: down removes one no app uses, project {plan.target} creates it again"
     rows = (
         (Glyph.REMOVE, "containers", Event.REMOVE, f"project {plan.source}", plan.containers),
-        (Glyph.CHANGE, "networks", Event.TAKE_OVER, taken_over, plan.kept_networks),
+        (Glyph.CHANGE, "networks", Event.TAKE_OVER, taken_over, plan.taken_over_networks),
         (Glyph.REMOVE, "networks", Event.REMOVE, unnamed, plan.removed_networks),
         (Glyph.UNCHANGED, "volumes", Event.KEEP, named, plan.kept_volumes),
         (Glyph.REMOVE, "volumes", Event.REMOVE, unnamed, plan.removed_volumes),

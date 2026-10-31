@@ -36,7 +36,7 @@ class Plan:
     source: str
     target: str
     containers: tuple[str, ...]
-    kept_networks: tuple[str, ...]
+    taken_over_networks: tuple[str, ...]
     removed_networks: tuple[str, ...]  # `down` removes them
     kept_volumes: tuple[str, ...]
     removed_volumes: tuple[str, ...]
