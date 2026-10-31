@@ -7,12 +7,15 @@ neither command runs during the other) and a clean `main`. It fetches, shows eve
 and the changed files by effect, and asks. After the `yes` it rechecks that the checkout is still
 the clean `main` at the planned HEAD and that the pinned sha is a fast-forward of it; then it
 merges that full sha with SIGINT blocked, checks HEAD, the branch and the tree, syncs the
-dependencies through the merged tree's `bin/hal-sync` in its own process group, and checks HEAD
-again. It never writes `applied.json`.
+dependencies through the merged tree's `bin/hal-sync` in its own process group, checks HEAD again
+and writes its closing verdict; SIGINT stays blocked to the verdict's end but for the sync. It
+never writes `applied.json`.
 
 Every handled failure from the merge on is a partial update: one `error:` line with the full sha
-and the step, `next: hal apply`. Nothing is imported after the merge, because the editable install
-would make a later import read the merged code into this process.
+and the step, `next: hal apply`. A Ctrl-C from the merge on is an interrupt with the same line,
+also when it came while a failure or the verdict was being written. Nothing is imported after the
+merge, because the editable install would make a later import read the merged code into this
+process.
 """
 
 import os
@@ -36,7 +39,7 @@ from hal.output import (
     write_verdict,
 )
 from hal.output.command import Verb, command
-from hal.stack import apply, catalog, checkout, compose, core
+from hal.stack import apply, catalog, checkout, compose, core, deploy_checkout
 from hal.stack.plan_rows import (
     Effect,
     checkout_row,
@@ -50,7 +53,7 @@ from hal.stack.waiting import fetched
 SYNC_SCRIPT = "bin/hal-sync"
 _CODE_DIRECTORIES = ("src/", "bin/")
 _CODE_FILES = ("pyproject.toml", "uv.lock")
-_PLANNED_FILES = ("compose.yaml", catalog.FLEET_FILE)
+_PLANNED_FILES = (deploy_checkout.COMPOSE_FILE, catalog.FLEET_FILE)
 _NOTHING_CHANGED = "nothing changed"
 _APPLY = command(Verb.APPLY)
 _AGAIN = command(Verb.UPDATE)
@@ -71,6 +74,7 @@ class Step(StrEnum):
     CHECK_AFTER_MERGE = "check HEAD after the merge"
     SYNC = "sync the dependencies"
     CHECK_AFTER_SYNC = "check HEAD after the sync"
+    VERDICT = "write the closing verdict"
 
 
 class SyncProgress(StrEnum):
@@ -97,7 +101,7 @@ def update_checkout(
     try:
         lock = apply.take_apply_lock(state_directory)
     except OSError as error:
-        write_error(f"cannot take {state_directory / apply.APPLY_LOCK} ({error.strerror})")
+        write_error(apply.cannot_take_lock_line(state_directory, error))
         return UpdateEnd.FAILED
     if lock is None:
         write_error(apply.APPLY_RUNNING)
@@ -211,32 +215,46 @@ class _Merge:
     sync: SyncProgress = SyncProgress.NOT_STARTED
 
     def run(self) -> UpdateEnd:
+        """Every step and its closing line with SIGINT blocked; a Ctrl-C still pending when the
+        mask is restored came while that line was written, and the restore raises it."""
         try:
             with _sigint_blocked():
-                self._merge()
-                self._check(Step.CHECK_AFTER_MERGE, with_tree=True)
-                _stop_if_interrupted()
-                self._sync()
-                self._check(Step.CHECK_AFTER_SYNC, with_tree=False)
-                _stop_if_interrupted()
+                return self._steps()
         except KeyboardInterrupt:
-            end = self._report(
-                f"interrupted at '{self.step}' of the update to {self.origin.sha}, {self.sync}",
-                UpdateEnd.INTERRUPTED,
-            )
-        except _Stop as stop:
-            write_error(str(stop), stop.next_step)
-            end = stop.end
-        except Exception as error:
-            end = self._report(self._partial(f"unexpected error ({type(error).__name__})"))
-        else:
+            return self._interrupted()
+
+    def _steps(self) -> UpdateEnd:
+        try:
+            self._merge()
+            self._check(Step.CHECK_AFTER_MERGE, with_tree=True)
+            _stop_if_interrupted()
+            self._sync()
+            self._check(Step.CHECK_AFTER_SYNC, with_tree=False)
+            _stop_if_interrupted()
+            self.step = Step.VERDICT
             summary = f"checkout updated to {self.origin.short} · dependencies synced"
             write_verdict(Verdict(Glyph.DONE, summary, (), next_step=_APPLY))
-            return UpdateEnd.DONE
-        return end
+        except KeyboardInterrupt:
+            return self._interrupted()
+        except _Stop as stop:
+            return self._failed(str(stop), stop.end, stop.next_step)
+        except Exception as error:
+            return self._failed(self._partial(f"unexpected error ({type(error).__name__})"))
+        return UpdateEnd.DONE
 
-    def _report(self, message: str, end: UpdateEnd = UpdateEnd.FAILED) -> UpdateEnd:
-        write_error(message, _APPLY)
+    def _interrupted(self, meanwhile: str = "") -> UpdateEnd:
+        """O6; `meanwhile` is the failure the step had reached when the Ctrl-C was found."""
+        line = f"interrupted at '{self.step}' of the update to {self.origin.sha}, {self.sync}"
+        write_error(f"{line}; {meanwhile}" if meanwhile else line, _APPLY)
+        return UpdateEnd.INTERRUPTED
+
+    def _failed(
+        self, message: str, end: UpdateEnd = UpdateEnd.FAILED, next_step: str = _APPLY
+    ) -> UpdateEnd:
+        """The failure's line and end, unless a Ctrl-C came meanwhile: then it is O6 (130)."""
+        if _interrupt_pending():
+            return self._interrupted(message)
+        write_error(message, next_step)
         return end
 
     def _partial(self, reason: str) -> str:
@@ -290,27 +308,29 @@ class _Merge:
         sync = [str(script), str(self.git.tree)]
         if is_verbose():
             write_line(printable(" ".join(sync)), stream=Stream.STDERR)
-        self.sync = SyncProgress.RUNNING
         try:
             with _sigint_unblocked():
+                self.sync = SyncProgress.RUNNING
                 result = checkout.run_in_own_group(sync, os.environ, None)
         except OSError as error:
+            self.sync = SyncProgress.NOT_STARTED
             raise self._stop(f"cannot start {script} ({error.strerror})") from error
         self.sync = SyncProgress.ENDED
         if result.returncode:
             last = compose.last_line(result.stderr.decode("utf-8", "backslashreplace"))
-            raise self._stop(f"the sync exited {result.returncode}: {last}")
+            raise self._stop(
+                f"the sync exited {result.returncode}: {checkout.without_credentials(last)}"
+            )
 
 
 @contextmanager
 def _sigint_blocked() -> Iterator[None]:
-    """SIGINT blocked for the block: a Ctrl-C neither reaches git nor interrupts the wait. A
-    signal still pending at the end is consumed, so unblocking raises nothing."""
+    """SIGINT blocked for the block: a Ctrl-C neither reaches git nor interrupts the wait. One
+    still pending at the end is raised as KeyboardInterrupt by the restore itself."""
     previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
     try:
         yield
     finally:
-        signal.sigtimedwait({signal.SIGINT}, 0)
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
@@ -323,7 +343,11 @@ def _sigint_unblocked() -> Iterator[None]:
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT})
 
 
+def _interrupt_pending() -> bool:
+    """Whether a Ctrl-C came while SIGINT was blocked; consumes it."""
+    return signal.sigtimedwait({signal.SIGINT}, 0) is not None
+
+
 def _stop_if_interrupted() -> None:
-    """Raise the interrupt a blocked Ctrl-C left pending, and consume it."""
-    if signal.sigtimedwait({signal.SIGINT}, 0) is not None:
+    if _interrupt_pending():
         raise KeyboardInterrupt

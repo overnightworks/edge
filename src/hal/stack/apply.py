@@ -225,7 +225,7 @@ def apply_local(
     try:
         lock = take_apply_lock(state_directory)
     except OSError as error:
-        write_error(f"cannot take {state_directory / APPLY_LOCK} ({error.strerror})")
+        write_error(cannot_take_lock_line(state_directory, error))
         return ApplyExit.CANNOT_PLAN
     if lock is None:
         write_error(APPLY_RUNNING)
@@ -279,6 +279,11 @@ def take_apply_lock(state_directory: Path) -> int | None:
         os.close(descriptor)
         raise
     return descriptor
+
+
+def cannot_take_lock_line(state_directory: Path, error: OSError) -> str:
+    """Why `apply.lock` cannot be taken, as `hal apply` and `hal update` both say it."""
+    return f"cannot take {state_directory / APPLY_LOCK} ({error.strerror})"
 
 
 def on_clean_main(git: checkout.Git) -> bool:

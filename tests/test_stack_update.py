@@ -12,16 +12,19 @@ import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import support.throwaway_home as throwaway_home
 from support.git_support import advance, committed_main, head_of, plain_git, subjects, with_origin
+from support.process_support import is_gone
 from support.stack_apply_fakes import Terminal
 from support.stack_plan_rows import plain
 
+from hal import cli
+from hal.grammar import ExitCode
 from hal.output import verbose_run
 from hal.stack import apply, checkout, compose, switches, update
+from hal.stack import cli as stack_cli
 from hal.stack.update import UpdateEnd
 
 home = throwaway_home.home
@@ -31,9 +34,9 @@ echo "$$" > "$FAKE_LOG/sync.pid"
 printf '%s\\n' "$@" > "$FAKE_LOG/sync.args"
 for descriptor in /proc/$$/fd/*; do readlink "$descriptor"; done > "$FAKE_LOG/sync.fds"
 grep SigBlk /proc/$$/status > "$FAKE_LOG/sync.mask"
-ps -o pgid= -p $$ > "$FAKE_LOG/sync.pgid"
+ps -o pgid=,sid= -p $$ > "$FAKE_LOG/sync.ids"
 case "${FAKE_SYNC-}" in
-fail) echo "uv: lock file is out of date" >&2; exit 1 ;;
+fail) echo "uv: cannot fetch https://operator:hunter2@pypi.invalid/simple" >&2; exit 1 ;;
 lock) flock -n -x "$FAKE_LOCK" -c true; echo $? > "$FAKE_LOG/sync.lock" ;;
 interrupt)
     sleep 300 &
@@ -46,7 +49,9 @@ touch "$FAKE_LOG/sync.done"
 SIGNALLING_GIT = """#!/bin/sh
 case "${FAKE_SIGNAL-}:$*" in
 merge:*" merge "*|synced:*" rev-parse "*)
-    if [ "$FAKE_SIGNAL" = merge ] || [ -e "$FAKE_LOG/sync.done" ]; then kill -INT "$PPID"; fi ;;
+    if [ "$FAKE_SIGNAL" = merge ] || [ -e "$FAKE_LOG/sync.done" ]; then
+        kill -INT -"$(ps -o pgid= -p "$PPID" | tr -d ' ')"
+    fi ;;
 esac
 exec "$REAL_GIT" "$@"
 """
@@ -144,25 +149,31 @@ def world(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -
     sys.stdin, sys.stdout = saved
 
 
-def is_alive(pid: str) -> bool:
-    """Whether the process runs; a zombie waiting for init to reap it is dead."""
-    try:
-        return Path(f"/proc/{pid.strip()}/stat").read_text().rpartition(") ")[2][0] != "Z"
-    except FileNotFoundError:
-        return False
-
-
 def errors(capsys) -> str:
     return capsys.readouterr().err
 
 
-def git_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, signal_on: str) -> None:
+@pytest.fixture
+def signalling_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable]:
+    """A `git` on PATH that sends SIGINT to the run's process group, as a terminal's Ctrl-C does,
+    on the call the returned setter names. pytest leads its own group meanwhile, so the signal
+    reaches nothing of the group that started it (a session leader leads one already)."""
     shim = tmp_path / "shim"
     shim.mkdir()
     (shim / "git").write_text(SIGNALLING_GIT)
     (shim / "git").chmod(0o755)
     monkeypatch.setenv("PATH", f"{shim}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("FAKE_SIGNAL", signal_on)
+    started_in = os.getpgrp()
+    if started_in != os.getpid():
+        os.setpgid(0, 0)
+    yield lambda signal_on: monkeypatch.setenv("FAKE_SIGNAL", signal_on)
+    monkeypatch.delenv("FAKE_SIGNAL", raising=False)
+    if started_in != os.getpid():
+        os.setpgid(0, started_in)
+
+
+def interrupt(*_) -> None:
+    os.kill(os.getpid(), signal.SIGINT)
 
 
 def answered(code: int, stdout: bytes = b"", stderr: bytes = b"") -> Callable[..., object]:
@@ -171,8 +182,9 @@ def answered(code: int, stdout: bytes = b"", stderr: bytes = b"") -> Callable[..
 
 @dataclass
 class Tamper:
-    """The real git, but one verb answers otherwise once the stage is reached: `merged` from the
-    merge on, `synced` once the sync has ended; `effect` runs first on the real checkout."""
+    """The real git, but one verb answers otherwise, without running, once the stage is reached:
+    `merged` from the merge on, `synced` once the sync has ended; `effect` runs first on the real
+    checkout."""
 
     world: World
     verb: str
@@ -183,39 +195,36 @@ class Tamper:
 
     def __call__(self, tree, arguments, profile):
         verb = next(argument for argument in arguments if not argument.startswith("-"))
-        real = checkout.run_git(tree, arguments, profile)
-        self.merged = self.merged or (verb == "merge" and real.returncode == 0)
         synced = (self.world.log / "sync.done").exists()
-        reached = synced if self.stage == "synced" else self.merged
-        if verb == self.verb and reached:
+        if verb == self.verb and (synced if self.stage == "synced" else self.merged):
             self.effect()
             return self.answer(tree, arguments, profile)
+        real = checkout.run_git(tree, arguments, profile)
+        self.merged = self.merged or (verb == "merge" and real.returncode == 0)
         return real
 
 
 # --- guards and the fetch ----------------------------------------------------------------------
 
 
-def test_without_a_terminal_it_refuses_with_that_line_only(world, capsys, monkeypatch):
-    """U2: no terminal."""
-    sys.stdin = SimpleNamespace(isatty=lambda: False)
-    sys.stdout = world.output
+@pytest.mark.parametrize(
+    ("guard", "line"),
+    [
+        ("no terminal", "error: refused, stdin and stdout must be a terminal"),
+        ("another tree", "error: runs only from the live checkout"),
+    ],
+)
+def test_without_a_terminal_or_off_the_live_checkout_it_refuses_with_that_line_only(
+    world, capsys, tmp_path, guard, line
+):
+    """U2: no terminal, not the live checkout."""
+    if guard == "no terminal":
+        world.output.isatty = lambda: False
 
-    end = update.update_checkout(
-        world.state, world.live, None, checkout.run_git, Engine(world.live)
-    )
-
-    assert end is UpdateEnd.REFUSED
-    assert errors(capsys).startswith("error: refused, stdin and stdout must be a terminal")
-    assert world.stdout() == ""
-
-
-def test_from_another_tree_it_names_the_live_checkout_and_nothing_else(world, capsys, tmp_path):
-    """U2: not the live checkout."""
-    end = world.run(home=tmp_path / "elsewhere")
+    end = world.run(home=tmp_path / "elsewhere" if guard == "another tree" else None)
 
     assert end is UpdateEnd.REFUSED
-    assert errors(capsys).splitlines()[0].startswith("error: runs only from the live checkout")
+    assert errors(capsys).splitlines()[0].startswith(line) and world.stdout() == ""
 
 
 @pytest.mark.parametrize("trouble", ["branch", "dirty"])
@@ -320,7 +329,7 @@ def test_a_current_checkout_prints_its_row_and_the_next_step_without_a_question(
 
 @pytest.mark.parametrize("answer", ["no", "", "yes "])
 def test_anything_but_yes_changes_nothing_and_exits_declined(world, capsys, answer):
-    """A1: no, EOF, `yes `."""
+    """A1: no, an empty line, `yes `."""
     world.wait(*subjects("one", "two"))
     before = head_of(world.live)
 
@@ -403,40 +412,34 @@ def test_two_updates_without_an_apply_between_follow_the_configuration_at_head(w
 # --- the recheck after the yes ----------------------------------------------------------------
 
 
-def test_a_ctrl_c_at_the_question_is_the_doors_and_changes_nothing(world):
-    """A4: a real SIGINT while the question waits."""
+@pytest.mark.parametrize("moment", ["at the question", "during the recheck"])
+def test_a_ctrl_c_before_the_merge_is_the_doors_130_and_changes_nothing(
+    world, capsys, monkeypatch, moment
+):
+    """A4: a real SIGINT while the question waits or while the recheck asks git."""
     world.wait(*subjects("waiting"))
     before = head_of(world.live)
+    recheck = Tamper(world, "merge-base", interrupt, merged=True)
+    hit = {
+        "at the question": {"at_the_question": interrupt},
+        "during the recheck": {"git": recheck},
+    }
+    monkeypatch.setattr(stack_cli, "update_checkout", lambda: world.run(**hit[moment]))
 
-    with pytest.raises(KeyboardInterrupt):
-        world.run(at_the_question=lambda: os.kill(os.getpid(), signal.SIGINT))
-
+    assert cli.main(["update"]) == ExitCode.INTERRUPTED
     assert head_of(world.live) == before and world.lock_is_free
+    assert errors(capsys) == "" and "updated" not in world.stdout()
 
 
-def test_a_head_that_moved_after_the_yes_is_refused_with_both_shas(world, capsys):
-    """R1."""
+@pytest.mark.parametrize(
+    "change", ["head moved", "other branch", "detached", "tracked edit", "untracked file"]
+)
+def test_a_checkout_that_changed_after_the_yes_is_refused_saying_how(world, capsys, change):
+    """R1: both shas. R2: what it is and every path."""
     world.wait(*subjects("waiting"))
     planned = head_of(world.live)
-
-    def commit_meanwhile() -> None:
-        plain_git(
-            world.live, "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-qm", "m"
-        )
-
-    end = world.run(at_the_question=commit_meanwhile)
-
-    err = errors(capsys)
-    assert end is UpdateEnd.REFUSED
-    assert planned in err and head_of(world.live) in err and "nothing changed" in err
-    assert err.endswith("next: hal update\n")
-
-
-@pytest.mark.parametrize("change", ["other branch", "detached", "tracked edit", "untracked file"])
-def test_a_checkout_that_is_no_longer_a_clean_main_after_the_yes_is_refused(world, capsys, change):
-    """R2: what it is and every path."""
-    world.wait(*subjects("waiting"))
     actions = {
+        "head moved": lambda: plain_git(world.live, "commit", "--allow-empty", "-qm", "m"),
         "other branch": lambda: plain_git(world.live, "switch", "-q", "-c", "other"),
         "detached": lambda: plain_git(world.live, "switch", "-q", "--detach"),
         "tracked edit": lambda: (world.live / "README.md").write_text("edited\n"),
@@ -446,14 +449,17 @@ def test_a_checkout_that_is_no_longer_a_clean_main_after_the_yes_is_refused(worl
     end = world.run(at_the_question=actions[change])
 
     assert end is UpdateEnd.REFUSED
-    seen = errors(capsys) + world.stdout()
-    assert {
+    err = errors(capsys)
+    seen = err + world.stdout()
+    said = {
+        "head moved": f"planned {planned}, now {head_of(world.live)}",
         "other branch": "other",
         "detached": "detached",
         "tracked edit": "README.md",
         "untracked file": "stray.txt",
-    }[change] in seen
-    assert "nothing changed" in seen
+    }
+    assert said[change] in seen and "nothing changed" in seen
+    assert err.endswith("next: hal update\n")
 
 
 def test_a_pinned_sha_that_is_no_commit_any_more_is_refused(world, capsys):
@@ -504,45 +510,40 @@ def test_waiting_commits_git_cannot_list_end_the_run_before_the_question(world, 
 # --- the merge ----------------------------------------------------------------------------------
 
 
-def test_a_merge_git_refuses_before_changing_anything_is_failed_with_nothing_changed(world, capsys):
-    """M2: an ignored local file lies where the merge brings a tracked one (R4)."""
+@pytest.mark.parametrize("refusal", ["ignored file in the way", "index lock"])
+def test_a_merge_git_refuses_before_changing_anything_is_failed_with_nothing_changed(
+    world, capsys, refusal
+):
+    """M2: an ignored local file lies where the merge brings a tracked one (R4). M3: an index
+    lock."""
     (world.live / ".env").write_text("local\n")
-    tip = world.wait(edit(".env", "from origin\n"))
+    brought = ".env" if refusal == "ignored file in the way" else "README.md"
+    tip = world.wait(edit(brought, "from origin\n"))
     before = head_of(world.live)
+    lock = (world.live / ".git/index.lock").touch if refusal == "index lock" else None
 
-    end = world.run()
+    end = world.run(at_the_question=lock)
 
     err = errors(capsys)
-    assert end is UpdateEnd.FAILED
-    assert head_of(world.live) == before and (world.live / ".env").read_text() == "local\n"
+    assert end is UpdateEnd.FAILED and head_of(world.live) == before
     assert tip in err and "nothing changed" in err and err.endswith("next: hal update\n")
-
-
-def test_a_merge_git_refuses_for_an_index_lock_is_failed_with_nothing_changed(world, capsys):
-    """M3."""
-    world.wait(*subjects("waiting"))
-
-    end = world.run(at_the_question=(world.live / ".git/index.lock").touch)
-
-    assert end is UpdateEnd.FAILED
-    assert "nothing changed" in errors(capsys)
+    assert (world.live / ".env").read_text() == "local\n"
 
 
 @pytest.mark.parametrize("damage", ["head moved", "branch changed", "path changed", "unreadable"])
 def test_a_refused_merge_that_left_a_mark_is_partial_never_nothing_changed(world, capsys, damage):
-    """M6: O3, whatever git left behind."""
+    """M6: O3, whatever git left behind; git's refusal is simulated, the merge never runs, so
+    only the check of what changed tells O3 from O2."""
     tip = world.wait(*subjects("waiting"))
     effects = {
         "head moved": lambda: plain_git(world.live, "merge", "-q", "--ff-only", tip),
         "branch changed": lambda: plain_git(world.live, "switch", "-q", "-c", "other"),
         "path changed": lambda: (world.live / "README.md").write_text("edited\n"),
-        "unreadable": lambda: None,
+        "unreadable": lambda: (world.live / ".git/index").write_bytes(b"not an index"),
     }
     refuse = Tamper(
         world, "merge", answered(1, b"", b"fatal: refused\n"), effect=effects[damage], merged=True
     )
-    if damage == "unreadable":
-        refuse = Refusing(world, answered(128, b"", b"fatal: boom\n"))
 
     end = world.run(git=refuse)
 
@@ -552,38 +553,30 @@ def test_a_refused_merge_that_left_a_mark_is_partial_never_nothing_changed(world
     assert "nothing changed" not in err and err.endswith("next: hal apply\n")
 
 
-@dataclass
-class Refusing:
-    """git refuses the merge, and every question after that fails."""
-
-    world: World
-    answer: Callable[..., object]
-    refused: bool = False
-
-    def __call__(self, tree, arguments, profile):
-        verb = next(argument for argument in arguments if not argument.startswith("-"))
-        if verb == "merge":
-            self.refused = True
-            return self.answer()
-        if self.refused:
-            return answered(128, b"", b"fatal: unreadable\n")()
-        return checkout.run_git(tree, arguments, profile)
-
-
-def test_a_real_ctrl_c_during_the_merge_waits_and_stops_before_the_sync(
-    world, capsys, tmp_path, monkeypatch
+@pytest.mark.parametrize("merge", ["succeeds", "is refused", "fails its check"])
+def test_a_real_ctrl_c_during_the_merge_waits_and_ends_interrupted_before_the_sync(
+    world, capsys, signalling_git, merge
 ):
-    """M4: the signal reaches the run while git merges; the merge ends, the sync never starts."""
-    tip = world.wait(*subjects("waiting"))
-    git_on_path(tmp_path, monkeypatch, "merge")
+    """M4: the group's SIGINT reaches the run while git merges in its own session; the merge ends
+    and the sync never starts. O6: a merge git refuses, or a failed check after it, still ends
+    130."""
+    start, tip = head_of(world.live), world.wait(*subjects("waiting"))
+    signalling_git("merge")
+    hit = {
+        "succeeds": {},
+        "is refused": {"at_the_question": (world.live / ".git/index.lock").touch},
+        "fails its check": {"git": Tamper(world, "status", answered(0, b" M README.md\0"))},
+    }
 
-    end = world.run()
-    monkeypatch.delenv("FAKE_SIGNAL")
+    end = world.run(**hit[merge])
+    signalling_git("")
 
     err = errors(capsys)
     assert end is UpdateEnd.INTERRUPTED
-    assert head_of(world.live) == tip and not (world.log / "sync.args").exists()
-    assert tip in err and "interrupted" in err and "nothing changed" not in err
+    assert head_of(world.live) == (start if merge == "is refused" else tip)
+    assert tip in err and "interrupted" in err and "the sync had not started" in err
+    assert ("nothing changed" in err) == (merge == "is refused")
+    assert err.endswith("next: hal apply\n") and not (world.log / "sync.args").exists()
     assert world.lock_is_free
 
 
@@ -634,7 +627,7 @@ def test_an_unexpected_error_after_the_merge_is_partial_with_its_type_only(world
 
 
 def test_the_sync_is_the_merged_trees_script_with_the_checkout_alone_and_inherits_nothing(world):
-    """S1: no lock descriptor, SIGINT unblocked, its own process group."""
+    """S1: no lock descriptor, SIGINT unblocked, its own process group in the caller's session."""
     world.wait(*subjects("waiting"))
 
     assert world.run() is UpdateEnd.DONE
@@ -642,38 +635,33 @@ def test_the_sync_is_the_merged_trees_script_with_the_checkout_alone_and_inherit
     assert world.logged("sync.args").splitlines() == [str(world.live)]
     assert str(world.state / apply.APPLY_LOCK) not in world.logged("sync.fds")
     assert int(world.logged("sync.mask").split()[-1], 16) & (1 << (signal.SIGINT - 1)) == 0
-    assert world.logged("sync.pgid").strip() == world.logged("sync.pid").strip()
+    assert world.logged("sync.ids").split() == [world.logged("sync.pid").strip(), str(os.getsid(0))]
 
 
-def test_a_failed_sync_is_partial_with_its_last_line_and_never_names_uv_sync(
-    world, capsys, monkeypatch
-):
-    """S2: O5; HEAD stays at the sha, the record unchanged; then the retry finds nothing behind."""
-    tip = world.wait(*subjects("waiting"))
-    monkeypatch.setenv("FAKE_SYNC", "fail")
+@pytest.mark.parametrize("sync", ["exits 1", "is not executable"])
+def test_a_failed_sync_is_partial_and_never_names_uv_sync(world, capsys, monkeypatch, sync):
+    """S2: O5 with uv's last line, credentials redacted (R3). S3: the merged commit carries the
+    script without its executable bit. HEAD stays at the sha, the record unchanged; then the retry
+    finds nothing behind."""
+    if sync == "exits 1":
+        tip = world.wait(*subjects("waiting"))
+        monkeypatch.setenv("FAKE_SYNC", "fail")
+    else:
+        tip = world.wait(edit("bin/hal-sync", FAKE_SYNC))
 
     end = world.run()
 
     err = errors(capsys)
     assert end is UpdateEnd.FAILED
-    assert tip in err and "sync the dependencies" in err and "uv: lock file is out of date" in err
+    assert tip in err and "sync the dependencies" in err and "hunter2" not in err
+    uv_line = "uv: cannot fetch https://<redacted>@pypi.invalid/simple"
+    assert (uv_line in err) == (sync == "exits 1")
     assert "uv sync" not in err + world.stdout() and err.endswith("next: hal apply\n")
     assert head_of(world.live) == tip and world.record() == APPLIED_RECORD
     world.output.seek(0)
     world.output.truncate()
     assert world.run() is UpdateEnd.DONE
     assert world.stdout().splitlines()[-1] == "next: hal apply"
-
-
-def test_a_sync_script_that_is_not_executable_is_a_failed_sync(world, capsys):
-    """S3: the merged commit carries the script without its executable bit."""
-    tip = world.wait(edit("bin/hal-sync", FAKE_SYNC))
-
-    end = world.run()
-
-    assert end is UpdateEnd.FAILED
-    err = errors(capsys)
-    assert tip in err and "sync the dependencies" in err
 
 
 def test_a_real_ctrl_c_during_the_sync_kills_its_whole_group_before_the_lock_is_freed(
@@ -688,7 +676,7 @@ def test_a_real_ctrl_c_during_the_sync_kills_its_whole_group_before_the_lock_is_
     err = errors(capsys)
     assert end is UpdateEnd.INTERRUPTED
     assert tip in err and "half synced" in err
-    assert not [name for name in ("sync.pid", "sync.child") if is_alive(world.logged(name))]
+    assert all(is_gone(int(world.logged(name))) for name in ("sync.pid", "sync.child"))
     assert world.lock_is_free
 
 
@@ -707,14 +695,14 @@ def test_a_head_that_is_not_the_approved_one_after_the_sync_is_partial(world, ca
 
 
 def test_a_real_ctrl_c_after_the_sync_is_an_interrupt_naming_the_head_check(
-    world, capsys, tmp_path, monkeypatch
+    world, capsys, signalling_git
 ):
     """S6."""
     tip = world.wait(*subjects("waiting"))
-    git_on_path(tmp_path, monkeypatch, "synced")
+    signalling_git("synced")
 
     end = world.run()
-    monkeypatch.delenv("FAKE_SIGNAL")
+    signalling_git("")
 
     err = errors(capsys)
     assert end is UpdateEnd.INTERRUPTED
@@ -722,11 +710,45 @@ def test_a_real_ctrl_c_after_the_sync_is_an_interrupt_naming_the_head_check(
     assert head_of(world.live) == tip and world.record() == APPLIED_RECORD and world.lock_is_free
 
 
+class Troubled(Terminal):
+    """A terminal on which writing the closing verdict runs `trouble` first."""
+
+    def __init__(self, trouble: Callable[[], None]) -> None:
+        super().__init__()
+        self.trouble = trouble
+
+    def write(self, text: str) -> int:
+        if "checkout updated" in text:
+            self.trouble()
+        return super().write(text)
+
+
+def broken_pipe() -> None:
+    raise BrokenPipeError
+
+
+@pytest.mark.parametrize("trouble", [interrupt, broken_pipe], ids=["Ctrl-C", "output fails"])
+def test_a_ctrl_c_or_an_output_failure_at_the_closing_verdict_names_the_sha_and_the_step(
+    world, capsys, trouble
+):
+    """O6: a real SIGINT while the closing verdict is written ends 130; O8: a failing output 3."""
+    tip = world.wait(*subjects("waiting"))
+    world.output = Troubled(trouble)
+
+    end = world.run()
+
+    err = errors(capsys)
+    assert end is (UpdateEnd.INTERRUPTED if trouble is interrupt else UpdateEnd.FAILED)
+    assert tip in err and "'write the closing verdict'" in err and err.endswith("next: hal apply\n")
+    assert ("unexpected error (BrokenPipeError)" in err) == (trouble is broken_pipe)
+    assert head_of(world.live) == tip and world.lock_is_free
+
+
 # --- the whole run ----------------------------------------------------------------------------
 
 
 def test_a_yes_fast_forwards_syncs_and_names_the_apply_without_touching_the_record(world, capsys):
-    """E1."""
+    """E1, and E3 without `-v`: nothing on stderr."""
     tip = world.wait(edit("README.md"), edit("src/hal/x.py"))
     short = plain_git(world.live, "rev-parse", "--short", tip).stdout.strip()
 
@@ -772,12 +794,3 @@ def test_verbose_echoes_every_git_call_and_the_sync_command_without_the_environm
     assert "git fetch" in err and "git merge --ff-only" in err
     assert f"{world.live / 'bin/hal-sync'} {world.live}" in err
     assert "hunter2" not in err and "SECRET_TOKEN" not in err
-
-
-def test_without_verbose_nothing_is_echoed(world, capsys):
-    """E3."""
-    world.wait(*subjects("waiting"))
-
-    world.run()
-
-    assert errors(capsys) == ""
