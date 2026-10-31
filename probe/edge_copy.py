@@ -37,6 +37,7 @@ from hal.stack import catalog, checkout, compose, deploy_checkout
 APPLY_SECONDS = 600
 NOT_RUNNABLE = 3  # a probe's exit when its preconditions fail, before it touches anything
 HAL_OK, HAL_FAILURE = 0, 3  # hal's exits: 3 is every outcome of the stack that is not "done"
+NOTHING_TO_CHANGE = "nothing to change"  # the verdict of a `hal apply` whose plan is empty
 DISCARD_OUTPUT = "/dev/null"
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")  # hal colours its rows at a pty
 REMOTE = "origin.git"

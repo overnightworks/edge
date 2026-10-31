@@ -16,22 +16,24 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from edge_copy import HAL_FAILURE, ProbeFailed, advance_origin, expect, git
+from edge_copy import HAL_FAILURE, NOTHING_TO_CHANGE, ProbeFailed, advance_origin, expect, git
 
+from hal.grammar import ExitCode
 from hal.output import write_line
 from hal.stack import checkout
 
 if TYPE_CHECKING:
     from probe import Probe
 
-DECLINED = 1  # hal's exit for an update answered `no`
+DECLINED = ExitCode.FINDINGS  # hal's exit for an update answered `no`
 IMPORT_FAILED = 1  # Python's exit for a traceback
 MARKER_VARIABLE = "HAL_PROBE_MARKER"
-PROJECT_NAME = "overnightworks-hal"
-NOTHING_TO_CHANGE = "nothing to change"
+PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
+PROJECT_NAME = tomllib.loads(PYPROJECT.read_text())["project"]["name"]
 WAITING_NOTE = "\n"  # a change that touches no setting
 APPLY_MODULE = "src/hal/stack/apply.py"
 MARKER_CODE = f"""

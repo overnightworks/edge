@@ -73,7 +73,7 @@ sys.path.insert(0, str(REPO / "src"))  # edge's own modules; hal.stack imports P
 
 import checkout_update  # noqa: E402
 import edge_copy  # noqa: E402
-from edge_copy import ProbeFailed, expect  # noqa: E402
+from edge_copy import NOTHING_TO_CHANGE, ProbeFailed, expect  # noqa: E402
 
 from hal.output import write_line  # noqa: E402
 from hal.stack import barrier, checkout, compose, core, tunnel  # noqa: E402
@@ -90,7 +90,6 @@ NOT_FOUND = (404, b"404 page not found\n", UNIT)  # status, body, X-Edge-Barrier
 UNCONFIGURED = (404, b"404 page not found\n", None)  # a Traefik that has loaded no router yet
 WHOAMI_SEEN = b"Hostname:"
 HELLO_ANSWERING = "hello answering"
-NOTHING_TO_CHANGE = "nothing to change"
 TRAEFIK_FILE = "traefik.yml"
 RECREATED = "traefik is recreated and runs the checked-out traefik.yml"
 TRAEFIK_KEPT = "the traefik container is the old one"
