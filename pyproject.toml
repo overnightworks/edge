@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "pyyaml>=6",
-    "overnightworks-appkit @ https://github.com/overnightworks/appkit/releases/download/v0.10.0/overnightworks_appkit-0.10.0-py3-none-any.whl#sha256=c7261a2d134fac87c6263e5410dbf9b29330e13e0252050d643cf0295c865559",
+    "overnightworks-appkit @ https://github.com/overnightworks/appkit/releases/download/v0.11.0/overnightworks_appkit-0.11.0-py3-none-any.whl#sha256=0278c2b9feeb438ee1fcf79a7a6d9dce98a5a5e7ee43b928b82386dda39fe007",
 ]
 
 [project.scripts]
