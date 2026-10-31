@@ -62,6 +62,8 @@ LIVE_COMPOSE = (
     "--file", str(REPOSITORY / "compose.yaml"), "--profile", "agent-service",
 )  # fmt: skip
 GATEWAY_ADDRESS_KEY = "x-egress-address"
+# compose.yaml's anchors of the gateway's entrypoint addresses, one per network it serves.
+ENTRYPOINT_ADDRESS_KEYS = (GATEWAY_ADDRESS_KEY, "x-litellm-egress-address")
 SERVICE = "agent-service"
 SMOKE_SERVICE = "agent-smoke"
 EGRESS_SERVICE = "agent-egress"
@@ -180,6 +182,10 @@ class Stack:
     @property
     def gateway(self) -> str:
         return self.configuration[GATEWAY_ADDRESS_KEY]
+
+    @property
+    def entrypoint_addresses(self) -> list[str]:
+        return [self.configuration[key] for key in ENTRYPOINT_ADDRESS_KEYS]
 
 
 @dataclass
@@ -678,16 +684,18 @@ def judge_egress(targets: EgressTargets, seen: dict, gateway: str) -> list[Cell]
     ]  # fmt: skip
 
 
-def judge_listeners(listening: Mapping[str, Sequence[str]], gateway: str) -> Cell:
-    """Only the gateway's TCP 443 and Docker's embedded resolver may listen."""
+def judge_listeners(listening: Mapping[str, Sequence[str]], entrypoints: Sequence[str]) -> Cell:
+    """Only TCP 443 on each of the gateway's `entrypoints` addresses and Docker's embedded resolver
+    may listen."""
     others = [
         f"{protocol} {name}"
         for protocol, names in listening.items()
         for name in names
         if not name.startswith(f"{EMBEDDED_RESOLVER}:")
     ]
+    expected = sorted(f"tcp {address}:443" for address in entrypoints)
     return Cell(
-        "E12 the gateway's listeners", verdict_of(others == [f"tcp {gateway}:443"]),
+        "E12 the gateway's listeners", verdict_of(sorted(others) == expected),
         f"listening: {others}",
     )  # fmt: skip
 
@@ -729,7 +737,7 @@ def listeners_cell(stack: Stack, service: str) -> Cell:
         listening = None
     if not isinstance(listening, dict):
         return Cell("E12 the gateway's listeners", Verdict.FAILED, SAMPLE_FAILED)
-    return judge_listeners(listening, stack.gateway)
+    return judge_listeners(listening, stack.entrypoint_addresses)
 
 
 # --- the run ----------------------------------------------------------------------------------

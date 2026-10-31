@@ -8,7 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from workstation_support import (
+from support.workstation_support import (
     RunnerWithCleanLogs,
     Sandbox,
     home_check,

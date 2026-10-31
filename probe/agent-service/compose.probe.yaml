@@ -1,11 +1,12 @@
-# Probe overlay (probe/agent-service/egress.py), laid over a copy of compose.yaml that the probe
-# moved to a free /24, so it never collides with the live stack's edge_egress (172.31.252.0/24):
-# the gateway's static file from that copy, and the two packet windows. Never used live. The
-# copy also names the fixed networks `<project>_...` (edge_copy.namespaced_compose).
+# Probe overlay (probe/agent-service/egress.py), laid over a copy of compose.yaml whose networks
+# that pin the gateway's address (edge_copy.GATEWAY_NETWORKS) the probe moved to free /24s, so it
+# never collides with the live stack's: the gateway's static file from that copy, and the two
+# packet windows. Never used live. The copy also names the fixed networks `<project>_...`
+# (edge_copy.namespaced_compose).
 services:
   agent-egress:
     volumes:
-      # The gateway's static file with its entrypoint address moved to the probe subnet; the
+      # The gateway's static file with its entrypoint addresses moved to the probe subnets; the
       # dynamic directory is the real one.
       - ${PROBE_EGRESS_STATIC:?run through probe/agent-service/egress.py}:/etc/traefik/traefik.yml:ro
 

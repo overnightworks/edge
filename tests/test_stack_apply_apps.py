@@ -1,6 +1,7 @@
 """`hal apply --local` with apps (#255 P1, A7, A10, A20, A22): one plan and one `yes`, the app
 step after the units and the realm, on the scripted boundaries of
-`tests/support/stack_apply.py` and the real origin and scripted Docker of `app_support`."""
+`tests/support/stack_apply.py` and the real origin and scripted Docker of
+`tests/support/app_support.py`."""
 
 import io
 import sys
@@ -12,7 +13,7 @@ from pathlib import Path
 
 import pytest
 import support.stack_apply_apps as stack_apply_apps_support
-from app_support import (
+from support.app_support import (
     FLEET,
     HOSTED_COMPOSE,
     HOSTED_FLEET,

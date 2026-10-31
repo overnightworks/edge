@@ -10,21 +10,22 @@ the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `
 
 `agent-service/image/` is the recipe of the service's image (agent-runtime, Claude Code
 `2.1.302`, Codex `0.163.0`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
-pinned: both base images by digest, the Python packages by hash, each CLI by its sha256 (Codex as its release archive, whose one executable the Dockerfile unpacks by name). A
-changed or vanished artifact fails the build. The image is never pulled from a registry, because its
+pinned: the base image by digest, the Python packages by hash, each CLI by its sha256 and its reported version (Codex as its release archive, whose one executable the Dockerfile unpacks by name). A
+wrong hash fails the build, and so does a CLI that does not report its pinned version; a build that
+fetches also fails on a changed or vanished artifact. The image is never pulled from a registry, because its
 name could be anyone's on a public one (`pull_policy: never`), so it is built on the PC.
 `agent-service/setup` builds it when it is missing, and `hal apply` asks to run that setup before it
 switches the unit on. The build line it runs, from the repository root:
 
 ```sh
-docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.11.0-claude-2.1.302-codex-0.163.0 agent-service/image
+docker build -f agent-service/image/Dockerfile -t edge-agent-service:0.12.0-claude-2.1.302-codex-0.163.0 agent-service/image
 ```
 
 A release bump runs `python3 scripts/agent_service_lock.py <tag>` (it needs `git` and `uv`), the
 only writer of `requirements.txt`. A bump of either CLI changes its pin in the Dockerfile and its
 `version` in `service.toml`; every bump changes the image name, which carries the release and both CLI
 versions, in `compose.yaml` and in the build line above together. A base-image digest bump alone keeps
-the name, so setup builds nothing. `probe/agent-service/image.py` builds without cache and starts the
+the name, so setup builds nothing. `probe/agent-service/image.py` builds with `--no-cache` (the CLI files are served by digest) and starts the
 entrypoint from the clean image.
 
 ## The service
@@ -80,14 +81,23 @@ otherwise, naming `cli.anthropic.token_file` and the path, never the content. `h
 the entry `agent-service-claude`.
 
 A second login, for Codex, lives beside it in `~/.secrets/agent-service/codex/auth.json`
-(folder 0700, file 0600), bound read-only at `/run/agent-service/login/codex` the same way. The start
-refuses an incomplete sign-in or a file that group or others can touch, naming `cli.openai.token_file`
-and the path; a Codex run gets a copy without the renewal token, and the service does not renew it.
-`agent-service/setup --check` does not check it: a missing folder fails the start. `CODEX_HOME=~/.secrets/agent-service/codex codex login` writes it. It is a
+(folder 0700, file 0600), bound at `/run/agent-service/login/codex` the same way, but read-write: the
+service renews this login itself, so it needs the directory to create `.auth.json.new` and rename it
+over the file (a read-only directory logs `sibling not created` hourly and nothing renews). It is the
+service's one writable bind. The start refuses an incomplete sign-in or a file that group or others
+can touch, naming `cli.openai.token_file` and the path; a Codex run gets a copy without the renewal
+token. A stop waits for a renewal in flight, so `stop_grace_period` in `compose.yaml` covers about 45 s
+for the renewal plus at least 60 s beyond it; a kill sooner can leave `.auth.json.new` behind.
+`agent-service/setup --check` does not check it: a missing folder fails the start. It is a
 separate login with its own refresh token, so it never shares the operator's `~/.codex` and never
-rotates it away. `hal setup` walks the operator through that browser login when the file is missing and
-leaves a present one untouched; hal sets the rights afterwards and never reads or prints the file. What the CLI leaves beside it (`log/`, `tmp/`) is part of the entry, never an unknown file, and a failed login removes only what that run left.
-`hal secrets -v` lists the entry `agent-service/codex` and shows the renewal command above.
+rotates it away. `hal setup` walks the operator through that browser login when the file is missing (a link at
+`auth.json` counts as missing) and
+leaves a present one untouched; that is also the way to sign in again, once the file is gone. Because the
+service can write the folder, `codex login` never runs in it: hal runs it with `CODEX_HOME` at a fresh
+private folder beside it, moves only a regular `auth.json` (0600) into the folder, replacing whatever
+stood there without following a link, and removes the rest, however the login ends. hal never reads or
+prints the file. `hal secrets -v` lists the entry `agent-service/codex`; every file in the folder besides
+`auth.json` and the service's `.auth.json.new` is an unknown file there.
 
 **Why 1000:1000.** The service's reader refuses a login file that group or others can touch, so the
 container user must own the directory and the file. 1000 is the operator's uid on this PC, so his
@@ -153,12 +163,56 @@ while songmaker-web is not on the network (otherwise as in "The service"), then
 songmaker-web with songmaker's own deploy command. A file bind keeps the old inode, so only a recreate
 reaches a container, never a restart. There is no grace period.
 
+## The API credential
+
+The API route's bearer is one service credential that `litellm` checks and, once the route is on,
+the service sends. Only `agent-service/setup` makes it, in the operator's terminal after `hal apply`
+has asked:
+
+```
+~/.secrets/agent-service/api/                   0700, uid 1000
+~/.secrets/agent-service/api/credential.json    0600, uid 1000, UTF-8 JSON, only the field shared_key, at most 16 KiB
+```
+
+**The contract.** The file is what agent-runtime's reader accepts (`docs/operations.md` of
+agent-runtime): UTF-8 JSON with only `shared_key` and/or `app_keys`, no duplicate field, `app_keys` an
+object, every value of the credential syntax. The rules live once on the hal side, in
+`agent-service/litellm/gate.py` (`shared_key_of`), and setup judges the bytes it read through them,
+so `--check` never says "set up" for a file the hook refuses. A missing credential is made with
+`secrets.token_urlsafe(32)` through `credential.json.new` (created exclusively), then `link(2)`,
+which refuses any existing entry. Every path is reached without following a link, under one lock on
+the folder. A plain run and `--renew` never replace a credential, and nothing is printed of it. Setup
+refuses, in one line that names the file, and changes nothing, `--renew` and the token included:
+
+- a credential the reader refuses (larger than its 16 KiB, not UTF-8 JSON, an unknown or duplicate
+  field, `app_keys` not an object, a value outside the syntax): the line names
+  `agent-service/setup --replace-api-credential`; a file within the limit is judged whole;
+- a wrong owner, a mode other than 0600, a link or no regular file: the line asks for the operator's
+  own fix, because setup never narrows or unlinks those. A file setup may not open is judged by its
+  owner first; only one of the right owner that still cannot be read is a host failure (`--check`
+  exits 2).
+
+`agent-service/setup --check` changes nothing and exits 0 for an accepted credential and 1 for the
+first gap, a refusal or a leftover `credential.json.new`, which the next plain run clears.
+`credential.next.json` waits for `--replace-api-credential`.
+
+**Replacing the credential.** `agent-service/setup --replace-api-credential` works only at a terminal,
+says what it does and goes on after a typed `yes`. It writes `credential.next.json`, checks it with
+the reader and renames it over `credential.json`; the old key is not erased from the disk. It ends
+by naming the recreates: `litellm`, and `agent-service` as well while `service.toml` has an `[api]`
+table. Both containers read the file at create time, and the old credential gets 401 at LiteLLM
+after its recreate, so the order is LiteLLM first. A lost credential needs no backup: it protects no
+stored data.
+
+The master key `~/.secrets/litellm/master-key` is not made here: `hal setup` generates it (a
+`service-password`, never shown) and creates only a missing file.
+
 ## What a turn leaves behind
 
-The service has no writable persistent mount. The CLI's per-run home and work directories and `/tmp`
+The service has no writable persistent mount but the Codex login directory (a renewal rewrites `auth.json` there, nothing a turn leaves). The CLI's per-run home and work directories and `/tmp`
 are tmpfs ([The service](#the-service)), which the kernel may page to swap, and a restart or recreate
-drops them. The only host binds are `service.toml` and the two login directories, both read-only
-([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the Claude login reaches the CLI only through its environment. The service sets
+drops them. The only host binds are `service.toml` and the two login directories, read-only except the Codex
+login directory, which the service renews ([The login](#the-login)), and the two read-only file secrets ([The service](#the-service)); the Claude login reaches the CLI only through its environment. The service sets
 no `logging` override, so its logs follow the Docker daemon's settings; their destination and
 retention are set there, not in this file (log retention: edge#167,
 <https://github.com/overnightworks/edge/issues/167>). What the service itself keeps of a run is
@@ -194,9 +248,41 @@ and calls `http://agent-service:8080` (the service's own default port; the smoke
 use it). No CA mount is needed: the service is plain http on an isolated internal network, and no
 host process can reach it, because the network has no host address and publishes no port.
 
+## The API route
+
+A person who is in an API group but not in a subscription group reaches the provider through
+LiteLLM instead of a CLI. The path is `agent-service`, `litellm-front`, `litellm`, `agent-egress`,
+the provider, over the internal, isolated networks `litellm-api`, `litellm-backend` and
+`litellm-egress`. Nothing runs it yet: the profile `litellm` is in no unit, and `service.toml`
+has no `[api]` table.
+
+- **The boundary.** `litellm-front` is the same pinned Traefik as the gateway with one router,
+  `POST /v1/chat/completions` (`agent-service/litellm/front/`); every other method and path ends in
+  the front itself, so LiteLLM's own unauthenticated routes are unreachable. LiteLLM's hook
+  (`agent-service/litellm/auth.py`, deciding in `gate.py`) allows that one route with the service
+  credential as bearer, no query string, the body sent as exactly `application/json` (LiteLLM also
+  parses form bodies), no `x-litellm-` header (LiteLLM reads per-request retries and timeouts from
+  them), no `anthropic-` header (LiteLLM forwards `anthropic-version` and `anthropic-beta` to the
+  provider) and exactly the body keys `model`, `messages` and `tools`, which agent-runtime's one posting
+  function sends. LiteLLM has no database and no limiter and
+  messages are not logged; it needs a master key to boot, a third file secret that `hal setup`
+  generates and no client holds, so its admin routes stay closed.
+- **What stays reachable.** The front sees every message and the service credential in memory; a
+  compromised front could spend credit through LiteLLM, bounded by the prepaid credit. The API
+  route has no concurrency cap until agent-runtime#634. LiteLLM reaches only the front and, through
+  the gateway's `litellm` entrypoint, the provider's name.
+- **A change reaches LiteLLM only through a recreate** of its container: `config.yaml` (model
+  remapping included), `auth.py`, `gate.py` and `start.sh` are read once at start, and the three
+  secrets (provider key, master key and service credential) are files mounted at create time.
+- **Proof:** `probe/agent-service/litellm.py` runs the whole path on a fake-only stack (its
+  docstring gives the command line): the fake Anthropic and a fake issuer sit on `internet`, made
+  internal, and the probe refuses to start otherwise. Re-run it for every LiteLLM, Traefik or Docker
+  bump. The CI job `front` runs the front's table of requests (`tests/test_litellm_front.py`) for
+  every Traefik bump; a LiteLLM bump still needs the probe.
+
 ## Proofs
 
-Re-run the probes in `probe/agent-service/` for every Traefik, Docker or agent-runtime upgrade.
+Re-run the probes in `probe/agent-service/` for every Traefik, Docker, agent-runtime or LiteLLM upgrade.
 
 **The live smoke** is one command, run in the live checkout after `hal apply` and with the image
 built: `cd ~/srv/hal && python3 agent-service/live_smoke.py`. It signs you in as yourself (the

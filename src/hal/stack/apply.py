@@ -142,11 +142,13 @@ def _plan(
     engine: compose.Compose,
     marks: switches.Switches,
     record: core.Record,
-    repository: Path,
+    live: checkout.Git,
     app_runtime: AppRuntime,
     rename: Rename = os.rename,
 ) -> Plan:
+    repository = live.tree
     fleet = read_fleet(engine, repository)
+    tracked = core.Checkout.read(fleet.config, live)
     read = {unit.key: marks.mark(unit.key) for unit in fleet.units}
     switched_off = switched_off_units(fleet, read, repository)
     gates = unit_gates(fleet.units, switched_off)
@@ -163,16 +165,14 @@ def _plan(
     containers = engine.containers()
     states = compose.states_of(containers)
     plans = plan_switches(fleet.units, fleet.profile_services, fleet.config, states, switched_off)
-    core_plans = core.plan_core(fleet.config, containers, hashes, repository, record)
-    follower_plans = core.plan_followers(
-        fleet.config, containers, hashes, repository, record, gates
-    )
+    core_plans = core.plan_core(fleet.config, containers, hashes, tracked, record)
+    follower_plans = core.plan_followers(fleet.config, containers, hashes, tracked, record, gates)
     unit_services = plan_unit_services(fleet, containers, hashes, plans, followers, gates, engine)
     realm = reconcile.plan_realm(
         reconcile.Observer(engine),
         record,
         fleet.config,
-        repository,
+        tracked,
         gates.get(reconcile.REALM_UNIT),
         reconcile.restart_of(plans, unit_services.recreates),
     )
@@ -181,6 +181,7 @@ def _plan(
     legal = plan_legal(repository, record.directory / RECORD_FILE, fleet)
     return Plan(
         fleet,
+        tracked,
         read,
         core_plans,
         follower_plans,
@@ -235,7 +236,7 @@ def apply_local(
         return _plan_and_apply(
             state_directory,
             engine,
-            repository,
+            live,
             check,
             run_setup,
             verifier,
@@ -302,7 +303,7 @@ def _environment_ready(repository: Path, ensure_environment: EnsureEnvironment) 
 def _plan_and_apply(
     state_directory: Path,
     engine: compose.Compose | None,
-    repository: Path,
+    live: checkout.Git,
     check: setup.SetupCheck,
     run_setup: setup.SetupRunner,
     verifier: barrier.Verifier,
@@ -312,13 +313,14 @@ def _plan_and_apply(
     rename: Rename,
     elapsed: Callable[[], float],
 ) -> int:
+    repository = live.tree
     engine = engine or compose.Compose(repository=repository)
     marks = switches.Switches(state_directory)
     record = core.Record(state_directory)
     try:
         completed: list[str] = []
         while True:  # the plan made after the setups ran is held to the same refusals
-            planned = _plan(engine, marks, record, repository, app_runtime, rename)
+            planned = _plan(engine, marks, record, live, app_runtime, rename)
             missing = _missing_setups(planned, repository, check)
             exit_code = _refusal(missing, planned, bool(completed))
             if exit_code is None:
@@ -482,7 +484,7 @@ def _realm_step(
         backup,
         core_phase.record,
         planned.fleet.config,
-        core_phase.repository,
+        planned.checkout,
         marks,
         planned.read.get(reconcile.REALM_UNIT),
         clock=core_phase.verifier.clock,

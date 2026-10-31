@@ -1,8 +1,9 @@
 """Docker Compose for `hal apply`: what the stack is made of and what is running of it.
 
 The pure part maps the profiles of a resolved or parsed compose file to their services. The
-`Compose` class is the one place that runs `docker compose`; it never runs `down` and never
-names a volume, so a unit switched off loses containers and keeps its data.
+`Compose` class runs the stack's `docker compose` calls but the one `down` of `hal migrate
+stack` (`project_move`); it never runs `down` and never names a volume, so a unit switched off
+loses containers and keeps its data.
 """
 
 import json

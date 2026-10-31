@@ -10,6 +10,9 @@ from dataclasses import dataclass
 
 from hal.output.command import Verb, command
 
+ALARM_JOB_NAME = "hal-alarm"
+DEFAULT_ALARM_INTERVAL = 5
+
 
 @dataclass(frozen=True)
 class TimerJob:
@@ -20,10 +23,27 @@ class TimerJob:
     timer_description: str
     verb: Verb
     arguments: tuple[str, ...]
-    on_calendar: str
     timeout_start: str | None = None
     success_exit_statuses: tuple[int, ...] = ()
     documentation: str | None = None
+    on_calendar: str | None = None
+    """A calendar event; a job has this or `interval_minutes`."""
+    interval_minutes: int | None = None
+    """Minutes after boot and after each run, for a job whose repetition comes from the settings file."""
+
+
+def alarm_job(interval: int) -> TimerJob:
+    return TimerJob(
+        name=ALARM_JOB_NAME,
+        service_description=(
+            f"{command(Verb.ALARM)}: mails a service or backup finding that several runs in a row"
+            " reported, and one that went"
+        ),
+        timer_description=f"{command(Verb.ALARM)} every {interval} minutes",
+        verb=Verb.ALARM,
+        arguments=(),
+        interval_minutes=interval,
+    )
 
 
 TIMER_JOBS: tuple[TimerJob, ...] = (
@@ -63,4 +83,10 @@ TIMER_JOBS: tuple[TimerJob, ...] = (
         # (unexpected error) still fail the unit.
         success_exit_statuses=(1,),
     ),
+    alarm_job(DEFAULT_ALARM_INTERVAL),
 )
+
+
+def with_alarm_interval(declared: tuple[TimerJob, ...], interval: int) -> tuple[TimerJob, ...]:
+    """The declared jobs with the alarm's repetition from the settings file."""
+    return tuple(alarm_job(interval) if job.name == ALARM_JOB_NAME else job for job in declared)

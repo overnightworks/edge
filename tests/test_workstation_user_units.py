@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from workstation_support import Sandbox, run_hal_setup
+from support.workstation_support import Sandbox, run_hal_setup, write_hal_config
 
 from hal import cli as hal_cli
 from hal.grammar import ExitCode
@@ -119,7 +119,7 @@ class Machine:
         return self.layout.live_checkout / "systemd"
 
     def arrange_legacy_links(self, *, dangling: bool) -> None:
-        """Today's state: six links into `<live checkout>/systemd/`, three more in the wants
+        """Today's state: eight links into `<live checkout>/systemd/`, four more in the wants
         directory, systemd loaded and every timer running."""
         self.legacy_directory.mkdir(parents=True)
         self.wants.mkdir()
@@ -169,7 +169,7 @@ def machine(tmp_path: Path) -> Machine:
     return Machine(tmp_path / "home")
 
 
-def test_a_fresh_apply_writes_six_marker_files_reloads_then_enables_the_three_timers(
+def test_a_fresh_apply_writes_eight_marker_files_reloads_then_enables_the_four_timers(
     machine: Machine,
 ) -> None:
     assert machine.step.apply().applied is Applied.CHANGED
@@ -222,6 +222,25 @@ Description=hal check: reports what is wrong on this machine and in the secrets 
 Type=oneshot
 ExecStart=%h/{live}/.venv/bin/hal check
 SuccessExitStatus=1
+""",
+    "hal-alarm.timer": """\
+[Unit]
+Description=hal alarm every 5 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target
+""",
+    "hal-alarm.service": """\
+[Unit]
+Description=hal alarm: mails a service or backup finding that several runs in a row reported, and one that went
+
+[Service]
+Type=oneshot
+ExecStart=%h/{live}/.venv/bin/hal alarm
 """,
     "hal-backup-restore-test.service": """\
 [Unit]
@@ -325,7 +344,7 @@ def test_the_plan_fact_names_the_replaced_links_only_while_a_link_points_into_sy
 ) -> None:
     assert machine.step.open_fact() == ""
     machine.arrange_legacy_links(dangling=False)
-    assert machine.step.open_fact() == "replaces 6 links with 3 timers"
+    assert machine.step.open_fact() == "replaces 8 links with 4 timers"
     machine.step.apply()
     (machine.user_units / "hal-check.service").unlink()
     assert machine.step.open_fact() == ""
@@ -454,7 +473,7 @@ def test_a_failed_replacement_after_one_success_leaves_a_mixed_tree_a_fresh_appl
         machine.step.apply()
 
     entries = [machine.user_units / name for name in UNIT_NAMES]
-    assert [entry.is_symlink() for entry in entries] == [False, *[True] * 5]
+    assert [entry.is_symlink() for entry in entries] == [False, *[True] * (len(UNIT_NAMES) - 1)]
     assert all(
         entry.readlink().parent == machine.legacy_directory
         for entry in entries
@@ -631,7 +650,7 @@ def test_a_changed_timers_row_counts_the_timers_and_says_systemd_reloaded(
     code, lines, _ = setup_lines(sandboxed_machine, sandbox, capsys)
 
     assert code == ExitCode.OK
-    assert "  ✓ timers          changed        3 timers · systemd reloaded" in lines
+    assert "  ✓ timers          changed        4 timers · systemd reloaded" in lines
 
 
 def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
@@ -643,7 +662,7 @@ def test_a_changed_timers_row_without_a_reload_only_counts_the_timers(
 
     _, lines, _ = setup_lines(sandboxed_machine, sandbox, capsys)
 
-    assert "  ✓ timers          changed        3 timers" in lines
+    assert "  ✓ timers          changed        4 timers" in lines
 
 
 def test_an_unchanged_timers_row_is_bare(
@@ -672,7 +691,7 @@ def test_the_plan_of_the_first_run_after_the_move_names_the_replaced_links(
 
     _, lines, _ = setup_lines(sandboxed_machine, sandbox, capsys, "--dry-run")
 
-    assert "  ~ timers          will change    replaces 6 links with 3 timers" in lines
+    assert "  ~ timers          will change    replaces 8 links with 4 timers" in lines
     assert sandboxed_machine.systemctl.changes == []
 
 
@@ -701,3 +720,43 @@ def test_a_failure_after_the_classification_stops_setup_at_timers_with_units_par
     sandboxed_machine.systemctl.failing = None
     assert setup_lines(sandboxed_machine, sandbox, capsys)[0] == ExitCode.OK
     sandboxed_machine.assert_complete()
+
+
+@pytest.mark.parametrize(("table", "minutes"), [("", 5), ("[alarm]\ninterval = 12\n", 12)])
+def test_hal_setup_writes_the_alarm_timer_from_the_configured_interval(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str], table: str, minutes: int
+) -> None:
+    write_hal_config(sandbox.home, table)
+
+    code, _, _ = setup_lines(sandboxed_machine, sandbox, capsys)
+
+    assert code == ExitCode.OK
+    timer = sandboxed_machine.unit_text("hal-alarm.timer")
+    assert f"OnUnitActiveSec={minutes}min\n" in timer
+    assert "OnCalendar" not in timer
+
+
+def test_a_new_interval_rewrites_the_alarm_timer_and_reloads_systemd(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    setup_lines(sandboxed_machine, sandbox, capsys)
+    write_hal_config(sandbox.home, "[alarm]\ninterval = 20\n")
+    sandboxed_machine.systemctl.calls.clear()
+
+    code, _, _ = setup_lines(sandboxed_machine, sandbox, capsys)
+
+    assert code == ExitCode.OK
+    assert "OnUnitActiveSec=20min\n" in sandboxed_machine.unit_text("hal-alarm.timer")
+    assert ["daemon-reload"] in sandboxed_machine.systemctl.changes
+
+
+def test_hal_setup_with_a_wrong_alarm_table_stops_before_any_step(
+    sandboxed_machine: Machine, sandbox: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_hal_config(sandbox.home, "[alarm]\ninterval = 0\n")
+
+    code, _, errors = setup_lines(sandboxed_machine, sandbox, capsys)
+
+    assert code == ExitCode.USAGE
+    assert any("interval must be a whole number of at least 1" in line for line in errors)
+    assert sandboxed_machine.systemctl.changes == []

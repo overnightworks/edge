@@ -13,17 +13,16 @@ from edge_copy import GUARDED_COMPOSE_VERBS, expect, publish
 from step_ca_names import COMPOSE_FILE, INTERMEDIATE_IN_VOLUME, NOTHING_TO_CHANGE
 
 from hal.output import write_line
-from hal.stack import core
+from hal.stack import checkout, core
 
 FOLLOWER = "traefik-mcp"
 STEP_CA_PROFILE = "step-ca"
 FOLLOWER_FILE = "traefik-mcp.yml"
 HARMLESS_EDIT = "# probe 13: a harmless edit\n"
 PROBE_LABEL = '    labels: {edge.probe: "13"}\n'  # a definition change that changes nothing else
-LABEL_AFTER = {  # where the probe label goes in compose.yaml: after each service's profile line
-    "step-ca": "  step-ca:\n    profiles: [step-ca]\n",
-    FOLLOWER: "  traefik-mcp:\n    <<: *traefik\n    profiles: [step-ca]\n",
-}
+# Where the probe label goes in compose.yaml: after the follower's profile line. A label on step-ca
+# would recreate it, as apply does for every unit whose definition changed.
+LABEL_AFTER = "  traefik-mcp:\n    <<: *traefik\n    profiles: [step-ca]\n"
 
 
 class TraefikMcpFollows:
@@ -65,7 +64,8 @@ class TraefikMcpFollows:
             for name in core.followers(config)
             if STEP_CA_PROFILE in config["services"][name]["profiles"]
         )
-        binds = core.file_binds(config["services"][FOLLOWER], copy)
+        tracked = core.Checkout.read(config, checkout.Git(copy))
+        binds = core.file_binds(config["services"][FOLLOWER], tracked)
         expect(followers == (FOLLOWER,), f"P13a: the followers are {followers}")
         expect(binds == (copy / FOLLOWER_FILE,), f"P13a: traefik-mcp's file binds are {binds}")
         write_line(f"P13a held: followers {followers}, file bind {binds[0]}")
@@ -107,8 +107,7 @@ class TraefikMcpFollows:
         follower, step_ca = self.ids()
         compose_file = copy / COMPOSE_FILE
         text = compose_file.read_text()
-        for anchor in LABEL_AFTER.values():
-            text = text.replace(anchor, anchor + PROBE_LABEL, 1)
+        text = text.replace(LABEL_AFTER, LABEL_AFTER + PROBE_LABEL, 1)
         compose_file.write_text(text)
         publish(copy, "probe: a label on traefik-mcp")
         out = self.hal(copy, "apply", "--local", terminal=True)

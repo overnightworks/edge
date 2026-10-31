@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import stat
 import sys
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from workstation_secrets_support import (
+from support.workstation_secrets_report import findings_of, report_of
+from support.workstation_secrets_support import (
     FakeCli,
     FakeSync,
     FakeTerminal,
@@ -15,8 +19,9 @@ from workstation_secrets_support import (
     run_wizard,
     squeezed,
 )
-from workstation_support import FakeProbe, run_hal_secrets
+from support.workstation_support import FakeProbe, run_hal_secrets
 
+from hal.output.command import Verb, command
 from hal.workstation import secrets_setup, secrets_view
 from hal.workstation.secrets_setup import Boundaries, Outcome, Verdict, WalkEnd, run_command
 from hal.workstation.secrets_view import load_manifest
@@ -50,6 +55,28 @@ def cli() -> FakeCli:
     return FakeCli()
 
 
+@dataclass
+class HomeWatchingCli(FakeCli):
+    """A FakeCli that records the home it was given and what stood there when it started; `then` acts on that home after it
+    wrote, and `raises` ends the run the way a crash or Ctrl-C would."""
+
+    homes: list[Path] = field(default_factory=list)
+    found_at_start: list[tuple[int, list[str]]] = field(default_factory=list)
+    then: Callable[[Path], None] | None = None
+    raises: type[BaseException] | None = None
+
+    def __call__(self, argv: Sequence[str], variables: Mapping[str, str]) -> int | None:
+        home = Path(variables["CODEX_HOME"])
+        self.homes.append(home)
+        self.found_at_start.append((stat.S_IMODE(home.lstat().st_mode), sorted(path.name for path in home.iterdir())))
+        exit_code = super().__call__(argv, variables)
+        if self.then:
+            self.then(home)
+        if self.raises:
+            raise self.raises
+        return exit_code
+
+
 def refusing_verifier(_source: object, _value: str) -> Verdict:
     return Verdict(Outcome.REFUSED, "no token is verified in a tool login")
 
@@ -68,15 +95,15 @@ def login_home(tmp_path: Path, use_manifest) -> Path:
     return home
 
 
-def test_a_missing_login_is_made_by_its_cli_in_the_entrys_own_folder_with_the_ruled_rights(
+def test_a_missing_login_is_made_by_its_cli_and_stored_in_the_entrys_own_folder_with_the_ruled_rights(
     login_home: Path, boundaries: Boundaries, cli: FakeCli, capsys
 ) -> None:
-    """#666 D1, D3: the CLI runs with its home variable at the entry's folder; afterwards folder 0700 and file 0600, and the row never shows content."""
+    """#666 D1, D3: the CLI runs once; afterwards folder 0700 and file 0600, and the row never shows content."""
     end = run_wizard(login_home, boundaries)
 
     captured = capsys.readouterr()
     assert end is WalkEnd.DONE
-    assert cli.calls == [(("codex", "login"), {"CODEX_HOME": str(login_home / CODEX_FOLDER)})]
+    assert [argv for argv, _variables in cli.calls] == [("codex", "login")]
     assert stat.S_IMODE((login_home / CODEX_FOLDER).stat().st_mode) == 0o700
     assert stat.S_IMODE((login_home / CODEX_FILE).stat().st_mode) == 0o600
     assert squeezed(captured.out) == [
@@ -134,8 +161,16 @@ def test_a_login_already_present_is_left_untouched_and_the_cli_does_not_run(
             FakeCli(exit_code=0, leaves="auth.json.tmp"),
             "codex login ended without a login file · nothing stored",
         ),
+        (
+            HomeWatchingCli(then=lambda home: ((home / "auth.json").unlink(), (home / "auth.json").symlink_to("/etc/hostname"))),
+            "codex login ended without a login file · nothing stored",
+        ),
+        (
+            HomeWatchingCli(then=lambda home: ((home / "auth.json").unlink(), (home / "auth.json").mkdir())),
+            "codex login ended without a login file · nothing stored",
+        ),
     ],
-    ids=["not installed", "exit 1", "no file left", "only a sibling left"],
+    ids=["not installed", "exit 1", "no file left", "only a sibling left", "a link as the login file", "a folder as the login file"],
 )
 def test_a_login_that_fails_is_refused_with_a_row_and_leaves_the_walk_open(
     login_home: Path,
@@ -145,37 +180,119 @@ def test_a_login_that_fails_is_refused_with_a_row_and_leaves_the_walk_open(
     cli_answer: FakeCli,
     refusal: str,
 ) -> None:
-    """#666 D2, E1: a refused sign-in names itself in one row and stores no auth.json, even when the CLI wrote one or left only a sibling."""
+    """#666 D2, E1, #749: a refused sign-in names itself in one row and stores no auth.json, even when the CLI wrote one, left only a
+    sibling, or left a link or a folder in its place."""
     end = run_wizard(
         login_home, Boundaries(terminal.boundary(), refusing_verifier, disk.sync, cli_answer)
     )
 
     assert end is WalkEnd.STILL_OPEN
     assert f"✗ agent-service/codex not signed in {refusal}" in squeezed(capsys.readouterr().out)
-    assert not (login_home / CODEX_FILE).exists()
+    assert not os.path.lexists(login_home / CODEX_FILE)
 
 
-SIBLINGS_OF_CODEX_LOGIN = ("log/codex-login.log", "tmp/arg0-linux/lock")
+SIBLINGS_OF_CODEX_LOGIN = ("log/codex-login.log", "tmp/arg0-linux/lock", "config.toml")
 
 
-def test_what_the_cli_leaves_beside_the_login_file_is_no_unknown_file_for_hal_secrets(
-    login_home: Path, terminal: FakeTerminal, disk: FakeSync, capsys
+def run_login(home: Path, terminal: FakeTerminal, disk: FakeSync, cli: FakeCli) -> WalkEnd:
+    return run_wizard(home, Boundaries(terminal.boundary(), refusing_verifier, disk.sync, cli))
+
+
+def test_the_cli_signs_in_inside_a_fresh_private_home_outside_the_entrys_folder(
+    login_home: Path, terminal: FakeTerminal, disk: FakeSync
 ) -> None:
-    """#666 D3: the CLI's folder is part of the entry; its logs and temporary folders are neither unknown nor loose, only the login file is judged."""
-    cli_with_siblings = FakeCli(siblings=SIBLINGS_OF_CODEX_LOGIN)
+    """#749: the service can write the folder, so the host CLI never runs there; its home is an empty 0700 folder of its own."""
+    folder = login_home / CODEX_FOLDER
+    cli = HomeWatchingCli()
+
+    assert run_login(login_home, terminal, disk, cli) is WalkEnd.DONE
+
+    (home,) = cli.homes
+    assert folder not in (home, *home.parents)
+    assert cli.found_at_start == [(0o700, [])]
+
+
+def test_only_the_declared_login_file_reaches_the_folder_with_its_declared_mode(
+    login_home: Path, terminal: FakeTerminal, disk: FakeSync
+) -> None:
+    """#749: hal moves auth.json alone, 0600, into the folder; the CLI's config, logs and temporary folders never get there, and
+    what the folder held before stays."""
+    folder = private_directory(login_home, CODEX_FOLDER)
+    (folder / "notes.txt").write_text("mine")
+    cli = FakeCli(mode=0o644, siblings=SIBLINGS_OF_CODEX_LOGIN)
+
+    assert run_login(login_home, terminal, disk, cli) is WalkEnd.DONE
+
+    assert sorted(path.name for path in folder.rglob("*")) == ["auth.json", "notes.txt"]
     assert (
-        run_wizard(
-            login_home,
-            Boundaries(terminal.boundary(), refusing_verifier, disk.sync, cli_with_siblings),
-        )
-        is WalkEnd.DONE
-    )
-    capsys.readouterr()
+        (folder / "auth.json").read_text(),
+        stat.S_IMODE((folder / "auth.json").lstat().st_mode),
+        (folder / "notes.txt").read_text(),
+    ) == (cli.content, 0o600, "mine")
 
-    code = run_hal_secrets(login_home, FakeProbe())
 
-    output = capsys.readouterr().out
-    assert (code, "unknown-file" in output, "loose-mode" in output) == (0, False, False)
+def test_a_link_planted_at_the_login_files_place_is_replaced_and_its_target_stays_unchanged(
+    login_home: Path, tmp_path: Path, terminal: FakeTerminal, disk: FakeSync
+) -> None:
+    """#749: a link the service put where auth.json goes is replaced by the new login, never written or chmodded through."""
+    folder = private_directory(login_home, CODEX_FOLDER)
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    victim.chmod(0o644)
+    cli = HomeWatchingCli(then=lambda _home: (folder / "auth.json").symlink_to(victim))
+
+    assert run_login(login_home, terminal, disk, cli) is WalkEnd.DONE
+
+    assert (victim.read_text(), stat.S_IMODE(victim.stat().st_mode)) == ("untouched", 0o644)
+    assert stat.S_ISREG((folder / "auth.json").lstat().st_mode)
+    assert (folder / "auth.json").read_text() == cli.content
+
+
+@pytest.mark.parametrize(
+    ("cli", "end"),
+    [
+        (HomeWatchingCli(siblings=SIBLINGS_OF_CODEX_LOGIN), WalkEnd.DONE),
+        (HomeWatchingCli(exit_code=1, siblings=SIBLINGS_OF_CODEX_LOGIN), WalkEnd.STILL_OPEN),
+        (HomeWatchingCli(raises=KeyboardInterrupt), WalkEnd.ABORTED),
+        (HomeWatchingCli(raises=RuntimeError), WalkEnd.ENTRY_FAILED),
+    ],
+    ids=["signed in", "exit 1", "Ctrl-C", "crash"],
+)
+def test_the_fresh_home_is_gone_however_the_login_ends(
+    login_home: Path, terminal: FakeTerminal, disk: FakeSync, cli: HomeWatchingCli, end: WalkEnd
+) -> None:
+    """#749: nothing of the CLI's home stays beside the folder, whether it signed in, failed or was stopped."""
+    assert run_login(login_home, terminal, disk, cli) is end
+
+    (home,) = cli.homes
+    assert not os.path.lexists(home)
+    assert [path.name for path in (login_home / CODEX_FOLDER).parent.iterdir()] == ["codex"]
+
+
+@pytest.mark.parametrize(
+    ("planted", "unknown"),
+    [
+        (("config.toml", "log/codex-login.log"), {"config.toml", "log", "log/codex-login.log"}),
+        ((".auth.json.new",), set()),
+    ],
+    ids=["files planted beside the login", "the service's renewal sibling"],
+)
+def test_beside_the_login_file_only_the_services_renewal_sibling_is_no_unknown_file(
+    login_home: Path, terminal: FakeTerminal, disk: FakeSync, planted: tuple[str, ...], unknown: set[str], capsys
+) -> None:
+    """#749: the service may write the folder and the CLI never does, so only `.auth.json.new` is expected beside auth.json; a file
+    the service planted there shows in `hal secrets`."""
+    assert run_login(login_home, terminal, disk, FakeCli()) is WalkEnd.DONE
+    folder = login_home / CODEX_FOLDER
+    for relative in planted:
+        (folder / relative).parent.mkdir(mode=0o700, exist_ok=True)
+        (folder / relative).write_text("planted")
+        (folder / relative).chmod(0o600)
+
+    run_hal_secrets(login_home, FakeProbe())
+
+    found = findings_of(report_of(login_home), "unknown-file")
+    assert set(found) == {f"~/{CODEX_FOLDER}/{relative}" for relative in unknown}
 
 
 def test_a_failed_login_removes_what_that_run_left_and_keeps_what_was_there_before(
@@ -194,11 +311,13 @@ def test_a_failed_login_removes_what_that_run_left_and_keeps_what_was_there_befo
     assert sorted(path.name for path in folder.rglob("*")) == ["notes.txt"]
 
 
-def test_the_renewal_command_is_derived_from_the_create_key(login_home: Path) -> None:
-    """#666 D4: the command `hal secrets` shows is derived, so the entry carries no hand-written recreate."""
+def test_the_renewal_of_a_create_entry_is_hal_setup_once_its_login_file_is_gone(login_home: Path) -> None:
+    """#666 D4, #749: the renewal `hal secrets` shows is derived, never a raw CLI run in the folder the service can write."""
     (entry,) = load_manifest(secrets_view.MANIFEST_PATH)
 
-    assert entry.renewal == "CODEX_HOME=~/.secrets/agent-service/codex codex login"
+    assert command(Verb.SETUP) in entry.renewal
+    assert f"{secrets_view.HOME_PREFIX}{entry.place}" in entry.renewal
+    assert "CODEX_HOME" not in entry.renewal
 
 
 @pytest.mark.parametrize(

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from backup_support import (
+from support.backup_support import (
     SONGMAKER_TOML,
     SQLITE_COPY,
     SQLITE_TOML,

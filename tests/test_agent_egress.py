@@ -9,6 +9,7 @@ pure logic, checked here on synthetic frames.
 """
 
 import importlib.util
+import ipaddress
 import re
 import signal
 import socket
@@ -29,6 +30,7 @@ PROBE = ROOT / "probe" / "agent-service"
 GATEWAY = "agent-egress"
 SERVICE = "agent-service"
 STAND_IN = "agent-probe"
+LITELLM_API, LITELLM_EGRESS = "litellm-api", "litellm-egress"
 OBSERVER = "realm-observer"
 ISOLATED_MODE = {"com.docker.network.bridge.gateway_mode_ipv4": "isolated"}
 HOST_SNI = re.compile(r"HostSNI\(`([^`]+)`\)")
@@ -79,8 +81,10 @@ def test_a_member_carries_the_attachments_and_nothing_else_of_the_network(
     """E16: the stand-in and the service merge the one anchor; neither adds a port, a network
     mode or a network."""
     service = compose["services"][member]
+    # The service lists its networks itself, and adds the one to LiteLLM's front (#768).
+    extra_networks = [LITELLM_API] if member == SERVICE else []
 
-    assert service["networks"] == attachments["networks"]
+    assert service["networks"] == [*attachments["networks"], *extra_networks]
     assert service["extra_hosts"] == attachments["extra_hosts"]
     assert not {"ports", "network_mode", "expose"} & service.keys()
 
@@ -117,7 +121,7 @@ def test_the_gateway_is_the_only_service_on_internet(compose):
 
 
 def test_the_gateway_cannot_reach_the_docker_api_and_adds_nothing_to_its_hardening(compose):
-    """E16: no socket, no socket-proxy, a file provider only, no capability, two networks."""
+    """E16: no socket, no socket-proxy, a file provider only, no capability, three networks."""
     gateway = compose["services"][GATEWAY]
     static_config = load("agent-service/egress/traefik.yml")
 
@@ -127,7 +131,7 @@ def test_the_gateway_cannot_reach_the_docker_api_and_adds_nothing_to_its_hardeni
     assert "socket-proxy" not in gateway.get("depends_on", {})
     assert set(static_config["providers"]) == {"file"}
     assert "cap_add" not in gateway
-    assert set(gateway["networks"]) == {"egress", "internet"}
+    assert set(gateway["networks"]) == {"egress", LITELLM_EGRESS, "internet"}
 
 
 def test_the_names_the_service_resolves_are_the_names_the_gateway_passes(attachments, passed_names):
@@ -135,13 +139,30 @@ def test_the_names_the_service_resolves_are_the_names_the_gateway_passes(attachm
     assert set(attachments["extra_hosts"]) == passed_names
 
 
-def test_the_gateways_address_stands_in_compose_and_in_its_static_file(compose):
-    """E16: x-egress-address is the gateway's address on egress and the one entrypoint's host."""
-    address = compose["x-egress-address"]
+def test_the_gateways_addresses_stand_in_compose_and_in_its_static_file(compose):
+    """E16: each entrypoint listens on the gateway's address on its own network."""
     entrypoints = load("agent-service/egress/traefik.yml")["entryPoints"]
+    addresses = {"egress": "x-egress-address", LITELLM_EGRESS: "x-litellm-egress-address"}
 
-    assert compose["services"][GATEWAY]["networks"]["egress"] == {"ipv4_address": address}
-    assert [entrypoint["address"] for entrypoint in entrypoints.values()] == [f"{address}:443"]
+    for network, anchor in addresses.items():
+        address = compose[anchor]
+        assert compose["services"][GATEWAY]["networks"][network] == {"ipv4_address": address}
+        assert ipaddress.ip_address(address) in ipaddress.ip_network(
+            compose["networks"][network]["ipam"]["config"][0]["subnet"]
+        )
+    assert sorted(entrypoint["address"] for entrypoint in entrypoints.values()) == sorted(
+        f"{compose[anchor]}:443" for anchor in addresses.values()
+    )
+
+
+def test_every_router_names_its_entrypoints_and_only_the_provider_is_open_to_litellm(routers):
+    """#768: the issuer is reachable from the agent service alone; the provider from LiteLLM too."""
+    entrypoints = set(load("agent-service/egress/traefik.yml")["entryPoints"])
+
+    assert all(set(router["entryPoints"]) <= entrypoints for router in routers.values())
+    assert [name for name, router in routers.items() if "litellm" in router["entryPoints"]] == [
+        "provider"
+    ]
 
 
 def test_the_gateway_shares_the_public_traefiks_image_and_hardening(compose):
@@ -285,8 +306,11 @@ def ipv6(next_header: int, body: bytes) -> bytes:
     return ethernet(0x86DD, header + source + destination + body)
 
 
-def ipv4_header(protocol: int, body: bytes, fragment: int = 0) -> bytes:
-    fields = (0x45, 0, 20 + len(body), 0, fragment, 64, protocol, 0, bytes(4), bytes(4))
+def ipv4_header(
+    protocol: int, body: bytes, fragment: int = 0, destination: str = "0.0.0.0"
+) -> bytes:
+    address = socket.inet_aton(destination)
+    fields = (0x45, 0, 20 + len(body), 0, fragment, 64, protocol, 0, bytes(4), address)
     return struct.pack("!BBHHHBBH4s4s", *fields) + body
 
 
@@ -311,9 +335,9 @@ def tcp_with_options(payload: bytes) -> bytes:
     return header + struct.pack("!H", len(payload)) + payload
 
 
-def dns_message(name: str) -> bytes:
+def dns_message(name: str, flags: int = 0x0100) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
-    return struct.pack("!HHHHHH", 1, 0x0100, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
+    return struct.pack("!HHHHHH", 1, flags, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
 
 
 def parse(capture, frame: bytes):
@@ -422,6 +446,53 @@ def test_the_watch_loop_counts_a_dns_frame_the_kernel_cut_as_undecoded(
     assert (window.frames, window.undecoded, ended_by) == (1, undecoded, "frames")
 
 
+class SilentSocket:
+    """A packet socket that never sees a frame; its poll times out."""
+
+    def recvmsg(self, _size: int, _ancillary_size: int):
+        raise TimeoutError
+
+
+@pytest.mark.parametrize("bound", [None, 45], ids=["the default bound", "a longer bound"])
+def test_a_window_lasts_for_its_bound_in_seconds(capture, monkeypatch, bound):
+    seconds = bound or capture.WINDOW_SECONDS
+    clock = iter(range(1000))
+    now = []
+    monkeypatch.setattr(capture.time, "monotonic", lambda: now.append(next(clock)) or now[-1])
+
+    arguments = [] if bound is None else [bound]
+    _, ended_by = capture.watch(SilentSocket(), [], *arguments)
+
+    assert ended_by == "seconds"
+    assert seconds <= now[-1] - now[0] <= seconds + 1
+
+
+@pytest.mark.parametrize(
+    ("arguments", "parsed"),
+    [
+        (["syn"], (None, "syn", [])),
+        (["--seconds", "90", "syn"], (90, "syn", [])),
+        (["--seconds", "90", "dns", "Label"], (90, "dns", ["label"])),
+        (["--seconds"], None),
+        (["--seconds", "0", "syn"], None),
+        (["--seconds", "ten", "syn"], None),
+        (["--seconds", "90"], None),
+        (["--seconds", "90", "syn", "label"], None),
+        (["dns"], None),
+    ],
+    ids=[
+        "no bound", "a bound on syn", "a bound on dns", "a bound without a number",
+        "a bound of zero", "a bound that is no number", "a bound without a mode",
+        "syn with a label", "dns without a label",
+    ],
+)  # fmt: skip
+def test_the_window_arguments_name_the_bound_the_mode_and_the_labels(capture, arguments, parsed):
+    if parsed is not None and parsed[0] is None:
+        parsed = (capture.WINDOW_SECONDS, *parsed[1:])
+
+    assert capture.parse_arguments(arguments) == parsed
+
+
 @pytest.mark.parametrize(
     ("cut", "undecoded"),
     [(None, 0), (20, 1)],
@@ -489,6 +560,44 @@ def test_the_dns_filter_lets_ipv6_extension_header_chains_through_to_be_walked(
 ):
     """E10: the filter cannot read ports behind an extension header, so it passes the chain on."""
     assert filter_passes(capture, ipv6(protocol, body)) is passes
+
+
+@pytest.mark.parametrize(
+    ("destination", "passes"),
+    [("127.0.0.11", True), ("127.0.0.12", False)],
+    ids=["Docker's embedded resolver", "another loopback address"],
+)
+def test_the_dns_filter_passes_a_query_to_the_embedded_resolver_on_its_rewritten_port(
+    capture, destination, passes
+):
+    """S1: Docker rewrites the port of a container's query to 127.0.0.11 before the frame is
+    captured, so the filter cannot wait for port 53 on it."""
+    rewritten_port = 46519  # where Docker's rule in a container sends a query to its resolver
+    body = udp(40000, rewritten_port, dns_message("label.example.com"))
+    frame = ethernet(0x0800, ipv4_header(17, body, destination=destination))
+
+    assert filter_passes(capture, frame) is passes
+
+
+@pytest.mark.parametrize(
+    ("ports", "destination", "flags", "queries"),
+    [
+        ((40000, 46519), "127.0.0.11", 0x0100, {"label": 1}),  # a rewritten port
+        ((53, 40000), "127.0.0.1", 0x8180, {}),  # a reply's flags
+    ],
+    ids=["a query on the rewritten port", "the reply from port 53"],
+)  # fmt: skip
+def test_the_dns_window_counts_a_query_to_the_embedded_resolver_apart_from_its_reply(
+    capture, ports, destination, flags, queries
+):
+    """S1: the window names the control's query, not only its reply."""
+    body = udp(*ports, dns_message("label.example.com", flags))
+    segment = parse(capture, ethernet(0x0800, ipv4_header(17, body, destination=destination)))
+    window = capture.Window()
+
+    window.see(segment, ["label"])
+
+    assert (window.label_frames, window.query_frames) == ({"label": 1}, queries)
 
 
 # --- the unit probe's refused-start decision, on synthetic state and logs ----------------------

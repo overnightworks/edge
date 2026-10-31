@@ -33,9 +33,9 @@ from pathlib import Path, PurePosixPath
 
 from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
-from hal.workstation.manifest_fields import ManifestError, fail, string, strings
+from hal.workstation.manifest_fields import ManifestError, fail, https_link, require_key_of_kind, string, strings
 from hal.workstation.report import findings_count, markdown_table
-from hal.workstation.secrets_create import CreateCommand, left_by_cli, parse_create
+from hal.workstation.secrets_create import CreateCommand, is_renewal_sibling, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
 
 MANIFEST_PATH = Path(__file__).with_name("secrets_manifest.toml")
@@ -147,6 +147,7 @@ class SecretEntry:
     source: TokenSource | None = None
     optional: bool = False
     elsewhere: str = ""
+    page: str = ""
     loosest_mode: int = LOOSEST_FILE_MODE
     loosest_mode_reason: str = ""
     create: CreateCommand | None = None
@@ -173,13 +174,13 @@ class SecretEntry:
 
     @property
     def folder(self) -> PurePosixPath:
-        """The folder the CLI of `create` writes into; the manifest guarantees one place for it."""
+        """The folder the login file of `create` is moved into; the manifest guarantees one place for it."""
         return self.place.parent
 
     @property
     def renewal(self) -> str:
-        """How the entry is made again: derived from `create` and the entry's own folder, else the `recreate` text."""
-        return self.create.renewal(f"{HOME_PREFIX}{self.folder}") if self.create else self.recreate
+        """How the entry is made again: for a `create` entry the wizard signs in again once its login file is gone, else the `recreate` text."""
+        return f"{command(Verb.SETUP)}, once {HOME_PREFIX}{self.place} is gone" if self.create else self.recreate
 
 
 # --- manifest --------------------------------------------------------------
@@ -188,7 +189,7 @@ REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by"})
 SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
 RETIREMENT_KEYS = frozenset({"retired_on", "revoke_url", "revocation_confirmed"})
 MODE_KEYS = frozenset({"loosest_mode", "loosest_mode_reason"})
-OPTIONAL_KEYS = frozenset({"recreate", "create", "verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
+OPTIONAL_KEYS = frozenset({"recreate", "create", "verify", "mirror_of", "purpose", "optional", "elsewhere", "page"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
 GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
 LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
 
@@ -217,8 +218,7 @@ def _enum_value[E: Enum](path: Path, where: str, raw: Mapping[str, object], key:
     try:
         return enum(raw[key])
     except ValueError:
-        allowed = ", ".join(repr(member.value) for member in enum)
-        raise fail(path, where, f"{key} must be one of {allowed}") from None
+        raise fail(path, where, f"{key} must be one of {', '.join(repr(member.value) for member in enum)}") from None
 
 
 def _date(path: Path, where: str, raw: Mapping[str, object], key: str) -> date:
@@ -243,9 +243,7 @@ def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> Retirement
         if "revocation_confirmed" in raw:
             raise fail(path, where, "revocation_confirmed belongs to a retired entry only")
         return Retirement()
-    revoke_url = string(path, where, raw, "revoke_url")
-    if not revoke_url.startswith("https://"):
-        raise fail(path, where, "revoke_url must be an https:// link")
+    revoke_url = https_link(path, where, raw, "revoke_url")
     confirmed = _date(path, where, raw, "revocation_confirmed") if "revocation_confirmed" in raw else None
     return Retirement(_date(path, where, raw, "retired_on"), revoke_url, confirmed)
 
@@ -291,11 +289,6 @@ def _token_source(path: Path, where: str, raw: Mapping[str, object], kind: Secre
     return TokenSource(provider, string(path, where, raw, "resource"), scope, days)
 
 
-def _require_one_plain_place(path: Path, where: str, patterns: tuple[PurePosixPath, ...]) -> None:
-    if len(patterns) != 1 or _has_wildcard(patterns[0].name):
-        raise fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
-
-
 def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     where = f"[[secret]] #{index + 1}"
     if not isinstance(raw, dict):
@@ -308,8 +301,8 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     if missing or unknown:
         raise fail(path, where, f"missing key(s) {missing}, unknown key(s) {unknown}")
     kind = _enum_value(path, where, raw, "kind", SecretKind)
-    if (kind is SecretKind.DERIVED_MIRROR) != ("mirror_of" in raw):
-        raise fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
+    require_key_of_kind(path, where, raw, "mirror_of", kind, SecretKind.DERIVED_MIRROR)
+    require_key_of_kind(path, where, raw, "page", kind, SecretKind.UNVERIFIED_TOKEN)
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
@@ -330,12 +323,13 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         source=source,
         optional=_flag(path, where, raw, "optional"),
         elsewhere=string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
+        page=https_link(path, where, raw, "page") if "page" in raw else "",
         loosest_mode=loosest_mode,
         loosest_mode_reason=loosest_mode_reason,
         create=create,
     )
-    if entry.written_by_setup:
-        _require_one_plain_place(path, where, entry.paths)
+    if entry.written_by_setup and (len(patterns) != 1 or _has_wildcard(patterns[0].name)):
+        raise fail(path, where, "paths of an entry the wizard writes must be exactly one place without a wildcard")
     return entry
 
 
@@ -409,13 +403,15 @@ def scan_secrets_tree(layout: Layout) -> tuple[PathFact, ...]:
 
 
 def stat_matches(layout: Layout, pattern: PurePosixPath) -> tuple[PathFact, ...] | None:
-    """The paths a manifest pattern names, by stat; None when the filesystem or the tunnel config refuses to say."""
+    """The paths a pattern names by stat, a link below ~/.secrets left out; None when the filesystem or the tunnel config refuses to say."""
     try:
         pattern = with_tunnel_id(pattern)
         wildcard = _has_wildcard(pattern.name)
         names = sorted(os.listdir(layout.home / pattern.parent)) if wildcard else []
         matched = [pattern.parent / name for name in names if fnmatch.fnmatchcase(name, pattern.name)] if wildcard else [pattern]
-        return tuple(PathFact(relative, (layout.home / relative).stat().st_mode) for relative in matched)
+        facts = (PathFact(relative, place.stat(follow_symlinks=not place.is_relative_to(layout.secrets_dir)).st_mode)
+                 for relative, place in ((relative, layout.home / relative) for relative in matched))
+        return tuple(fact for fact in facts if not stat.S_ISLNK(fact.mode))
     except FileNotFoundError:
         return ()
     except OSError:
@@ -540,6 +536,7 @@ class FindingRule(Enum):
     UNKNOWN_FILE = "unknown-file"
     LOOSE_MODE = "loose-mode"
     SYMLINKED_FOLDER = "symlinked-folder"
+    SYMLINKED_FILE = "symlinked-file"
     NOT_A_FOLDER = "not-a-folder"
     CLOSED_FOLDER = "closed-folder"
     REVOCATION_UNCONFIRMED = "revocation-unconfirmed"
@@ -635,10 +632,7 @@ def mode_fix(relative: PurePosixPath, allowed: int) -> str:
 
 
 def symlinked_folder_fix(relative: PurePosixPath) -> str:
-    """Moves the folder the link points to into the link's place, so it becomes a real one; nothing is deleted but the link.
-
-    A link whose target is gone leaves an empty folder in its place, so the command clears the finding either way.
-    """
+    """Moves the folder the link points to into its place; only the link is deleted, and a link with no target leaves an empty folder."""
     place = _in_shell(relative)
     real_folder = f'if [ -e "$t" ]; then mv -T "$t" {place}; else mkdir {place}; fi'
     return f"`t=$(readlink -m {place}) && rm {place} && {real_folder} && chmod {LOOSEST_DIRECTORY_MODE:o} {place}`"
@@ -666,8 +660,7 @@ def _not_a_folder(relative: PurePosixPath, mode: int) -> _Flaw | None:
 def _closed(relative: PurePosixPath, mode: int) -> _Flaw | None:
     if not closed_to_owner(mode):
         return None
-    needed = LOOSEST_DIRECTORY_MODE
-    return _Flaw(f"has mode {stat.S_IMODE(mode):o}; its owner needs {needed:o}", mode_fix(relative, needed))
+    return _Flaw(f"has mode {stat.S_IMODE(mode):o}; its owner needs {LOOSEST_DIRECTORY_MODE:o}", mode_fix(relative, LOOSEST_DIRECTORY_MODE))
 
 
 def _loose(relative: PurePosixPath, mode: int, declaring: tuple[SecretEntry, ...] = ()) -> _Flaw | None:
@@ -707,16 +700,23 @@ def unfit_folder(relative: PurePosixPath, mode: int) -> SecretFinding | None:
     return None
 
 
+def linked_place(relative: PurePosixPath, mode: int) -> SecretFinding | None:
+    """A link at a declared place is no secret, and `rm` takes away only the link; None for any other file."""
+    return _flaw_finding(FindingRule.SYMLINKED_FILE, relative, _Flaw("is a symlink", f"`rm {_in_shell(relative)}`") if stat.S_ISLNK(mode) else None)
+
+
+def _file_finding(fact: PathFact, manifest: tuple[SecretEntry, ...]) -> SecretFinding | None:
+    linked = linked_place(fact.relative, fact.mode) if (declaring := _declaring_entries(fact.relative, manifest)) else None
+    return linked or _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, _loose(fact.relative, fact.mode, declaring))
+
+
 def _tree_findings(
     tree: tuple[PathFact, ...], manifest: tuple[SecretEntry, ...], patterns: tuple[PurePosixPath, ...]
 ) -> Iterator[SecretFinding]:
     """A folder or a place on the way to a manifest place is judged as a folder; any other path by its mode and the loosest one its entry declares."""
     for fact in tree:
-        if stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns):
-            finding = unfit_folder(fact.relative, fact.mode)
-        else:
-            loose = _loose(fact.relative, fact.mode, _declaring_entries(fact.relative, manifest))
-            finding = _flaw_finding(FindingRule.LOOSE_MODE, fact.relative, loose)
+        is_folder = stat.S_ISDIR(fact.mode) or any(fact.relative in pattern.parents for pattern in patterns)
+        finding = unfit_folder(fact.relative, fact.mode) if is_folder else _file_finding(fact, manifest)
         if finding:
             yield finding
 
@@ -744,7 +744,7 @@ def build_view(manifest: tuple[SecretEntry, ...], observation: Observation) -> S
     )
     patterns = tuple(pattern for entry in manifest for pattern in entry.paths)
     logins = tuple(entry.place for entry in manifest if entry.create and not entry.retired)
-    tree = tuple(fact for fact in observation.tree if not any(left_by_cli(fact.relative, login) for login in logins))
+    tree = tuple(fact for fact in observation.tree if not any(is_renewal_sibling(fact.relative, login) for login in logins))
     unknown = (
         SecretFinding(FindingRule.UNKNOWN_FILE, f"{HOME_PREFIX}{fact.relative}", fix=f"add {HOME_PREFIX}{fact.relative} to the manifest or delete it")
         for fact in tree

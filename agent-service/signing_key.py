@@ -2,24 +2,30 @@
 through the signing folder's verified descriptor. `setup` is the only caller.
 
 The setup contract is docs/agent-service.md, "The signing key". Key bytes travel only over pipes to
-openssl and are never printed. This module also owns what the steps of `setup` raise
-(StepFailure, CannotTell) and the bounded read of a secret file, because `setup` is a script that
-this module cannot import back.
+openssl and are never printed. Reading the files, their leftovers and the folder's lock are
+secret_entry.py's, as they are for the API credential.
 """
 
 from __future__ import annotations
 
-import contextlib
-import errno
 import os
 import re
 import stat
 import subprocess
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
+
+from secret_entry import (
+    CannotTell,
+    Entry,
+    SecretFolder,
+    SecretHost,
+    SecretTools,
+    StepFailure,
+    size_refusal,
+)
 
 SIGNING_DIRECTORY = "signing"
 PRIVATE_FILE, PUBLIC_FILE = "private.pem", "public.pem"
@@ -28,7 +34,6 @@ PRIVATE_NEXT, PUBLIC_NEXT = "private.next.pem", "public.next.pem"
 PRIVATE_KEY_MODE, PUBLIC_KEY_MODE = 0o600, 0o644
 CREATION_LEFTOVERS = (PRIVATE_CANDIDATE, PUBLIC_CANDIDATE)
 LEFTOVERS = (*CREATION_LEFTOVERS, PRIVATE_NEXT, PUBLIC_NEXT)
-MAX_SECRET_FILE_BYTES = 16 * 1024  # reader: MAX_SECRET_FILE_BYTES
 RSA_BITS, OPENSSL_SECONDS = 3072, 120
 
 
@@ -70,37 +75,6 @@ class SigningState(Enum):
 UNUSABLE = {SigningState.BROKEN, SigningState.OPERATOR_FIX, SigningState.FOREIGN}
 
 
-@dataclass(frozen=True)
-class Entry:
-    """A signing file as one descriptor saw it; `problem` is a sentence naming what the operator
-    fixes, and `unreadable` marks a file its owner cannot read (its mode says why)."""
-
-    path: Path
-    status: os.stat_result
-    contents: bytes = b""
-    problem: str | None = None
-    unreadable: bool = False
-
-
-class StepFailure(Exception):
-    """A step cannot finish; the message says why in one line, never a secret."""
-
-
-class CannotTell(StepFailure):
-    """Docker or the host did not answer, so the state of a step is unknown."""
-
-
-def read_within_limit(descriptor: int) -> bytes:
-    """At most one byte more than the limit, looping on short reads as the reader does
-    (secret_file.py:144-155, _read_within_limit): that many bytes mean the file is too big."""
-    chunks: list[bytes] = []
-    remaining = MAX_SECRET_FILE_BYTES + 1
-    while remaining and (chunk := os.read(descriptor, remaining)):
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
-
-
 def run_openssl(arguments: list[str], stdin: bytes) -> subprocess.CompletedProcess[bytes]:
     """Key bytes go in and out over pipes only; the caller never prints either stream."""
     try:
@@ -114,32 +88,15 @@ def run_openssl(arguments: list[str], stdin: bytes) -> subprocess.CompletedProce
         raise CannotTell(f"cannot run openssl: {error.strerror}") from error
 
 
-class SigningTools(Protocol):
-    service_uid: int
+class SigningTools(SecretTools, Protocol):
     openssl: Callable[[list[str], bytes], subprocess.CompletedProcess[bytes]]
-    say: Callable[[str], None]
-    has_terminal: Callable[[], bool]
-    confirm: Callable[[str], str]
 
 
-class SigningHost(Protocol):
-    """What `setup` lends the key: its folders, its locking and its owner-and-mode verdicts."""
+class SigningHost(SecretHost, Protocol):
+    """What `setup` lends the key beyond any secret file's needs: openssl and the folder chain."""
 
     tools: SigningTools
-    signing_directory: Path
     signing_chain: tuple[Path, ...]
-
-    def open_verified_directories(
-        self, directories: tuple[Path, ...], tolerate_open_mode: bool = False
-    ) -> int: ...
-
-    def lock(self, directory: int) -> None: ...
-
-    def directory_gap(self, directory: Path): ...  # a Gap or None
-
-    def wrong_owner(self, path: Path, uid: int): ...  # a Gap
-
-    def write_pending(self, directory: int, payload: bytes, name: str, mode: int) -> None: ...
 
 
 class SigningKey:
@@ -147,53 +104,22 @@ class SigningKey:
 
     def __init__(self, setup: SigningHost) -> None:
         self.setup = setup
-
-    @contextlib.contextmanager
-    def open_directory(self, locked: bool) -> Iterator[int]:
-        directory = self.setup.open_verified_directories(self.setup.signing_chain)
-        try:
-            if locked:
-                self.setup.lock(directory)
-            yield directory
-        finally:
-            os.close(directory)
+        self.folder = SecretFolder(setup, setup.signing_chain)
 
     def preflight(self) -> None:
-        """Refuse an unusable pair or folder before `setup` changes anything else. Only a folder
-        that is not made yet or is open to others passes: the folder steps of `setup` mend those."""
-        try:
-            directory = self.setup.open_verified_directories(
-                self.setup.signing_chain, tolerate_open_mode=True
-            )
-        except FileNotFoundError:
-            return
-        try:
-            state, line = self.judge(directory)
-        finally:
-            os.close(directory)
-        if state in UNUSABLE:
-            raise StepFailure(line)
+        self.folder.preflight(self.judge, UNUSABLE)
 
     def check(self) -> None:
-        with self.open_directory(locked=False) as directory:
-            state, line = self.judge(directory)
-            leftovers = list(self.leftover_statuses(directory))
-        if state is not SigningState.SOUND:
-            raise StepFailure(line)
-        if leftovers:
-            names = ", ".join(leftovers)
-            raise StepFailure(f"{names} left by an interrupted run; `agent-service/setup` clears")
+        self.folder.check(self.judge, SigningState.SOUND, LEFTOVERS)
 
     def judge(self, directory: int) -> tuple[SigningState, str]:
         """The first thing wrong with the pair, in the order a fix can follow."""
-        folder = self.setup.signing_directory
-        private = self.read_entry(directory, PRIVATE_FILE)
-        public = self.read_entry(directory, PUBLIC_FILE)
-        leftovers = self.leftover_statuses(directory)
-        problems = [entry.problem for entry in (private, public) if entry and entry.problem]
-        problems += [self.leftover_problem(name, status) for name, status in leftovers.items()]
-        if problem := next(filter(None, problems), None):
-            return SigningState.FOREIGN, f"{problem}; fix it yourself"
+        folder = self.folder.path
+        private = self.folder.read_entry(directory, PRIVATE_FILE)
+        public = self.folder.read_entry(directory, PUBLIC_FILE)
+        leftovers = self.folder.leftover_statuses(directory, LEFTOVERS)
+        if problem := self.folder.operator_problem((private, public), leftovers):
+            return SigningState.FOREIGN, problem
         if private is None:
             if public is None:
                 return SigningState.EMPTY, f"{folder / PRIVATE_FILE} does not exist"
@@ -225,63 +151,10 @@ class SigningKey:
             return SigningState.PUBLIC_REWRITE, f"{public.path} has mode {mode:04o}, not 0644"
         return SigningState.SOUND, ""
 
-    def leftover_statuses(self, directory: int) -> dict[str, os.stat_result]:
-        """Each temporary entry that exists, looked at without following a link."""
-        statuses = {}
-        for name in LEFTOVERS:
-            with contextlib.suppress(FileNotFoundError):
-                statuses[name] = os.stat(name, dir_fd=directory, follow_symlinks=False)
-        return statuses
-
-    def leftover_problem(self, name: str, status: os.stat_result) -> str | None:
-        """A temporary entry that is a link, no regular file or not the service's is never
-        unlinked: it is the operator's to look at."""
-        path = self.setup.signing_directory / name
-        if stat.S_ISLNK(status.st_mode):
-            return f"{path} is a symbolic link"
-        return self.entry_problem(path, status)
-
-    def entry_problem(self, path: Path, status: os.stat_result) -> str | None:
-        if not stat.S_ISREG(status.st_mode):
-            return f"{path} is not a regular file"
-        if status.st_uid != self.setup.tools.service_uid:
-            return self.setup.wrong_owner(path, status.st_uid).line
-        return None
-
-    def read_entry(self, directory: int, name: str) -> Entry | None:
-        path = self.setup.signing_directory / name
-        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
-        try:
-            descriptor = os.open(name, flags, dir_fd=directory)
-        except FileNotFoundError:
-            return None
-        except PermissionError:
-            return self.entry_of_unreadable_file(directory, name, path)
-        except OSError as error:
-            if error.errno == errno.ELOOP:
-                status = os.stat(name, dir_fd=directory, follow_symlinks=False)
-                return Entry(path, status, problem=f"{path} is a symbolic link")
-            raise
-        try:
-            status = os.fstat(descriptor)
-            if problem := self.entry_problem(path, status):
-                return Entry(path, status, problem=problem)
-            return Entry(path, status, read_within_limit(descriptor))
-        finally:
-            os.close(descriptor)
-
-    def entry_of_unreadable_file(self, directory: int, name: str, path: Path) -> Entry:
-        """Its metadata alone says what the operator fixes; a file its owner may read but cannot
-        open is a host failure, which stays one."""
-        status = os.stat(name, dir_fd=directory, follow_symlinks=False)
-        if status.st_mode & stat.S_IRUSR:
-            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), str(path))
-        return Entry(path, status, problem=self.entry_problem(path, status), unreadable=True)
-
     def private_refusal(self, contents: bytes) -> str | None:
         """Why this is not the key the service accepts, else None; says nothing of its bytes."""
-        if len(contents) > MAX_SECRET_FILE_BYTES:
-            return f"is larger than {MAX_SECRET_FILE_BYTES} bytes"
+        if too_large := size_refusal(contents):
+            return too_large
         if not PRIVATE_KEY_BLOCK.match(contents):
             return "is not one unencrypted PKCS#8 PEM block"
         if self.openssl_verdict(CHECK_PRIVATE_KEY, contents) is None:
@@ -333,44 +206,34 @@ class SigningKey:
         """Make the pair when there is none, derive a missing public half, clear leftovers; a pair
         that is unusable is refused and left as it is. The leftovers of a replacement stay unless
         the pair is sound already: they belong to `--replace-signing-key`."""
-        with self.open_directory(locked=True) as directory:
+        with self.folder.opened(locked=True) as directory:
             state, line = self.judge(directory)
             if state in UNUSABLE:
                 raise StepFailure(line)
             clearable = LEFTOVERS if state is SigningState.SOUND else CREATION_LEFTOVERS
-            leftovers = [name for name in self.leftover_statuses(directory) if name in clearable]
+            leftovers = list(self.folder.leftover_statuses(directory, clearable))
             if state is SigningState.EMPTY:
                 self.create_private(directory)
             if state is not SigningState.SOUND:
                 self.write_public(directory, PUBLIC_CANDIDATE, PRIVATE_FILE)
-                self.rename_into_place(directory, PUBLIC_CANDIDATE, PUBLIC_FILE)
-            self.unlink_all(directory, clearable)
+                self.folder.rename_into_place(directory, PUBLIC_CANDIDATE, PUBLIC_FILE)
+            self.folder.unlink_all(directory, clearable)
             if leftovers:
                 self.setup.tools.say(f"removed leftovers: {', '.join(leftovers)}")
                 os.fsync(directory)
 
-    @staticmethod
-    def rename_into_place(directory: int, source: str, destination: str) -> None:
-        os.replace(source, destination, src_dir_fd=directory, dst_dir_fd=directory)
-        os.fsync(directory)
-
     def create_private(self, directory: int) -> None:
         """Exclusive twice: the candidate is created with O_EXCL, and link(2) refuses any entry."""
         self.write_checked(directory, PRIVATE_CANDIDATE)
-        os.link(PRIVATE_CANDIDATE, PRIVATE_FILE, src_dir_fd=directory, dst_dir_fd=directory,
-                follow_symlinks=False)  # fmt: skip
-        os.unlink(PRIVATE_CANDIDATE, dir_fd=directory)
-        os.fsync(directory)
-        self.setup.tools.say(
-            f"made the key pair in {self.setup.signing_directory}; nothing is shown"
-        )
+        self.folder.link_into_place(directory, PRIVATE_CANDIDATE, PRIVATE_FILE)
+        self.setup.tools.say(f"made the key pair in {self.folder.path}; nothing is shown")
 
     def write_checked(self, directory: int, name: str) -> Entry:
         """A new private key in `name`, kept only if it passes the same check as an active one."""
         self.setup.write_pending(
             directory, self.openssl_output(GENERATE_PRIVATE_KEY), name, PRIVATE_KEY_MODE
         )
-        entry = self.read_entry(directory, name)
+        entry = self.folder.read_entry(directory, name)
         if entry is None or entry.problem or self.private_refusal(entry.contents):
             raise StepFailure("the new key failed its check; the active pair is unchanged")
         return entry
@@ -378,47 +241,33 @@ class SigningKey:
     def write_public(self, directory: int, name: str, source: str) -> None:
         """The public half of the key in `source`, kept only if it reads back as a public key of
         that private key."""
-        private = self.read_entry(directory, source)
+        private = self.folder.read_entry(directory, source)
         public = self.openssl_output(DERIVE_PUBLIC_KEY, private.contents)
         self.setup.write_pending(directory, public, name, PUBLIC_KEY_MODE)
-        entry = self.read_entry(directory, name)
+        entry = self.folder.read_entry(directory, name)
         if entry is None or entry.problem or self.public_refusal(entry.contents, private.contents):
             raise StepFailure("the new public key failed its check; the active pair is unchanged")
-
-    @staticmethod
-    def unlink_all(directory: int, names: tuple[str, ...]) -> None:
-        for name in names:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(name, dir_fd=directory)
 
     def replace(self) -> None:
         """Both halves over the old pair (stages R0 to R2 of docs/agent-service.md), after a typed
         yes at a terminal."""
-        if not self.setup.tools.has_terminal():
-            raise StepFailure("--replace-signing-key needs a terminal; nothing was changed")
-        if gap := self.setup.directory_gap(self.setup.signing_directory):
-            raise StepFailure(f"{gap.line}; run agent-service/setup first")
-        self.setup.tools.say(
+        self.folder.confirm_replacement(
+            "--replace-signing-key",
             "--replace-signing-key replaces both halves and deletes the old private key; "
             "replacement alone revokes nothing: the old key keeps signing and stays trusted until "
             "agent-service and songmaker-web are both recreated, and tool calls fail with 401 "
-            "while only one of them is"
+            "while only one of them is",
+            "type yes to replace the signing key: ",
         )
-        try:
-            answer = self.setup.tools.confirm("type yes to replace the signing key: ")
-        except EOFError:
-            answer = ""
-        if answer.strip() != "yes":
-            raise StepFailure("not confirmed; nothing was changed")
-        with self.open_directory(locked=True) as directory:
+        with self.folder.opened(locked=True) as directory:
             if (judgement := self.judge(directory))[0] is SigningState.FOREIGN:
                 raise StepFailure(judgement[1])
-            self.unlink_all(directory, LEFTOVERS)
+            self.folder.unlink_all(directory, LEFTOVERS)
             self.write_checked(directory, PRIVATE_NEXT)
             self.write_public(directory, PUBLIC_NEXT, PRIVATE_NEXT)
             os.fsync(directory)  # R0 ends here: nothing active has changed
-            self.rename_into_place(directory, PRIVATE_NEXT, PRIVATE_FILE)
-            self.rename_into_place(directory, PUBLIC_NEXT, PUBLIC_FILE)  # between: R1
+            self.folder.rename_into_place(directory, PRIVATE_NEXT, PRIVATE_FILE)
+            self.folder.rename_into_place(directory, PUBLIC_NEXT, PUBLIC_FILE)  # between: R1
         self.setup.tools.say(
             "replaced both halves; nothing is shown. Now recreate agent-service "
             "(`python3 agent-service/live_signer.py` while songmaker-web is not on "

@@ -1,0 +1,19 @@
+# The overlay of the CI job `front` (tests/test_litellm_front.py), laid over compose.yaml: the
+# shipped litellm-front with a stand-in for LiteLLM on its backend network and a client on its api
+# network. Both images are read from compose.yaml's pins by the test. Never used live.
+services:
+  stand-in:
+    image: ${STAND_IN_IMAGE:?run through tests/test_litellm_front.py}
+    networks:
+      litellm-backend:
+        aliases: [litellm]
+    command: ["--port", "4000"]
+
+  client:
+    image: ${CLIENT_IMAGE:?run through tests/test_litellm_front.py}
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [litellm-api]
+    command: ["sleep", "infinity"]

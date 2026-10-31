@@ -12,8 +12,8 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 import pytest
-from workstation_secrets_support import never_run, run_wizard
-from workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
+from support.workstation_secrets_support import never_run, run_wizard
+from support.workstation_support import FAKE_SECRET_VALUE, TEST_MANIFEST, UNEXPECTED_ERROR_PREFIX, FakeProbe, plant_secrets, run_hal_secrets, run_report_command, symlinked_folder_fix
 from support.workstation_secrets_report import cells_of, findings_of, report_of
 
 
@@ -357,7 +357,7 @@ def test_the_files_go_live_and_init_write_are_known_and_need_no_change(tmp_path:
     run_hal_secrets(home, probe, now=NOW)
 
     output = report_of(home)
-    for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder"):
+    for rule in ("loose-mode", "unknown-file", "closed-folder", "not-a-folder", "symlinked-folder", "symlinked-file"):
         assert findings_of(output, rule) == {}
     assert not [name for name in findings_of(output, "missing") if name.startswith(("step-ca/", "keycloak/"))]
 

@@ -408,7 +408,7 @@ def b5_verdicts(before: Look, after: Look, terminals: int, roots: Roots) -> Verd
 def with_containment(text: str) -> str:
     """The service's configuration with the wrapper in place of the CLI; the signing key and the
     CA come from the repository's own `[signing]` and `[mcp]`."""
-    return with_setting(text, "binary", WRAPPER)
+    return with_setting(text, "cli.anthropic", "binary", WRAPPER)
 
 
 def wrapper_text(cli: str) -> str:

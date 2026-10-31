@@ -1,0 +1,33 @@
+# The static configuration of litellm-front (compose.yaml): a one-route HTTP proxy between the
+# agent service and LiteLLM, so nothing else LiteLLM registers is reachable. One entrypoint on
+# :4000, whose `http` block equals the `edge` entrypoint's (the hardening of traefik.yml), and the
+# global and log blocks of traefik.yml; tests/test_litellm_unit.py and the CI job `front` hold the
+# equality. The api, ping and metrics blocks stay absent. The one route stands in
+# dynamic/route.yml. The front reads no secret file; the service credential passes through its
+# memory only.
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: INFO
+
+entryPoints:
+  api:
+    address: ":4000"
+    http:
+      aliasHeadersStrategy: delete
+      sanitizePath: true
+      encodedCharacters:
+        allowEncodedSlash: false
+        allowEncodedBackSlash: false
+        allowEncodedNullCharacter: false
+        allowEncodedSemicolon: false
+        allowEncodedPercent: false
+        allowEncodedQuestionMark: false
+        allowEncodedHash: false
+
+providers:
+  file:
+    directory: /litellm-front/dynamic
+    watch: true

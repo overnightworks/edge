@@ -12,10 +12,11 @@ import sys
 from pathlib import Path
 
 import pytest
-from git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
+from support.git_support import elsewhere, hal_command, hal_environment, hal_program, run_hal
+from support.workstation_support import RunnerWithCleanLogs, home_check
 
 from hal import check_commands, cli, exposure_rows
-from hal.exposure import inspection
+from hal.exposure import host, inspection
 from hal.exposure.exposure import Finding, Problem, Protocol
 from hal.stack.external import cloudflare_read, host_probe, tofu
 from hal.workstation import check
@@ -81,8 +82,9 @@ def test_sshd_on_all_interfaces_is_one_row_and_a_verdict_and_exits_1(run_hal_che
     ]
 
 
-def test_272_listeners_of_one_process_are_one_row(run_hal_check):
+def test_272_listeners_of_one_process_are_one_row(run_hal_check, monkeypatch):
     """E2, cell 2."""
+    monkeypatch.setattr(host, "command_line", lambda _pid: None)
     sockets = "".join(
         f'udp UNCONN 0 0 *:{port} *:* users:(("python3",pid=93017,fd=3)) <->\n'
         for port in range(32000, 32272)
@@ -511,3 +513,19 @@ def test_the_exposure_area_reads_no_cloudflare(fake_host, hosts_home, monkeypatc
 
     assert cli.main(["check", "exposure", "--allow-list", str(allow_list)]) == 0
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.usefixtures("quiet_pc")
+def test_a_link_at_a_declared_secret_file_is_a_finding_in_the_daily_report(clean_home, capsys):
+    place = clean_home / ".secrets" / "gitlab"
+    target = clean_home / "elsewhere"
+    target.write_text("FAKE-LINK-TARGET")
+    place.unlink()
+    place.symlink_to(target)
+
+    code = home_check(clean_home, RunnerWithCleanLogs())
+
+    assert code == 1
+    report = Layout(clean_home).check_report_file.read_text()
+    assert "| symlinked-file | ~/.secrets/gitlab |" in report
+    assert "A secret file is a link" in capsys.readouterr().out

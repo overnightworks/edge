@@ -328,10 +328,15 @@ def timer_text(job: TimerJob) -> str:
         f"Description={job.timer_description}",
         "",
         "[Timer]",
-        f"OnCalendar={job.on_calendar}",
-        "Persistent=true",
+        *schedule_lines(job),
         "",
         "[Install]",
         "WantedBy=timers.target",
     ]
     return "\n".join(lines) + "\n"
+
+
+def schedule_lines(job: TimerJob) -> list[str]:
+    if job.on_calendar:
+        return [f"OnCalendar={job.on_calendar}", "Persistent=true"]
+    return [f"OnBootSec={job.interval_minutes}min", f"OnUnitActiveSec={job.interval_minutes}min"]

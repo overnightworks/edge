@@ -1,5 +1,5 @@
 [gate]
-mandatory_jobs = ["check"]
+mandatory_jobs = ["check", "front"]
 legacy = "fail"
 
 [[root.allow]]

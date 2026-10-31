@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from hal.stack import core
+from hal.stack.checkout import EntryKind
+
 TRAEFIK_FILE = "traefik.yml"
 
 
@@ -46,6 +49,27 @@ def bind_core_files(config: dict, checkout: Path) -> dict:
         },
     ]
     return config
+
+
+def tracked(
+    config: dict, checkout: Path, kinds: dict[str, EntryKind | None] | None = None
+) -> core.Checkout:
+    """What HEAD tracks at each bind source of `config` in `checkout`: a directory where the disk
+    holds one, else a file; `kinds` says otherwise per path, None for one HEAD does not track."""
+    found: dict[str, EntryKind] = {}
+    for service in config["services"].values():
+        for mount in service.get("volumes", []):
+            source = Path(mount["source"])
+            if mount.get("type") == "bind" and source.is_relative_to(checkout):
+                found[source.relative_to(checkout).as_posix()] = (
+                    EntryKind.DIRECTORY if source.is_dir() else EntryKind.FILE
+                )
+    for path, kind in (kinds or {}).items():
+        if kind is None:
+            found.pop(path, None)
+        else:
+            found[path] = kind
+    return core.Checkout(checkout, found)
 
 
 def sha256(path: Path) -> str:

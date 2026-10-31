@@ -16,8 +16,8 @@ them runs from a throwaway container on the network a client would sit on. Needs
 --scratch directory. Proof 9 waits for a renewal, 10 runs three applies, 11 drives the emergency
 switch, 12 runs the setup from `hal apply`, 13 lets traefik-mcp follow its file and definition
 through about ten applies (traefik_mcp_follows.py), and 14 drives songmaker's route (#346
-P13-P27, mcp_networks.py): about 13 minutes, 10 of them proof 9's renewal wait, bounded by the
-1800 s cap above, so a run that needs longer is cut, not given more. Needs `uv`: proof 8 runs
+P13-P27, mcp_networks.py): 13 to 20 minutes measured, 10 of them proof 9's renewal wait, bounded
+by the 1800 s cap above, so a run that needs longer is cut, not given more. Needs `uv`: proof 8 runs
 `hal check exposure` through it, proofs 10 to 13 `uv sync` in a copy of the repository. The copy
 is a clean `main` with a bare remote under the scratch directory, and every edit a proof makes
 there is published (committed and pushed) before the apply that follows it (#95 P3).
@@ -110,7 +110,7 @@ RENEWAL_POLL_SECONDS = 12 * 60
 RENEWAL_POLL_INTERVAL = 15
 FOREIGN_UID = 12345
 STEP_CA_SWITCH = re.compile(r"( {2}step-ca:\n {4}run:\n {6}enabled: )(?:true|false)")
-KEYCLOAK_SWITCH = re.compile(r"( {2}keycloak:\n {4}run:\n {6}enabled: )(?:true|false)")
+ASKING_SWITCHES = re.compile(r"( {2}(?:keycloak|agent-service):\n {4}run:\n {6}enabled: )\w+")
 STAND_IN_OVERLAY = REPO / "probe" / "step-ca" / "compose.probe.yaml"
 SHORT_LIVED_OVERLAY = REPO / "probe" / "step-ca" / "compose.short-lived.probe.yaml"
 
@@ -153,11 +153,11 @@ class Probe(McpNetworks, TraefikMcpFollows):
             raise ProbeFailed(f"{' '.join(command[:4])} exited {result.returncode}: {tail[-1:]}")
         return result
 
-    def compose(self, *args: str, check: bool = True, own_session: bool = False):
-        files = [flag for file in self.compose_files for flag in ("--file", str(file))]
+    def compose(self, *args: str, check: bool = True, own_session: bool = False, all_units=False):
         command = [
-            "docker", "compose", "--project-directory", str(REPO), *files,
-            "--profile", "probe", "--profile", "step-ca",
+            "docker", "compose", "--project-directory", str(REPO),
+            *[flag for file in self.compose_files for flag in ("--file", str(file))],
+            *(["--profile", "*"] if all_units else ["--profile", "probe", "--profile", "step-ca"]),
         ]  # fmt: skip
         if args[0] in GUARDED_COMPOSE_VERBS:
             self.guard.expect(command)
@@ -609,15 +609,15 @@ class Probe(McpNetworks, TraefikMcpFollows):
         return copy_repository(REPO, self.home, self.scratch, PROJECT)
 
     def set_enabled(self, copy: Path, enabled: bool) -> None:
-        """Set step-ca's switch; the copy switches keycloak off, so apply never asks its setup."""
+        """Set step-ca's switch; keycloak and agent-service go off: their setups ask."""
         fleet = copy / "fleet.yaml"
         text, step_ca_matches = STEP_CA_SWITCH.subn(
             rf"\g<1>{str(enabled).lower()}", fleet.read_text()
         )
-        text, keycloak_matches = KEYCLOAK_SWITCH.subn(r"\g<1>false", text)
+        text, asking_matches = ASKING_SWITCHES.subn(r"\g<1>false", text)
         expect(
-            (step_ca_matches, keycloak_matches) == (1, 1),
-            "fleet.yaml lacks exactly one step-ca and one keycloak switch",
+            (step_ca_matches, asking_matches) == (1, 2),
+            "fleet.yaml lacks exactly one step-ca, keycloak and agent-service switch",
         )
         fleet.write_text(text)
         publish(copy, f"probe: step-ca enabled {enabled}")
@@ -793,7 +793,7 @@ class Probe(McpNetworks, TraefikMcpFollows):
         # Own session: a signal to the probe's process group must not reach these.
         self.compose(
             "down", "--volumes", "--remove-orphans", "--timeout", "10", check=False,
-            own_session=True,
+            own_session=True, all_units=True,  # apply also starts the copy's units, e.g. legal
         )  # fmt: skip
         left = self.run(
             ["docker", "ps", "-a", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"],

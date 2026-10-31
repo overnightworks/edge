@@ -11,8 +11,8 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
 import pytest
-from workstation_support import symlinked_folder_fix
-from workstation_secrets_support import (
+from support.workstation_support import symlinked_folder_fix
+from support.workstation_secrets_support import (
     FakeCli,
     FakeSync,
     FakeTerminal,
@@ -327,6 +327,35 @@ def test_a_secret_already_present_stays_untouched_and_its_page_is_not_opened(
     assert [urlsplit(page).netloc for page in terminal.opened] == ["github.com"]
 
 
+LOGIN_MANIFEST = """
+[[secret]]
+name = "agent-service/codex"
+kind = "tool-login"
+paths = ["~/.secrets/agent-service/codex/auth.json"]
+read_by = ["agent-service"]
+create = { run = ["codex", "login"], home = ["CODEX_HOME"], label = "Codex" }
+purpose = "the agent service runs Codex for the apps"
+"""
+
+
+def test_a_link_at_a_login_files_place_counts_as_missing_so_the_walk_signs_in_and_replaces_it_unfollowed(
+    home: Path, tmp_path: Path, terminal: FakeTerminal, boundaries: Boundaries, cli: FakeCli, use_manifest
+) -> None:
+    use_manifest(LOGIN_MANIFEST)
+    place = private_directory(home, ".secrets/agent-service/codex") / "auth.json"
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    place.symlink_to(victim)
+
+    end = run_wizard(home, boundaries)
+
+    assert end is WalkEnd.DONE
+    assert len(cli.calls) == 1
+    assert place.read_text() == cli.content
+    assert not place.is_symlink()
+    assert victim.read_text() == "untouched"
+
+
 @pytest.mark.parametrize("present", [False, True], ids=["absent", "present at 0644"])
 def test_setup_never_writes_the_passwords_step_ca_init_and_keycloak_go_live_generate(
     home: Path, use_manifest, boundaries: Boundaries, present: bool
@@ -452,6 +481,54 @@ def test_a_secrets_directory_that_is_not_private_is_refused_before_any_page_open
     assert files_under(home.parent) <= {"secrets_manifest.toml", "home/.secrets", "home/.secrets/cloudflare"}
 
 
+@pytest.mark.parametrize(
+    ("manifest", "name"), [(SETUP_MANIFEST, "cloudflare/read"), (OTHER_ENTRIES, "locked/token")], ids=["a token", "a generated password"]
+)
+def test_a_link_at_a_place_the_wizard_writes_is_refused_with_its_rm_before_any_page_opens_and_its_target_stays_untouched(
+    home: Path, tmp_path: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys, manifest: str, name: str
+) -> None:
+    use_manifest(manifest)
+    place = home / ".secrets" / name
+    private_directory(home, str(place.parent.relative_to(home)))
+    victim = tmp_path / "victim"
+    victim.write_text("untouched")
+    place.symlink_to(victim)
+    terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
+
+    end = run_wizard(home, boundaries)
+
+    captured = capsys.readouterr()
+    assert end is WalkEnd.STORE_REFUSED
+    assert [line for line in squeezed(captured.out) if "not stored" in line] == [f"✗ {name} not stored ~/.secrets/{name} is a symlink"]
+    assert captured.err.splitlines() == [f"error: setup stopped at secrets · nothing stored for {name}", f"next: rm ~/.secrets/{name}"]
+    assert (terminal.opened, terminal.prompts) == ([], [])
+    assert place.is_symlink()
+    assert victim.read_text() == "untouched"
+
+
+def test_a_place_whose_stat_is_refused_is_not_checked_and_the_walk_goes_on(
+    home: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, monkeypatch, capsys
+) -> None:
+    use_manifest(OTHER_ENTRIES + SETUP_MANIFEST)
+    refused = private_directory(home, ".secrets/locked") / "token"
+    real_stat = Path.stat
+
+    def refuse_the_place(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if path == refused:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_stat(path, follow_symlinks=follow_symlinks)
+
+    monkeypatch.setattr(Path, "stat", refuse_the_place)
+    monkeypatch.setattr(Path, "lstat", lambda path: refuse_the_place(path, follow_symlinks=False))
+    terminal.pastes = [PASTED_VALUE, PASTED_VALUE]
+
+    end = run_wizard(home, boundaries)
+
+    assert end is WalkEnd.STILL_OPEN
+    assert "! locked/token not checked its folder cannot be read" in squeezed(capsys.readouterr().out)
+    assert ".secrets/cloudflare/read" in files_under(home)
+
+
 def test_entries_without_a_wizard_are_named_with_their_page_and_unknown_or_retired_ones_are_left_alone(
     home: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:
@@ -526,7 +603,7 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
     tmp_path: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:
-    use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\nrecreate = "https://x.example"\n')
+    use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\npage = "https://x.example"\nrecreate = "https://x.example"\n')
     terminal.pastes = [PASTED_VALUE]
     assert run_wizard(tmp_path, boundaries) is WalkEnd.DONE
     output = capsys.readouterr().out

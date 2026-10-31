@@ -7,18 +7,17 @@ content read, and the process sampler's closed vocabulary.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import random
 import re
 import socket
-import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from support.script_module import loaded_script
 
 PROGRAM = Path(__file__).resolve().parent.parent / "probe" / "agent-service" / "tree_census.py"
 KEY = bytes(range(32))
@@ -34,16 +33,7 @@ GRAMMAR = re.compile(
 
 @pytest.fixture(scope="module")
 def census() -> Iterator[ModuleType]:
-    spec = importlib.util.spec_from_file_location("agent_probe_tree_census", PROGRAM)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module  # its dataclasses resolve their annotations through it
-    try:
-        spec.loader.exec_module(module)
-        yield module
-    finally:
-        del sys.modules[spec.name]
+    yield from loaded_script("agent_probe_tree_census", PROGRAM)
 
 
 @pytest.fixture
