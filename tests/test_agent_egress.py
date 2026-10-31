@@ -443,6 +443,53 @@ def test_the_watch_loop_counts_a_dns_frame_the_kernel_cut_as_undecoded(
     assert (window.frames, window.undecoded, ended_by) == (1, undecoded, "frames")
 
 
+class SilentSocket:
+    """A packet socket that never sees a frame; its poll times out."""
+
+    def recvmsg(self, _size: int, _ancillary_size: int):
+        raise TimeoutError
+
+
+@pytest.mark.parametrize("bound", [None, 45], ids=["the default bound", "a longer bound"])
+def test_a_window_lasts_for_its_bound_in_seconds(capture, monkeypatch, bound):
+    seconds = bound or capture.WINDOW_SECONDS
+    clock = iter(range(1000))
+    now = []
+    monkeypatch.setattr(capture.time, "monotonic", lambda: now.append(next(clock)) or now[-1])
+
+    arguments = [] if bound is None else [bound]
+    _, ended_by = capture.watch(SilentSocket(), [], *arguments)
+
+    assert ended_by == "seconds"
+    assert seconds <= now[-1] - now[0] <= seconds + 1
+
+
+@pytest.mark.parametrize(
+    ("arguments", "parsed"),
+    [
+        (["syn"], (None, "syn", [])),
+        (["--seconds", "90", "syn"], (90, "syn", [])),
+        (["--seconds", "90", "dns", "Label"], (90, "dns", ["label"])),
+        (["--seconds"], None),
+        (["--seconds", "0", "syn"], None),
+        (["--seconds", "ten", "syn"], None),
+        (["--seconds", "90"], None),
+        (["--seconds", "90", "syn", "label"], None),
+        (["dns"], None),
+    ],
+    ids=[
+        "no bound", "a bound on syn", "a bound on dns", "a bound without a number",
+        "a bound of zero", "a bound that is no number", "a bound without a mode",
+        "syn with a label", "dns without a label",
+    ],
+)  # fmt: skip
+def test_the_window_arguments_name_the_bound_the_mode_and_the_labels(capture, arguments, parsed):
+    if parsed is not None and parsed[0] is None:
+        parsed = (capture.WINDOW_SECONDS, *parsed[1:])
+
+    assert capture.parse_arguments(arguments) == parsed
+
+
 @pytest.mark.parametrize(
     ("cut", "undecoded"),
     [(None, 0), (20, 1)],

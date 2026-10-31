@@ -1,15 +1,16 @@
 """A bounded packet window for the agent-service probe (#189): standard library only, run in a
 container with NET_RAW and nothing else, in the namespace it is asked to watch.
 
-    capture.py syn                     TCP SYNs that leave this namespace
-    capture.py dns LABEL [LABEL ...]   DNS questions on port 53, UDP or TCP, naming a label
+    capture.py [--seconds N] syn                     TCP SYNs that leave this namespace
+    capture.py [--seconds N] dns LABEL [LABEL ...]   DNS questions on port 53, UDP or TCP,
+                                                     naming a label
 
-It opens an `AF_PACKET` socket on every interface, prints `ready`, watches for at most
-WINDOW_SECONDS or FRAME_CAP frames, whichever comes first, and prints one JSON line: the counts,
-the addresses and ports named below, and the kernel's own PACKET_STATISTICS for the socket. Every
-frame is parsed in memory and dropped. No packet file, and no payload in any output or diagnostic:
-the host's window also sees the operator's own traffic. The caller decides whether the window was
-complete (no drop, nothing undecoded, still open when its control ended).
+It opens an `AF_PACKET` socket on every interface, prints `ready`, watches for at most N seconds
+(default WINDOW_SECONDS) or FRAME_CAP frames, whichever comes first, and prints one JSON line: the
+counts, the addresses and ports named below, and the kernel's own PACKET_STATISTICS for the
+socket. Every frame is parsed in memory and dropped. No packet file, and no payload in any output
+or diagnostic: the host's window also sees the operator's own traffic. The caller decides whether
+the window was complete (no drop, nothing undecoded, still open when its control ended).
 
 Every SYN carries the kernel's receive timestamp of its frame (SO_TIMESTAMPNS), not the time this
 script got round to reading it.
@@ -349,8 +350,10 @@ def read_statistics(watcher: socket.socket) -> tuple[int, int]:
     return struct.unpack("II", watcher.getsockopt(SOL_PACKET, PACKET_STATISTICS, 8))
 
 
-def watch(watcher: socket.socket, labels: list[str]) -> tuple[Window, str]:
-    window, deadline = Window(), time.monotonic() + WINDOW_SECONDS
+def watch(
+    watcher: socket.socket, labels: list[str], seconds: int = WINDOW_SECONDS
+) -> tuple[Window, str]:
+    window, deadline = Window(), time.monotonic() + seconds
     while window.frames < FRAME_CAP:
         if time.monotonic() >= deadline:
             return window, "seconds"
@@ -368,11 +371,11 @@ def watch(watcher: socket.socket, labels: list[str]) -> tuple[Window, str]:
     return window, "frames"
 
 
-def run(mode: str, labels: list[str]) -> dict:
+def run(mode: str, labels: list[str], seconds: int = WINDOW_SECONDS) -> dict:
     watcher = open_socket(DNS_FILTER if mode == "dns" else None)
     print("ready", flush=True)
     started = time.time()
-    window, ended_by = watch(watcher, labels)
+    window, ended_by = watch(watcher, labels, seconds)
     packets, drops = read_statistics(watcher)
     result = {
         "started_at": started,
@@ -386,15 +389,30 @@ def run(mode: str, labels: list[str]) -> dict:
     return result | ({"syns": window.syns} if mode == "syn" else {"labels": window.label_frames})
 
 
-def main(arguments: list[str]) -> int:
+def parse_arguments(arguments: list[str]) -> tuple[int, str, list[str]] | None:
+    """The window's length in seconds, its mode and its labels; None for arguments that are none
+    of the usages."""
+    seconds = WINDOW_SECONDS
+    if arguments[:1] == ["--seconds"]:
+        if len(arguments) < 2 or not re.fullmatch(r"[1-9][0-9]{0,5}", arguments[1]):
+            return None
+        seconds, arguments = int(arguments[1]), arguments[2:]
     mode, labels = (arguments[0] if arguments else ""), [label.lower() for label in arguments[1:]]
     valid = (mode == "syn" and not labels) or (
         mode == "dns" and labels and all(LABEL.fullmatch(label) for label in labels)
     )
-    if not valid:
-        print("usage: capture.py syn | capture.py dns LABEL [LABEL ...]", file=sys.stderr)
+    return (seconds, mode, labels) if valid else None
+
+
+def main(arguments: list[str]) -> int:
+    if (parsed := parse_arguments(arguments)) is None:
+        print(
+            "usage: capture.py [--seconds N] syn | capture.py [--seconds N] dns LABEL [LABEL ...]",
+            file=sys.stderr,
+        )
         return 2
-    print(json.dumps(run(mode, labels)), flush=True)
+    seconds, mode, labels = parsed
+    print(json.dumps(run(mode, labels, seconds)), flush=True)
     return 0
 
 
