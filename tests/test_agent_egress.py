@@ -562,10 +562,6 @@ def test_the_dns_filter_lets_ipv6_extension_header_chains_through_to_be_walked(
     assert filter_passes(capture, ipv6(protocol, body)) is passes
 
 
-REWRITTEN_PORT = 46519  # where Docker's rule in a container sends a query to its resolver
-DNS_REPLY_FLAGS = 0x8180
-
-
 @pytest.mark.parametrize(
     ("destination", "passes"),
     [("127.0.0.11", True), ("127.0.0.12", False)],
@@ -576,7 +572,8 @@ def test_the_dns_filter_passes_a_query_to_the_embedded_resolver_on_its_rewritten
 ):
     """S1: Docker rewrites the port of a container's query to 127.0.0.11 before the frame is
     captured, so the filter cannot wait for port 53 on it."""
-    body = udp(40000, REWRITTEN_PORT, dns_message("label.example.com"))
+    rewritten_port = 46519  # where Docker's rule in a container sends a query to its resolver
+    body = udp(40000, rewritten_port, dns_message("label.example.com"))
     frame = ethernet(0x0800, ipv4_header(17, body, destination=destination))
 
     assert filter_passes(capture, frame) is passes
@@ -585,8 +582,8 @@ def test_the_dns_filter_passes_a_query_to_the_embedded_resolver_on_its_rewritten
 @pytest.mark.parametrize(
     ("ports", "destination", "flags", "queries"),
     [
-        ((40000, REWRITTEN_PORT), "127.0.0.11", 0x0100, {"label": 1}),
-        ((53, 40000), "127.0.0.1", DNS_REPLY_FLAGS, {}),
+        ((40000, 46519), "127.0.0.11", 0x0100, {"label": 1}),  # a rewritten port
+        ((53, 40000), "127.0.0.1", 0x8180, {}),  # a reply's flags
     ],
     ids=["a query on the rewritten port", "the reply from port 53"],
 )  # fmt: skip
