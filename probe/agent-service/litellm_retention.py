@@ -167,21 +167,17 @@ class RetentionProbe(FailureProbe):
     # --- the cells ----------------------------------------------------------------------------
 
     def drive(self) -> None:
-        self.wait_until(SERVICE, LISTENING)
-        self.wait_until(LITELLM, LISTENING)
+        """The controls first, then a recreated route for the clean cells, in the order of the
+        matrix."""
+        for service in (SERVICE, LITELLM):
+            self.wait_until(service, LISTENING)
         self.steer()
-        self.cell_b2()
-        self.cells_b3()
-        self.recreate_route()
-        self.cell_b1()
-        self.cell_b4()
-        self.cell_b5()
-        self.cell_b6()
-        self.cell_b7()
-        self.cell_b8()
-        self.cell_b9()
-        self.cell_b10()
-        self.cell_b11()
+        for step in (
+            self.cell_b2, self.cells_b3, self.recreate_route, self.cell_b1, self.cell_b4,
+            self.cell_b5, self.cell_b6, self.cell_b7, self.cell_b8, self.cell_b9, self.cell_b10,
+            self.cell_b11,
+        ):  # fmt: skip
+            step()
 
     def cell_b2(self) -> None:
         tokens = {"file in litellm": canary("b2-litellm"), "file in front": canary("b2-front")}
