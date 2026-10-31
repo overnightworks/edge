@@ -527,7 +527,7 @@ def test_the_core_group_holds_core_plans_then_followers_and_stands_before_units_
 
 
 def origin_main(behind: int, ahead: int = 0) -> checkout.Origin:
-    return checkout.Origin("f" * 40, "ffffff0", "c280a80", ahead, behind)
+    return checkout.Origin("f" * 40, "ffffff0", "c280a80", "c" * 40, ahead, behind)
 
 
 def test_a_current_checkout_is_one_done_row_naming_the_pinned_main() -> None:
