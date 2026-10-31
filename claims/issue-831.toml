@@ -3,5 +3,5 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "e11c3dd09da942aebca602668f13a94b090a0fea"
 branch = "claude/issue-831-the-keycloak-probe-accepts-a-token-lifes"
-scope = ["probe/keycloak/probe.py"]
+scope = ["probe/keycloak/README.md", "probe/keycloak/probe.py"]
 opened_commit = "6472a13b3528c244840743a3b810a2bd2177d5cb"
