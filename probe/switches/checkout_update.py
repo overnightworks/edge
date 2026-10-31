@@ -68,13 +68,15 @@ def bumped(version: str) -> str:
     return ".".join([*release, str(int(patch) + 1)])
 
 
-def version_edits(old: str, new: str, *, lock: bool) -> dict[str, tuple[str, str]]:
-    """The edits that move the project from `old` to `new`; with `lock` in `uv.lock` too."""
-    edits = {"pyproject.toml": (f'version = "{old}"', f'version = "{new}"')}
-    if lock:
-        entry = f'name = "{PROJECT_NAME}"\nversion = "'
-        edits["uv.lock"] = (f'{entry}{old}"', f'{entry}{new}"')
-    return edits
+def pyproject_edit(old: str, new: str) -> dict[str, tuple[str, str]]:
+    """The edit that moves the project's version in `pyproject.toml` from `old` to `new`."""
+    return {"pyproject.toml": (f'version = "{old}"', f'version = "{new}"')}
+
+
+def lock_edit(old: str, new: str) -> dict[str, tuple[str, str]]:
+    """The edit that moves the project's version in `uv.lock` from `old` to `new`."""
+    entry = f'name = "{PROJECT_NAME}"\nversion = "'
+    return {"uv.lock": (f'{entry}{old}"', f'{entry}{new}"')}
 
 
 def fetched_state(copy: Path) -> tuple[bytes, str]:
@@ -141,7 +143,7 @@ def cell_p2_new_lock_and_new_code(probe: Probe) -> None:
         probe.scratch,
         "probe: a new version and import-time code",
         {APPLY_MODULE: MARKER_CODE},
-        version_edits(old, new, lock=True),
+        {**pyproject_edit(old, new), **lock_edit(old, new)},
     )
     tip = checkout.Git(probe.scratch / "work").full()
     watching = {MARKER_VARIABLE: str(marker)}
@@ -164,9 +166,7 @@ def cell_p3_lock_that_does_not_sync(probe: Probe) -> None:
     copy, containers = probe.copy, probe.container_ids()
     old = project_version(copy)
     new = bumped(old)
-    advance_origin(
-        probe.scratch, "probe: a bump without its lock", {}, version_edits(old, new, lock=False)
-    )
+    advance_origin(probe.scratch, "probe: a bump without its lock", {}, pyproject_edit(old, new))
     tip = checkout.Git(probe.scratch / "work").full()
     record = record_bytes(probe)
     out = update(probe, exit_code=HAL_FAILURE)
@@ -178,7 +178,7 @@ def cell_p3_lock_that_does_not_sync(probe: Probe) -> None:
     refused = apply_local(probe, exit_code=HAL_FAILURE, terminal=False)
     expect("cannot sync the live checkout's dependencies" in refused, f"launcher: {refused[-300:]}")
     expect(fetched_state(copy) == seen, "the launcher fetched after a failed sync")
-    advance_origin(probe.scratch, "probe: the lock follows", {}, version_edits(old, new, lock=True))
+    advance_origin(probe.scratch, "probe: the lock follows", {}, lock_edit(old, new))
     pull(copy)
     current = update(probe)
     expect("nothing to update" in current and "next: hal apply" in current, current[-300:])
