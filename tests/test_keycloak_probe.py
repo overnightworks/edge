@@ -731,7 +731,6 @@ def test_run_proves_3b_before_the_fresh_apply_and_3a_after_it(
         "backchannel_logout_reaches_rp",
         "only_logins_and_failed_logins_are_stored",
         "app_client",
-        "agent_service_stays_audience_only",
         "the_realm_step",
         "the_observer_door",
         "no_secret_leaked",
@@ -860,20 +859,10 @@ def imported_client(client: object, **changes: object) -> dict[str, object]:
         "redirectUris": list(client.callbacks),
         "baseUrl": f"{client.origin}/",
         "alwaysDisplayInConsole": False,
-        "optionalClientScopes": [],
+        "optionalClientScopes": sorted(client.optional_scopes),
         "defaultClientScopes": sorted(client.default_scopes),
         "attributes": sys.modules["backchannel_cell"].ruled_settings(client.client_id),
     } | changes
-
-
-@pytest.mark.parametrize(
-    ("client_name", "scopes"),
-    [("SONGMAKER", SONGMAKER_SCOPES), ("PRESENTATOR", SONGMAKER_SCOPES), ("HOPIN", HOPIN_SCOPES)],
-)
-def test_each_app_client_has_exactly_its_own_decided_scopes(
-    probe: ModuleType, client_name: str, scopes: list[str]
-) -> None:
-    assert getattr(probe, client_name).default_scopes == set(scopes)
 
 
 @pytest.mark.parametrize(
@@ -905,6 +894,13 @@ def test_each_app_client_has_exactly_its_own_decided_scopes(
         pytest.param(
             "HOPIN", {"defaultClientScopes": HOPIN_SCOPES[:-1]}, False, id="hopin without audience"
         ),
+        pytest.param("HOPIN", {"optionalClientScopes": []}, False, id="hopin without its scope"),
+        pytest.param(
+            "PRESENTATOR",
+            {"optionalClientScopes": ["speech-service-audience"]},
+            False,
+            id="presentator with hopin's optional scope",
+        ),
     ],
 )
 def test_an_app_client_is_accepted_only_with_exactly_its_decided_scopes_and_service_account(
@@ -929,6 +925,10 @@ def test_an_app_client_is_accepted_with_its_callbacks_in_another_order(probe: Mo
 
 
 @pytest.mark.parametrize(
+    ("service", "role"),
+    [("agent-service", "agent-workload"), ("speech-service", "speech-workload")],
+)
+@pytest.mark.parametrize(
     ("changes", "accepted"),
     [
         pytest.param({}, True, id="a correct workload token"),
@@ -942,17 +942,17 @@ def test_an_app_client_is_accepted_with_its_callbacks_in_another_order(probe: Mo
     ],
 )
 def test_a_token_is_the_workload_identity_only_with_role_audience_client_and_no_group(
-    probe: ModuleType, changes: dict[str, object], accepted: bool
+    probe: ModuleType, service: str, role: str, changes: dict[str, object], accepted: bool
 ) -> None:
     claims = {
-        "realm_access": {"roles": [probe.AGENT_WORKLOAD_ROLE]},
-        "aud": [probe.AGENT_SERVICE],
+        "realm_access": {"roles": [role]},
+        "aud": [service],
         "client_id": "songmaker",
         "azp": "songmaker",
     } | changes
     claims = {key: value for key, value in claims.items() if value is not None}
 
-    assert probe.is_workload_identity_of(claims, "songmaker") is accepted
+    assert probe.is_workload_identity_of(claims, "songmaker", service) is accepted
 
 
 @pytest.mark.parametrize(

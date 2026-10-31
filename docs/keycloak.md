@@ -69,8 +69,19 @@ songmaker, presentator and hopin are also the workload identity of the agent ser
 #506): their service accounts are the only users `realm.yaml` lists, each holding the realm role
 `agent-workload` and no group, and their default scopes add the `agent-service` audience. Whoever
 holds such an app's client secret can therefore get a workload token for that app, which is the
-design; the secret stays the app's own file. hopin's scopes are exactly `basic`, `profile`, `groups`,
-`roles`, `service_account` and `agent-service-audience`: it reads no email, web origin or acr.
+design; the secret stays the app's own file. hopin's default scopes are exactly `basic`, `profile`,
+`groups`, `roles`, `service_account` and `agent-service-audience`: it reads no email, web origin or
+acr.
+
+hopin is also the caller of the speech service (#674). Its service account holds the realm role
+`speech-workload` beside `agent-workload`, and `speech-service-audience` is an optional scope of
+hopin alone, so a token carries the `speech-service` audience only when its request names the scope:
+`scope=speech-service-audience` on the `client_credentials` grant, or `openid speech-service-audience`
+on the authorization request. The scope is an `oidc-audience-mapper` on the access token only, like
+the agent service's. songmaker and presentator cannot ask for it: the request is refused with
+`invalid_scope`. The speech service is a bearer-only client `speech-service` like `agent-service`, and
+the group `/services/speech-service` has no subgroup: the service admits exactly that path. A person
+reaches the service by being a member of the group and signing in to hopin with the scope.
 
 Every login app follows the same shape. It gets its own client in `realm.yaml`, with its secret in its own file under `~/.secrets/keycloak/clients/`. Its `backchannel.logout.url` is `http://<app>.hallucinai.de:<port>/auth/backchannel-logout`, with `backchannel.logout.session.required: "false"`; the host is an alias the app's web service gives itself. The call travels over the app's own internal network `hal_backchannel_<app>`, which only `keycloak` joins on edge's side and the app joins as an external network, so no app sees another's. The public host lists the path in `deny_public` (`fleet.yaml`). An app that holds a refresh token per session names `use.refresh.tokens: "true"` (hopin); one without the line keeps Keycloak's default.
 
@@ -182,7 +193,7 @@ clears only Cloudflare's copy; a browser that already holds the old file keeps i
 >   - a client role on a listed service account (`service-account-songmaker`); its realm roles
 >     and groups stay;
 >   - a service account turned off in the console on a declared client (hopin), which the apply
->     turns on again, which recreates its user with its role and no group;
+>     turns on again, which recreates its user with its roles and no group;
 >   - a flow binding override on a declared client.
 >
 >   A change to a declared object is made in the file, by an agent, never in the console. Deleting
