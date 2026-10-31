@@ -2256,8 +2256,8 @@ class Probe:
     def workload_token_carries_the_role(
         self, admin: Admin, client_secret: str, client: AppClient
     ) -> None:
-        """Cells W1, W2: the client-credentials token is the app's workload identity and lives as
-        long as the realm says (300 s, which proof 8 pins; the client has no override)."""
+        """Cells W1, W2: the client-credentials token is the app's workload identity and lives the
+        realm's 300 s (proof 8) or 1 s more: Keycloak reads the clock twice (webauth#544)."""
         name = client.client_id
         override = admin.find(f"/{REALM}/clients", "clientId", name)["attributes"].get(
             "access.token.lifespan"
@@ -2277,13 +2277,13 @@ class Probe:
         )
         access = claims(tokens["access_token"])
         roles = access.get("realm_access", {}).get("roles", [])
-        lifespan = access["exp"] - access["iat"]
+        extra_seconds = access["exp"] - access["iat"] - realm_lifespan
         expect(
-            is_workload_identity_of(access, name) and not override and lifespan == realm_lifespan,
+            is_workload_identity_of(access, name) and not override and extra_seconds in (0, 1),
             f"{name}'s workload token has realm roles {roles}, aud {audience_of(access)}, "
             f"client_id {access.get('client_id')}, azp {access.get('azp')}, groups "
-            f"{access.get('groups')}, lifespan {lifespan}s (realm {realm_lifespan}s, client "
-            f"override {override})",
+            f"{access.get('groups')}, lifespan {realm_lifespan + extra_seconds}s (realm "
+            f"{realm_lifespan}s, 0 or 1 s more accepted, client override {override})",
         )
 
     def agent_service_stays_audience_only(self, admin: Admin) -> None:
