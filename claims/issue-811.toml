@@ -3,6 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "e11c3dd09da942aebca602668f13a94b090a0fea"
 branch = "claude/issue-811-s2b-api-credential-setup"
-scope = ["agent-service/api_credential.py", "agent-service/litellm/gate.py", "agent-service/setup", "docs/agent-service.md", "src/hal/workstation/secrets_manifest.toml", "tests/support/agent_service_setup.py", "tests/test_agent_service_api_credential.py", "tests/test_agent_service_setup.py", "tests/test_agent_service_signing_key.py", "tests/test_litellm_gate.py"]
+scope = ["agent-service/api_credential.py", "agent-service/litellm/gate.py", "agent-service/secret_entry.py", "agent-service/setup", "agent-service/signing_key.py", "docs/agent-service.md", "src/hal/workstation/secrets_manifest.toml", "tests/support/agent_service_setup.py", "tests/test_agent_service_api_credential.py", "tests/test_agent_service_setup.py", "tests/test_agent_service_signing_key.py", "tests/test_litellm_gate.py"]
 opened_commit = "d584d3c238f0bd96a4469dab5aa40c389a100b90"
 whole_reason = "S2b makes the API route's generated secrets: agent-service/setup creates, checks and replaces the service credential through one reader of its rules, and the manifest names the credential and the master key hal setup generates; one scratch run proves the setup contract, the wizard's part and the boot."
