@@ -355,6 +355,10 @@ Key-ID und API-Token des TURN-Keys, den nur HopIn nutzt (`cloudflare/turn-hopin/
 der Key entsteht (Cloudflare › Realtime › TURN, beide Werte zeigt Cloudflare nur einmal), und
 bietet die Cloudflare-Startseite an. Er speichert sie ohne Prüfung durch einen Anbieter (`stored`, `not verified`), denn der TURN-Token ist kein Benutzer-Token, und kein Anbieter wird gefragt; `hal secrets`
 zeigt beide als `not checked`. Ob Cloudflare sie annimmt, zeigt erst HopIn beim Start.
+Ebenso nimmt er den Provider-Key für Anthropic entgegen (`litellm/anthropic`, nur `litellm` liest ihn):
+Er nennt, wo der Key entsteht (die Console, im Workspace mit dem Guthaben; Anthropic zeigt ihn nur einmal),
+und bietet die Seite der API-Keys an. Er schickt den Key nirgends hin, also prüft ihn kein Anbieter. Der Eintrag ist nicht
+`optional`; bis er eingefügt ist, bleibt `hal secrets` bei `missing litellm/anthropic`.
 Eine vorhandene Datei bleibt unangetastet; ersetzen ist `--rotate` und kommt
 später. Ein Eintrag ohne Assistent (etwa `gitlab`) wird mit seiner Seite aus
 `recreate` genannt (`by hand`), ein optionaler, der fehlt, übersprungen (`skipped`, `optional`). Strg-C bricht ab, ohne eine halbe Datei zu hinterlassen
@@ -433,7 +437,8 @@ empfiehlt nie ein engeres. Ein Token, durch
 das der Assistent führt, nennt dazu `provider` (`github` oder `cloudflare`),
 `resource` (GitHub: der Resource owner; Cloudflare: die Zone), `scope` (die
 Rechte; bei GitHub als `<URL-Parameter>:read|write|admin`) und
-`expires_in_days` (1 bis 366), alle vier zusammen; ein `unverified-token` nennt keinen davon und hat
+`expires_in_days` (1 bis 366), alle vier zusammen; ein `unverified-token` nennt keinen davon, dafür `page`
+(eine `https://`-Adresse, die der Assistent zum Öffnen anbietet; kein anderer Eintrag nennt sie), und hat
 genau einen Pfad: der Assistent fragt seinen Wert unsichtbar ab und speichert ihn ungeprüft; ein `service-password`
 hat genau einen Pfad ohne Platzhalter und wird erzeugt, außer er ist `optional`:
 dann schreibt ihn die Einheit aus `recreate`. Ein `tool-login` kann statt eines `recreate` ein `create` nennen (nur mit `purpose`; beides zusammen lehnt das Laden ab)

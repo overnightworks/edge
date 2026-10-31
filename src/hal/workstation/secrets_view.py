@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 
 from hal.output.command import Verb, command
 from hal.workstation.layout import Layout
-from hal.workstation.manifest_fields import ManifestError, fail, string, strings
+from hal.workstation.manifest_fields import ManifestError, fail, https_link, require_key_of_kind, string, strings
 from hal.workstation.report import findings_count, markdown_table
 from hal.workstation.secrets_create import CreateCommand, is_renewal_sibling, parse_create
 from hal.workstation.tunnel_config import as_wildcard, with_tunnel_id
@@ -147,6 +147,7 @@ class SecretEntry:
     source: TokenSource | None = None
     optional: bool = False
     elsewhere: str = ""
+    page: str = ""
     loosest_mode: int = LOOSEST_FILE_MODE
     loosest_mode_reason: str = ""
     create: CreateCommand | None = None
@@ -188,7 +189,7 @@ REQUIRED_KEYS = frozenset({"name", "kind", "paths", "read_by"})
 SOURCE_KEYS = frozenset({"provider", "resource", "scope", "expires_in_days"})
 RETIREMENT_KEYS = frozenset({"retired_on", "revoke_url", "revocation_confirmed"})
 MODE_KEYS = frozenset({"loosest_mode", "loosest_mode_reason"})
-OPTIONAL_KEYS = frozenset({"recreate", "create", "verify", "mirror_of", "purpose", "optional", "elsewhere"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
+OPTIONAL_KEYS = frozenset({"recreate", "create", "verify", "mirror_of", "purpose", "optional", "elsewhere", "page"}) | RETIREMENT_KEYS | SOURCE_KEYS | MODE_KEYS
 GITHUB_ACCESS_LEVELS = frozenset({"read", "write", "admin"})
 LONGEST_EXPIRY_DAYS = 366  # GitHub's ceiling for a fine-grained token's expires_in
 
@@ -242,9 +243,7 @@ def _retirement(path: Path, where: str, raw: Mapping[str, object]) -> Retirement
         if "revocation_confirmed" in raw:
             raise fail(path, where, "revocation_confirmed belongs to a retired entry only")
         return Retirement()
-    revoke_url = string(path, where, raw, "revoke_url")
-    if not revoke_url.startswith("https://"):
-        raise fail(path, where, "revoke_url must be an https:// link")
+    revoke_url = https_link(path, where, raw, "revoke_url")
     confirmed = _date(path, where, raw, "revocation_confirmed") if "revocation_confirmed" in raw else None
     return Retirement(_date(path, where, raw, "retired_on"), revoke_url, confirmed)
 
@@ -302,8 +301,8 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     if missing or unknown:
         raise fail(path, where, f"missing key(s) {missing}, unknown key(s) {unknown}")
     kind = _enum_value(path, where, raw, "kind", SecretKind)
-    if (kind is SecretKind.DERIVED_MIRROR) != ("mirror_of" in raw):
-        raise fail(path, where, "mirror_of belongs to every derived-mirror entry and to no other kind")
+    require_key_of_kind(path, where, raw, "mirror_of", kind, SecretKind.DERIVED_MIRROR)
+    require_key_of_kind(path, where, raw, "page", kind, SecretKind.UNVERIFIED_TOKEN)
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
@@ -324,6 +323,7 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
         source=source,
         optional=_flag(path, where, raw, "optional"),
         elsewhere=string(path, where, raw, "elsewhere") if "elsewhere" in raw else "",
+        page=https_link(path, where, raw, "page") if "page" in raw else "",
         loosest_mode=loosest_mode,
         loosest_mode_reason=loosest_mode_reason,
         create=create,
