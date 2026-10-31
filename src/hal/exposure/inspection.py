@@ -18,7 +18,9 @@ class ExposureCheckError(Exception):
 def inspect(allow_list_path: Path = DEFAULT_ALLOW_LIST) -> list[Finding]:
     try:
         allow_list = parse_allow_list(_read_allow_list(allow_list_path))
-        return check(host.docker_inspect_json(), host.socket_listeners(), allow_list)
+        return check(
+            host.docker_inspect_json(), host.socket_listeners(), allow_list, host.command_line
+        )
     except (AllowListError, host.HostCommandError, UnreadableOutputError) as error:
         raise ExposureCheckError(str(error)) from error
 

@@ -15,7 +15,7 @@ docs/external.md), one per run. A bare `hal check` is not an area: it is the dai
 mails and pops up what is new (docs/home.md), and takes no `--json`.
 
 It runs `docker ps --all`, `docker inspect` and `ss -H -ltnupe` (fixed arguments, no shell, nothing
-written) and reports, by `problem`:
+written) and reads `/proc/<pid>/cmdline` of a listener's process when it is an interpreter (python, node, nodejs, perl, ruby). It reports, by `problem`:
 
 | Problem | When |
 |---|---|
@@ -29,6 +29,7 @@ written) and reports, by `problem`:
 Stopped containers count too, since their publications and labels return when they start; only the
 duplicate check looks at running containers alone. docker-proxy's socket for a running container's
 publication is not reported again as a listener, and `docker.service` never belongs on the allow-list.
+A listener run by an interpreter is named by its script or module (`wsdd`, not `python3`); that name only names the finding and never matches an allow-list `owner`, since any process chooses its command line. An `owner` matches the process name (`python3`), or, when it names a systemd unit (`avahi-daemon.service`), only that unit under system.slice, never a process named like it, since any user can name a process. When the command line cannot be read, or is inline code, the finding names the process.
 The rows name the subject, the protocol and a count, never an address, a port or the `problem` code;
 `--json` lists each socket. It is one object, `{"exposure": [...]}`, whose list is deduplicated and stably ordered, with objects holding `problem`, `subject`, `protocol`,
 `address`, `port` and `edge_name` (`null` where they do not apply; `port` is a string such as

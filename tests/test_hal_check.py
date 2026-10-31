@@ -16,7 +16,7 @@ from support.git_support import elsewhere, hal_command, hal_environment, hal_pro
 from support.workstation_support import RunnerWithCleanLogs, home_check
 
 from hal import check_commands, cli, exposure_rows
-from hal.exposure import inspection
+from hal.exposure import host, inspection
 from hal.exposure.exposure import Finding, Problem, Protocol
 from hal.stack.external import cloudflare_read, host_probe, tofu
 from hal.workstation import check
@@ -82,8 +82,9 @@ def test_sshd_on_all_interfaces_is_one_row_and_a_verdict_and_exits_1(run_hal_che
     ]
 
 
-def test_272_listeners_of_one_process_are_one_row(run_hal_check):
+def test_272_listeners_of_one_process_are_one_row(run_hal_check, monkeypatch):
     """E2, cell 2."""
+    monkeypatch.setattr(host, "command_line", lambda _pid: None)
     sockets = "".join(
         f'udp UNCONN 0 0 *:{port} *:* users:(("python3",pid=93017,fd=3)) <->\n'
         for port in range(32000, 32272)
