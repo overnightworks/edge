@@ -1,8 +1,0 @@
-claim_id = "771a3bbcd0ed4150ac83b6c66c56972d"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "1a6c590fd21346a54db3676b184bd5f91d541145"
-branch = "claude/issue-775-s1-terms-required-action"
-scope = ["docs/keycloak.md", "keycloak/realm.yaml", "keycloak/themes/hallucinai/login/messages/messages_de.properties", "keycloak/themes/hallucinai/login/messages/messages_en.properties", "legal/sections/allgemein/datenschutz.html", "legal/sections/allgemein/nutzungsbedingungen.html", "legal/sections/keycloak/datenschutz.html", "probe/keycloak/README.md", "probe/keycloak/probe.py", "probe/keycloak/terms_cell.py", "quality/baseline.toml", "tests/test_stack_keycloak_unit.py"]
-opened_commit = "2f79ab1abf4a98c14c9f8cce6e0c5c66141426c4"
-whole_reason = "S1's realm action, theme text and legal sentences go live with one checkout update and one apply: without the messages Keycloak shows its placeholder, without the action the privacy sentence is untrue, and the probe changes with the realm because every probe sign-in would otherwise stop at the terms page."
