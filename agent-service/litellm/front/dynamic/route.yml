@@ -1,0 +1,13 @@
+# The one route litellm-front serves: the completion call, to LiteLLM. Every other method and path
+# matches no router and Traefik answers 404 itself.
+http:
+  routers:
+    completions:
+      entryPoints: [api]
+      rule: Method(`POST`) && Path(`/v1/chat/completions`)
+      service: litellm
+  services:
+    litellm:
+      loadBalancer:
+        servers:
+          - url: http://litellm:4000

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 import support.throwaway_home as throwaway_home
-from git_support import (
+from support.git_support import (
     advance,
     checkout_state,
     hal_program,

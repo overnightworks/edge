@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from live_stack import LIVE_STACK_PORTS
+from support.live_stack import LIVE_STACK_PORTS
 
 from hal.stack import checkout
 from hal.stack.external import apply as external_apply

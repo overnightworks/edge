@@ -15,6 +15,7 @@ from hal.stack.unit_plans import Action, Fleet, KeptImage, Recreate, UnitPlan
 @dataclass(frozen=True)
 class Plan:
     fleet: Fleet
+    checkout: core.Checkout
     read: Mapping[str, switches.Mark | None]
     core: list[core.CorePlan]
     followers: list[core.FollowerPlan]

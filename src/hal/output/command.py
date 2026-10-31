@@ -14,6 +14,7 @@ class Verb(StrEnum):
     ONLINE = "online"
     SETUP = "setup"
     CHECK = "check"
+    ALARM = "alarm"
     BACKUP = "backup"
     RESTORE = "restore"
     VERSION = "version"

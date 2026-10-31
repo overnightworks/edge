@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from backup_support import (
+from support.backup_support import (
     DUMP,
     Machine,
     app_history,

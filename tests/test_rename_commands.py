@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 import pytest
-from git_support import committed_main, plain_git
 from support import rename_support
+from support.git_support import committed_main, plain_git
 from support.rename_support import (
     HTTPS,
     SSH,

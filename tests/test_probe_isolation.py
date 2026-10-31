@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "probe"))
 sys.path.insert(0, str(ROOT / "src"))
 
 import edge_copy  # noqa: E402
-from git_support import committed_main, plain_git  # noqa: E402
+from support.git_support import committed_main, plain_git  # noqa: E402
 
 from hal.stack import catalog  # noqa: E402
 

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from workstation_support import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk, unit_listing_matching
+from support.workstation_support import ALLOWED_PLATFORM_INSPECT_FORMAT, CANARY_INSPECT_LINE, INSPECT_CANARY, FakeDisk, unit_listing_matching
 
 from hal.workstation import platform_check
 

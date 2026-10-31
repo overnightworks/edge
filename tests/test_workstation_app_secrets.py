@@ -10,8 +10,8 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
-from workstation_secrets_support import never_run, FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
+from support.workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
+from support.workstation_secrets_support import never_run, FakeSync, FakeTerminal, guided_boundaries, secrets_terminal
 from support.workstation_secrets_report import findings_of, report_of
 
 from support.terminal_support import put_stdout_on_a_terminal

@@ -10,7 +10,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from backup_support import (
+from support.backup_support import (
     APP_HISTORY_KEYS,
     AUDIO,
     CANARY_PASSWORD,

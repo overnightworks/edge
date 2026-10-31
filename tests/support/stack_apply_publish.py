@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from app_support import KEY, ScriptedDocker, origin_at, runtime_of
+from support.app_support import KEY, ScriptedDocker, origin_at, runtime_of
 from support.stack_apply import (
     NOT_SET_UP_LINE,
     REPOSITORY,

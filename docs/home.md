@@ -39,7 +39,7 @@ Commit protection, Secrets, Server logs, Exposure). Die Stufe und der Satz je Re
 | `platform` | `container-restarting`, `container-dead`, `container-unhealthy`, `container-exited`, `docker-unreadable`, `job-failed`, `systemd-unreadable`, `disk-low` | `reboot-pending` |
 | `backup` | `backup-stale`, `backup-failed`, `backup-status-unreadable`, `backup-crashed` | – |
 | `hook` | `hooks-path`, `hook-file`, `quality`, `mise`, `engines` | `hidden-hook` |
-| `secrets` | `loose-mode`, `symlinked-folder`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
+| `secrets` | `loose-mode`, `symlinked-folder`, `symlinked-file`, `revocation-unconfirmed`, `verification-failed`, ein fehlendes Passwort eines Menschen (`SecretKind.HUMAN_PASSWORD`, als Regel `missing-password` gemerkt) | `missing` (sonst), `not-a-folder`, `closed-folder`, `presence-unknown`, `verification-unreachable`, `unknown-file` |
 | `logs` | `journal-age`, `journal-unreadable`, `docker-unreadable` | `container-json-file`, `docker-default-driver`, `rsyslog-file` |
 | `exposure` | `reachable-beyond-loopback` (Veröffentlichung oder Listener jenseits von Loopback, ein Fund je Prozess oder Container), `routing-name-unusable` (`routed-without-edge-name`, `invalid-edge-name`, `duplicate-edge-name`) | – |
 
@@ -158,7 +158,7 @@ eigener Fund, nie ein sauberer Lauf.
   ein entfernter Container auch nicht. Gesunde erscheinen nur als Zahl. Ein Container einer App, die mit `hal stop`
   abgeschaltet ist (eine Datei unter `~/.local/state/edge/stopped/`; nur der Name wird gelesen), ist mit jedem Code ungleich 0
   kein Fund, und der Bericht nennt die Schalter; `container-restarting`, `container-dead` und `container-unhealthy` bleiben
-  Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter. `docker-unreadable`, wenn Docker nicht lesbar ist.
+  Funde. Eine Einheit von edges eigenem Stack (Projekt `edge`) erscheint nach `hal stop` weiter, weil nur `hal` weiß, welche Dienste eine Einheit bilden und dafür noch niemand zuständig ist; `hal alarm` meldet sie deshalb nach der eingestellten Zahl Läufe. `docker-unreadable`, wenn Docker nicht lesbar ist.
 - **`platform`, Jobs.** `systemctl --user list-units --state=failed` für `hal*`: nur die erste Spalte, der Einheitenname
   (`hal-backup.service`), wird gelesen, nie die Beschreibung. Jede fehlgeschlagene `hal*`-Einheit ist ein `job-failed`
   (Action needed, Gegenstand der Name samt Endung); sie verschwindet mit `reset-failed` oder einem erfolgreichen Lauf. Passt ein Name nicht
@@ -293,7 +293,9 @@ Eintrag nennt („unknown“; bleibt unangetastet), und Rechte lockerer als
 den sein Besitzer nicht lesen, betreten oder beschreiben kann („closed-folder“;
 was darin liegt, ist „unknown“), ein Symlink
 auf dem Weg zu einem Eintrag („symlinked-folder“; die Empfehlung ersetzt ihn durch
-den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt) und eine Datei, wo auf dem Weg zu einem Eintrag ein
+den Ordner, auf den er zeigt, oder durch einen leeren, wenn das Ziel fehlt), ein Symlink
+an der Stelle eines Eintrags unter `~/.secrets` (er zählt als fehlend; „symlinked-file“; die
+Empfehlung entfernt mit `rm` nur den Link und lässt sein Ziel unangetastet) und eine Datei, wo auf dem Weg zu einem Eintrag ein
 Ordner stehen muss („not-a-folder“; die Empfehlung schiebt sie mit `mv -n` nach
 `<Name>.alt`). Die Ordner auf dem Weg beurteilt dieselbe Regel, mit der
 der Assistent das Speichern verweigert. `hal` setzt nie Rechte und ersetzt nichts;
@@ -326,7 +328,8 @@ Mensch, alles andere der Assistent. Je Token:
    Checkliste der Rechte. Ein erzeugter oder von Hand anzulegender Eintrag druckt nur seine Ergebniszeile.
    Vorher prüft er die Ordner auf dem Weg: Ist einer lockerer als `700`, für
    seinen Besitzer verschlossen, ein Symlink („is a symlink“) oder kein
-   Ordner, nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
+   Ordner, oder steht an der Stelle selbst ein Symlink (Befehl: `rm`, nur der
+   Link), nennt er das mit dem Befehl, der es behebt, und öffnet keine Seite,
    damit kein frisch angelegtes Token verloren geht.
 2. Nach Enter öffnet er die Seite. GitHubs Formular ist über die dokumentierten
    URL-Parameter vorausgefüllt (Name, Resource owner `overnightworks`, Ablauf,
@@ -482,7 +485,7 @@ come before the system step, which is the one that asks for sudo:
    Verzeichnis. It comes after the four steps above, so a failure in one of
    them never activates a hook whose scanner is missing.
 6. **User units.** The jobs declared in `src/hal/workstation/jobs.py` (the backup, the
-   restore test and `hal check`) are written as a `.service` and a `.timer` file each into
+   restore test, `hal check` and `hal alarm`) are written as a `.service` and a `.timer` file each into
    `~/.config/systemd/user/`, led by a marker line that says `hal setup` rewrites the file
    and that changes belong in a drop-in (`<unit>.d/*.conf`, which `hal setup` never
    touches). The `ExecStart` runs `.venv/bin/hal` of the live checkout, `~/srv/hal`
@@ -548,7 +551,7 @@ or `✓ setup up to date · 5 unchanged · 21s`. The run time is whole seconds r
 a minute, `1h02m` from an hour) and stands after the counts and before the hint; a failed run ends with the error pair and shows none. A step that fails prints its row as `failed` with its own
 sentence, every later row as `not run`, and then `error: setup stopped at <row>` and `next: <command>`:
 the command that failed (quality, Engines, Aktivierung, Ansible) or `hal setup`. For the
-system row the error says what /etc is left as: `/etc unchanged` after a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. After the yes the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed for the agent role or in a dry run. A second
+system row the error says what /etc is left as: `/etc unchanged` after a failed check, `/etc may be partial` after an Ansible apply that did not finish or whose `sudo -k` failed (the ticket may still be valid). The secrets row does not fail when the wizard leaves a secret open: it prints `! secrets  N open  a, b (by hand)` from what the disk shows after the walk, and the error says `setup stopped at secrets · N secret(s) still open`; a refused store (`~/.secrets` or a group folder that is a file, a symlink or too open, or a symlink at the secret's own place, fixed by `rm`) stops the walk at the first entry with one `✗ <entry>  not stored  <reason>` row, `error: setup stopped at secrets · nothing stored for <entry>` and the bare fix as `next:` (`next: hal setup` when the secret's file appeared while the page was open); another wizard exit ends with the wizard's own error pair; setup prints no second pair. After the yes the `system` row is preceded by `› system  needs sudo` and what the play does, right before the system's own sudo prompt (`[sudo] Passwort für <user>:` or sudo-rs's `[sudo: authenticate] Passwort:`); it is not counted in the verdict and is not printed for the agent role or in a dry run. A second
 `--dry-run` changes nothing and downloads nothing. On a terminal the glyphs, the verdict and the `error:`/`next:`
 labels are coloured with the 16 base colours, each stream on its own; `NO_COLOR` (non-empty), `TERM=dumb` and a pipe print the plain bytes. Der Hook ist die Vorlage `src/hal/workstation/hooks/commit-hook`
 (POSIX sh). Er ruft `quality scan-staged`, führt danach den eigenen
@@ -733,6 +736,18 @@ Die Zusage ist enger als „jeder Commit“:
   ein Allow-Eintrag steht dort als sichtbare Zeile mit Hash und Grund.
 - Der Framework-Hook von hopin (`.pre-commit-config.yaml`) läuft hier nicht mit.
 
+## hal alarm
+
+`hal alarm` ist der Fünf-Minuten-Lauf: Er fährt nur die Prüfungen `platform` (Dienste, Jobs, Neustart, Platte) und
+`backup` des täglichen `hal check` mit denselben Regeln und merkt sich je Fund, in wie vielen Läufen hintereinander er
+auftrat. Ein Fund zählt erst, wenn er in `runs` Läufen hintereinander auftrat (Default 2); ein Fund, der einmal fehlt,
+beginnt von vorn. Was zählt, geht in dieselbe gemerkte Fundmenge wie beim täglichen Lauf
+(`~/.local/state/hal/check-findings.txt`); die Zahl der Läufe steht daneben in `alarm-streaks.json`. Mail, Popup, Wortlaut und
+Kanalregeln sind die des täglichen `hal check` (siehe oben): eine Mail, wenn ein Handlungsbedarf zählt, eine, wenn er weg
+ist, und der 09:00-Lauf meldet nichts davon noch einmal, so wenig wie der Alarm, was der tägliche Lauf schon gemeldet
+hat. Ein Alarmlauf, der scheitert, ist ein `job-failed` (`hal-alarm.service`). Der Lauf endet mit Exit-Code `0`, bei
+ungültiger Konfiguration mit `2`.
+
 ## Konfiguration
 
 `hal` liest seine Einstellungen aus `~/.config/hal/config.toml`, eine Tabelle je
@@ -748,13 +763,26 @@ weiterzulaufen. Die Datei enthält kein Geheimnis; das SMTP-Konto bleibt unter
 
 | Schlüssel | Default | Bedeutung |
 |---|---|---|
-| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` ab |
+| `notify` | `true` | `false` schaltet Benachrichtigung und Mail von `hal check` und `hal alarm` ab |
+
+### `[alarm]`
+
+| Schlüssel | Default | Bedeutung |
+|---|---|---|
+| `interval` | `5` | Minuten zwischen zwei Läufen von `hal alarm`; `hal setup` schreibt `hal-alarm.timer` daraus (`OnUnitActiveSec`) |
+| `runs` | `2` | Läufe hintereinander, in denen ein Fund auftreten muss, bevor er zählt |
+
+Beide Werte sind ganze Zahlen ab 1. Ein neuer `interval` gilt nach `hal setup`; `runs` gilt beim nächsten Lauf.
 
 Beispiel:
 
 ```toml
 [check]
 notify = true
+
+[alarm]
+interval = 5
+runs = 2
 ```
 
 ## Installation
@@ -778,8 +806,9 @@ Paket ist editierbar installiert: eine Änderung unter `src/` wirkt ohne
 Neuinstallation. Nach einem Pull, der Abhängigkeiten ändert, `uv sync --locked`
 ausführen (oder `hal` über `bin/hal` aufrufen), bevor der Timer läuft.
 
-Der Timer läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
-nach) und fährt nur `hal check`.
+`hal-check.timer` läuft täglich 09:00 (`Persistent=true` holt einen verpassten Lauf
+nach) und fährt nur `hal check`; `hal-alarm.timer` fährt `hal alarm` alle `[alarm] interval` Minuten
+(Default 5, ab dem Start und nach jedem Lauf).
 
 ## Tests
 

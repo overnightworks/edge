@@ -128,6 +128,11 @@ def _run_isolated(name: str, run_check: Callable[[CheckContext], CheckFindings],
     return CheckResult(name, report, identities)
 
 
+def run_areas(ctx: CheckContext, names: frozenset[str]) -> tuple[CheckResult, ...]:
+    """The named checks, each isolated, in the order of `CHECKS`."""
+    return tuple(_run_isolated(name, run_check, ctx) for name, run_check in CHECKS if name in names)
+
+
 def _failure_marker(name: str) -> str:
     return f"{name}\t{CHECK_FAILED_IDENTITY}"
 
@@ -161,7 +166,7 @@ def render_report(results: tuple[CheckResult, ...], now: datetime) -> str:
     return "\n".join([header, *("\n" + result.report.rstrip() for result in results)]) + "\n"
 
 
-def _previous_identities(layout: Layout) -> frozenset[str] | None:
+def previous_identities(layout: Layout) -> frozenset[str] | None:
     text = read_state_file(layout.home, layout.check_findings_file)
     return None if text is None else _parse_identities(text)
 
@@ -193,11 +198,12 @@ def _is_remembered(identity: str) -> bool:
     return name in CHECK_NAMES and (finding == CHECK_FAILED_IDENTITY or bool(separator and rule != CHECK_FAILED_IDENTITY and _rule_report(name, rule)))
 
 
-def _remember(layout: Layout, identities: frozenset[str]) -> None:
+def remember(layout: Layout, identities: frozenset[str]) -> None:
     write_state_file(layout.home, layout.check_findings_file, json.dumps(sorted(identities), indent=0) + "\n")
 
 
 NOTIFY_FAILED = "popup failed: notify-send did not run; the next run reports again"
+NOTIFY_FAILED_NOT_RETRIED = "popup failed: notify-send did not run; the mail was delivered, so the popup is not sent again"
 
 
 @dataclass(frozen=True)
@@ -267,6 +273,7 @@ RULE_REPORTS: dict[tuple[str, str], RuleReport] = {
     ("hook", "hidden-hook"): RuleReport(NOTE, "A repo's own commit step is hidden.", area_note="a repo's own commit step is hidden"),
     ("secrets", FindingRule.LOOSE_MODE.value): RuleReport(ACTION, "A secret is readable by others.", SECRETS_VIEW, resolved="A secret is no longer readable by others."),
     ("secrets", FindingRule.SYMLINKED_FOLDER.value): RuleReport(ACTION, "A secret sits behind a link.", SECRETS_VIEW, resolved="A secret no longer sits behind a link."),
+    ("secrets", FindingRule.SYMLINKED_FILE.value): RuleReport(ACTION, "A secret file is a link.", SECRETS_VIEW, resolved="A secret file is no longer a link."),
     ("secrets", FindingRule.REVOCATION_UNCONFIRMED.value): RuleReport(
         ACTION, "A retired key is not yet confirmed as revoked.", SECRETS_VIEW, resolved="A retired key is confirmed as revoked."
     ),
@@ -536,13 +543,10 @@ def _mail_delivered(ctx: CheckContext, subject: str, body: str) -> bool | None:
 
 
 def _desktop_delivered(ctx: CheckContext, summary: str, body: str) -> bool | None:
-    """None without a graphical session; False (after one stderr line) when the notification was not delivered."""
+    """None without a graphical session; False when the notification was not delivered."""
     if ctx.run(GRAPHICAL_SESSION_PROBE) is None:
         return None
-    delivered = _notify(ctx.run, summary, body, ctx.layout.check_report_file)
-    if not delivered:
-        sys.stderr.write(printable(NOTIFY_FAILED) + "\n")
-    return delivered
+    return _notify(ctx.run, summary, body, ctx.layout.check_report_file)
 
 
 def _mail_facts(ctx: CheckContext) -> MailFacts:
@@ -575,6 +579,8 @@ class NewsOutcome:
     delivery: Delivery
     settled: bool
     """Whether the run counts as having told the operator, so the remembered findings may advance."""
+    told: bool
+    """Whether the news reached the operator once: the mail was delivered, or with no mail set up the popup was delivered. A failed popup beside a delivered mail does not make a caller resend the mail."""
 
 
 def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
@@ -585,23 +591,31 @@ def _delivery_of(desktop: bool | None, mail_outcome: bool | None) -> Delivery:
     return Delivery.NEWS_SENT if desktop else Delivery.NO_MAIL
 
 
-def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
-    """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered."""
+def _news_delivered(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts, *, mail_settles: bool) -> NewsOutcome:
+    """Every set-up channel is attempted; the news counts as delivered when at least one is set up and all of those delivered.
+
+    With `mail_settles`, a delivered mail ends the news, so a failed popup beside it is not tried again.
+    """
     home = ctx.layout.home
     report_file = f"~/{ctx.layout.check_report_file.relative_to(home)}"
     summary = title(current)
     desktop = _desktop_delivered(ctx, summary, notification_body(current, report_file))
     mail_outcome = _mail_delivered(ctx, summary, mail_body(current, previous, report_file, ctx.now, facts))
     set_up = [outcome for outcome in (desktop, mail_outcome) if outcome is not None]
-    return NewsOutcome(_delivery_of(desktop, mail_outcome), bool(set_up) and all(set_up))
+    settled = bool(set_up) and all(set_up)
+    told = mail_outcome if mail_outcome is not None else desktop is True
+    if desktop is False:
+        retried = not (told if mail_settles else settled)
+        sys.stderr.write(printable(NOTIFY_FAILED if retried else NOTIFY_FAILED_NOT_RETRIED) + "\n")
+    return NewsOutcome(_delivery_of(desktop, mail_outcome), settled, told)
 
 
-def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts) -> NewsOutcome:
+def _news_outcome(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None, facts: MailFacts, *, mail_settles: bool = False) -> NewsOutcome:
     if not ctx.settings.notify:
-        return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True)
+        return NewsOutcome(Delivery.NOTIFICATIONS_OFF, True, True)
     if not _is_news(current, previous):
-        return NewsOutcome(Delivery.NOTHING_NEW, True)
-    return _news_delivered(ctx, current, previous, facts)
+        return NewsOutcome(Delivery.NOTHING_NEW, True, True)
+    return _news_delivered(ctx, current, previous, facts, mail_settles=mail_settles)
 
 
 OPEN_REPORT_ACTION = "open=Open report"
@@ -654,18 +668,23 @@ def _write_verdict(items: list[Item], area_count: int, outcome: NewsOutcome, rep
     )
 
 
+def deliver_news(ctx: CheckContext, current: frozenset[str], previous: frozenset[str] | None) -> NewsOutcome:
+    """The news of `current` against `previous` through every set-up channel, with a delivered mail ending the news; the caller remembers `current` when the outcome is told."""
+    return _news_outcome(ctx, current, previous, _mail_facts(ctx), mail_settles=True)
+
+
 def check(ctx: CheckContext) -> int:
     layout = ctx.layout
-    results = tuple(_run_isolated(name, run_check, ctx) for name, run_check in CHECKS)
+    results = run_areas(ctx, CHECK_NAMES)
     report = render_report(results, ctx.now)
     write_state_file(layout.home, layout.check_report_file, report)
-    previous = _previous_identities(layout)
+    previous = previous_identities(layout)
     current = remembered_identities(results, previous)
     facts = _mail_facts(ctx)
     outcome = _news_outcome(ctx, current, previous, facts)
     # The remembered set stays at the last delivered one, so the next run sends this news again.
     if outcome.settled:
-        _remember(layout, current)
+        remember(layout, current)
     failed = [result for result in results if result.error]
     items = _items(current, facts.readers)
     broken = {result.name for result in failed}

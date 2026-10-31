@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
-from workstation_support import Sandbox, home_check, run_hal_setup
+from support.workstation_support import Sandbox, home_check, run_hal_setup
 
 from hal.grammar import ExitCode
 from hal.workstation import hook_check

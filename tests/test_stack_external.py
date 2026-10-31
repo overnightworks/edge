@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 import support.stack_external as stack_external_support
-from live_stack import LIVE_STACK_PORTS
+from support.live_stack import LIVE_STACK_PORTS
 from support.stack_external import (
     CHANGING_PLAN,
     CLEAN_SNAPSHOT,

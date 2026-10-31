@@ -10,7 +10,7 @@ import pytest
 
 from hal.workstation import system_step
 from hal.workstation.system_step import PlaybookFinished, PlaybookRun, PlaybookUnfinished
-from workstation_support import StubSudo
+from support.workstation_support import StubSudo
 
 COUNTS = system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 3, "failed": 0, "unreachable": 0})
 FAILED_COUNTS = system_step.EVENT_MARK + json.dumps({"event": "counts", "changed": 1, "failed": 1, "unreachable": 0})

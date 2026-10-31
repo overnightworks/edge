@@ -11,7 +11,7 @@
 "docs/backup.md" = 5
 "src/hal/backup/runner.py" = 1
 "src/hal/backup/settings.py" = 1
-"tests/backup_support.py" = 3
+"tests/support/backup_support.py" = 3
 "tests/test_backup_restore_safety.py" = 4
 "tests/test_backup_runner.py" = 11
 "tests/test_backup_sqlite.py" = 2
@@ -21,7 +21,7 @@
 "docs/design/hal-output.html" = 1
 
 [home-tools]
-"docs/architecture.md" = 40
+"docs/architecture.md" = 38
 "docs/backup.md" = 1
 "docs/external.md" = 1
 "docs/home.md" = 1

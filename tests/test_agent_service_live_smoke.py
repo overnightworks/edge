@@ -20,6 +20,7 @@ from smoke import served_line  # noqa: E402
 from support.live_smoke_fakes import (  # noqa: E402
     GATEWAY,
     KNOWN,
+    LITELLM_GATEWAY,
     PAID_OUTPUT,
     SERVED_LINE,
     TOKENS,
@@ -584,18 +585,30 @@ def test_a_gateway_on_a_service_network_fails_e7():
     assert [c.name.split()[0] for c in cells if c.verdict is Verdict.FAILED] == ["E7"]
 
 
+ENTRYPOINTS = [GATEWAY, LITELLM_GATEWAY]
+
+
 @pytest.mark.parametrize(
     ("listening", "held"),
     [
-        ({"tcp": [f"{GATEWAY}:443", "127.0.0.11:40001"], "udp": ["127.0.0.11:50002"]}, True),
-        ({"tcp": [f"{GATEWAY}:443", "0.0.0.0:8080"], "udp": []}, False),
-        ({"tcp": [f"{GATEWAY}:443"], "udp": [f"{GATEWAY}:53"]}, False),
-        ({"tcp": [f"{GATEWAY}:443", "[::]:443"], "udp": []}, False),
+        (
+            {
+                "tcp": [f"{LITELLM_GATEWAY}:443", f"{GATEWAY}:443", "127.0.0.11:40001"],
+                "udp": ["127.0.0.11:50002"],
+            },
+            True,
+        ),
+        ({"tcp": [f"{GATEWAY}:443"], "udp": []}, False),
+        ({"tcp": [f"{LITELLM_GATEWAY}:443"], "udp": []}, False),
+        ({"tcp": [f"{GATEWAY}:443", f"{LITELLM_GATEWAY}:443", "0.0.0.0:8080"], "udp": []}, False),
+        ({"tcp": [f"{GATEWAY}:443", f"{LITELLM_GATEWAY}:443"], "udp": [f"{GATEWAY}:53"]}, False),
+        ({"tcp": [f"{GATEWAY}:443", f"{LITELLM_GATEWAY}:443", "[::]:443"], "udp": []}, False),
+        ({"tcp": [f"{GATEWAY}:443", f"{GATEWAY}:443"], "udp": []}, False),
         ({"tcp": ["127.0.0.11:40001"], "udp": []}, False),
     ],
 )
-def test_only_the_gateways_443_and_the_embedded_resolver_may_listen(listening, held):
-    assert (live_smoke.judge_listeners(listening, GATEWAY).verdict is Verdict.HELD) is held
+def test_only_each_entrypoints_443_and_the_embedded_resolver_may_listen(listening, held):
+    assert (live_smoke.judge_listeners(listening, ENTRYPOINTS).verdict is Verdict.HELD) is held
 
 
 def test_the_unused_address_is_the_last_one_no_member_holds():
@@ -616,6 +629,7 @@ def test_the_stack_is_anchored_to_the_repository_and_names_what_compose_resolves
         "docker", "compose", "--project-directory", str(ROOT), "--file",
     )  # fmt: skip
     assert (stack.project, stack.gateway) == ("edge", GATEWAY)
+    assert stack.entrypoint_addresses == ENTRYPOINTS
 
 
 def test_a_compose_that_cannot_resolve_stops_the_run_with_its_last_line():

@@ -22,7 +22,7 @@ import pytest
 from hal import check_commands, secrets_commands, setup_commands
 from hal import cli as hal_cli
 from hal import config as hal_config
-import host_support
+import support.host_support as host_support
 from support.terminal_support import type_at_prompt
 from hal.workstation import backup_check, logs_check, platform_check, secrets_view, system_step
 from hal.workstation import ports as home_ports

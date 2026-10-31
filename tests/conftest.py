@@ -10,15 +10,15 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
-from backup_support import (
+from support.backup_support import (
     CANARY_PASSWORD,
     SONGMAKER_TOML,
     Machine,
     Outcome,
 )
-from host_support import write_host_shims
-from live_stack import LIVE_STACK_PORTS
-from workstation_support import (
+from support.host_support import write_host_shims
+from support.live_stack import LIVE_STACK_PORTS
+from support.workstation_support import (
     FAKE_MISE_SHA256,
     HOME_README,
     RECORDED_RECEIPT_GIT,

@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from git_support import hal_program, run_hal
+from support.git_support import hal_program, run_hal
 
 from hal import cli
 from hal.stack import legal_section

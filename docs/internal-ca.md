@@ -65,7 +65,7 @@ name reaches the stand-in), no new host listener, renewal without restart, apply
 keeping both volumes, the emergency switch, setup asked by apply, the follower recreate rules). Its
 compose calls run from a copy of `compose.yaml` whose fixed `hal_*` network names are moved into the
 probe's project, and each checks first that it resolves no other network, so it never touches a live
-one. It takes about 13 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock` with a time cap (its
+one. It takes 13 to 20 minutes and, like every probe stack, runs under `/tmp/probe-stack.lock` with a time cap (its
 docstring gives the command line). Re-run it for every step-ca or Traefik upgrade.
 
 ## agent-egress
@@ -77,13 +77,18 @@ and `sniStrict` ends the handshake in the gateway; `agent-service/egress/dynamic
 owner of the two names. The service finds the gateway through `extra_hosts` (`x-agent-attachments` in
 `compose.yaml`), not through DNS: the networks `agent-songmaker`, `agent-presentator`, `agent-hopin`, `egress` and `mcp` (the anchor's five) are internal and isolated
 (`gateway_mode_ipv4: isolated`), so a member has no route out, no host address and no DNS forwarding.
-Only `agent-egress` sits on `internet`, a plain NAT bridge, and listens on `172.31.252.10:443` of
-`egress` alone. Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config
+Only `agent-egress` sits on `internet`, a plain NAT bridge. It listens on two entrypoints, both TCP
+and `:443`: `egress` (`172.31.252.10` of the network `egress`, for the agent service) and `litellm`
+(`172.31.239.10` of `litellm-egress`, for LiteLLM). The router `provider` of `allowed.yml` is bound to
+both entrypoints, `issuer` to `egress` alone, so LiteLLM reaches the provider and nothing else. The
+three networks of the API route (`litellm-api`, `litellm-backend`, `litellm-egress`) are internal and
+isolated like the others; the isolation exclusions between them are proven only by a later slice
+(#299 S1d). Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config
 path, so `hal apply` recreates it alone while the unit `agent-service` is on; no plain
 `docker compose up -d` starts it.
 
 **Proof:** `probe/agent-service/egress.py` (with `--target service` for the real service and a dummy
-login) starts a throwaway project on a free /24, never the live `edge_egress` subnet, drives the cells
+login) starts a throwaway project on a free /24 for each gateway network, never a live subnet, drives the cells
 for allowed and refused names, observed through the packet windows of `probe/agent-service/capture.py`
 each with a positive control, and removes everything. CI holds the static facts in
 `tests/test_agent_egress.py`.

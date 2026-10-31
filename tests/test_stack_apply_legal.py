@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
-from git_support import committed_main
+from support.git_support import committed_main
 from support.stack_apply import (
     REPOSITORY,
     ZONE,

@@ -1,7 +1,8 @@
 """The agent service image probe (#192, cells I1 to I8).
 
-Builds the image without cache, then drives it as the PC would: a changed hash fails the build,
-both CLIs run as uid 1000 on a read-only root, the real entrypoint starts with both CLI tables
+Builds the image with `--no-cache` (the CLI files are served by digest), then drives it as the PC
+would: a changed hash fails the build, both CLIs run as uid 1000 on a read-only root, the real
+entrypoint starts with both CLI tables
 and answers an unauthenticated `POST /runs` with 401, the image holds no login, and the installed
 packages are exactly the lock's, and a dropped configuration field stops the start. Run it from
 the repository root, in the probe-stack lock:
@@ -52,7 +53,10 @@ SHIPPED_CONFIGURATION = REPOSITORY / "agent-service" / "service.toml"
 # The ARG-name prefix of each provider's CLI pins in the Dockerfile, and what its `--version` says.
 DOCKERFILE_PREFIXES = {"anthropic": "CLAUDE", "openai": "CODEX"}
 VERSION_REPORTS = {"anthropic": "{version} (Claude Code)", "openai": "codex-cli {version}"}
-RUN_STEP = re.compile(r"^RUN [^\n]*(?:\n(?!\S)[^\n]*)*", re.MULTILINE)
+ABSENT_VERSION = "0.0.1"
+# BuildKit's refusal of a fetched file whose sha256 is not the pinned one; an absent release
+# is fetched as some other body and refused the same way.
+DIGEST_REFUSAL = "digest mismatch"
 SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
 BUILD_SECONDS = 1500
@@ -67,7 +71,9 @@ TOKEN_SEARCH = (
     '[ "$status" -le 1 ] || exit "$status"; '
     "done"
 )
-BASE_IMAGE = re.compile(r"^FROM (docker\.io/library/python:\S+@sha256:[0-9a-f]{64})$", re.MULTILINE)
+BASE_IMAGE = re.compile(
+    r"^FROM (docker\.io/library/python:\S+@sha256:[0-9a-f]{64})(?: AS \S+)?$", re.MULTILINE
+)
 LOGIN_PATHS = (
     "managed-settings.json",
     "managed-mcp.json",
@@ -132,17 +138,6 @@ def shipped_cli(provider: str) -> dict:
     return shipped["cli"][provider]
 
 
-def download_step(prefix: str) -> str:
-    """The Dockerfile's RUN step that fetches the CLI whose ARG names start with `prefix`."""
-    dockerfile = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
-    return next(step for step in RUN_STEP.findall(dockerfile) if f"${{{prefix}_VERSION}}" in step)
-
-
-def checked_download(prefix: str) -> str:
-    """The file the download step of the CLI with ARG-name `prefix` writes and checks by sha256."""
-    return re.search(r"--output (\S+)", download_step(prefix)).group(1)
-
-
 def normalized_name(name: str) -> str:
     """A distribution name as pip and the lock may spell it (`ruamel.yaml`, `ruamel-yaml`)."""
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -163,11 +158,6 @@ def cell_i1(output: Path) -> None:
     result = build(IMAGE_DIRECTORY, output / "i1-build.txt")
     expect(result.returncode == 0, f"I1: the build failed (see {output / 'i1-build.txt'})")
     text = result.stdout + result.stderr
-    for provider, prefix in DOCKERFILE_PREFIXES.items():
-        expect(
-            f"{checked_download(prefix)}: OK" in text,
-            f"I1: the build did not report the {provider} download's sha256 as OK",
-        )
     expect("No broken requirements found." in text, "I1: pip check did not pass in the build")
 
 
@@ -183,8 +173,8 @@ def cell_i2(output: Path, scratch: Path) -> None:
         )
         expect(altered.returncode != 0, f"I2: a build with an altered {provider} hash succeeded")
         expect(
-            f"{checked_download(prefix)}: FAILED" in altered.stdout + altered.stderr,
-            f"I2: sha256sum did not fail on the {provider} download",
+            DIGEST_REFUSAL in altered.stdout + altered.stderr,
+            f"I2: BuildKit did not refuse the {provider} download's altered sha256",
         )
     context = scratch / "altered-wheel"
     shutil.copytree(IMAGE_DIRECTORY, context)
@@ -202,21 +192,31 @@ def cell_i2(output: Path, scratch: Path) -> None:
     expect("DO NOT MATCH THE HASHES" in both, "I2: pip did not refuse the altered wheel hash")
 
 
-def cell_i3(output: Path) -> None:
+def cell_i3(output: Path) -> dict[str, str]:
+    """Which check refused the build of each CLI at an absent version, built on I1's warm cache."""
+    refusals = {}
     for provider, prefix in DOCKERFILE_PREFIXES.items():
         result = build(
             IMAGE_DIRECTORY,
             output / f"i3-absent-{provider}.txt",
             "--build-arg",
-            f"{prefix}_VERSION=0.0.1",
+            f"{prefix}_VERSION={ABSENT_VERSION}",
             tag=f"{PROBE_NAME}:i3-{provider}",
             cache=True,
         )
         expect(result.returncode != 0, f"I3: a build for an absent {provider} version succeeded")
-        expect(
-            "curl: (22)" in result.stdout + result.stderr,
-            f"I3: curl --fail did not stop the {provider} build",
-        )
+        text = result.stdout + result.stderr
+        # BuildKit echoes the RUN step with the absent version filled in, so only the check's own
+        # message, which ends with the report it expected, shows that the check refused it.
+        if f", not '{VERSION_REPORTS[provider].format(version=ABSENT_VERSION)}'" in text:
+            refusals[provider] = "the version check"
+        elif DIGEST_REFUSAL in text:
+            refusals[provider] = "BuildKit's digest check at the fetch"
+        else:
+            raise ProbeFailed(
+                f"I3: neither the fetch nor the version check stopped the {provider} build"
+            )
+    return refusals
 
 
 def run_in_image(
@@ -524,11 +524,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         scratch = Path(scratch_name)
         try:
             cell_i1(output)
-            write_line("I1 held: built without cache, both CLI downloads checked, pip check passed")
+            write_line(
+                "I1 held: built with --no-cache, the CLI files served by digest, "
+                "both versions checked, pip check passed"
+            )
             cell_i2(output, scratch)
             write_line("I2 held: an altered hash of either CLI or of a wheel fails the build")
-            cell_i3(output)
-            write_line("I3 held: an absent version of either CLI fails at curl --fail")
+            refusals = cell_i3(output)
+            write_line(
+                "I3 held: an absent version of either CLI fails the build ("
+                + ", ".join(f"{provider}: {check}" for provider, check in refusals.items())
+                + ")"
+            )
             cell_i4()
             write_line(
                 f"I4 held: uid 1000, read-only root, {', '.join(version_reports())}, "

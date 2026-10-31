@@ -9,7 +9,9 @@ depend on it, and the core is recreated in the order of its `depends_on`: socket
 traefik (#87 rule 2).
 
 A core service's file binds are its `type: bind` volumes whose source lies in the checkout and is
-not a directory: today only `traefik.yml`. A directory bind such as `dynamic/` is live through
+a file at HEAD: today only `traefik.yml`. What a bind source is, a file or a directory, is its tree
+entry at HEAD, never the shape of the disk: a source HEAD does not track, a tracked symlink and a
+submodule cannot be planned. A directory bind such as `dynamic/` is live through
 Traefik's watch and needs no record.
 
 `~/.local/state/edge/applied.json`, beside the switches, holds for each service that binds a
@@ -44,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from hal.stack import compose, switches
+from hal.stack.checkout import EntryKind, Git
 
 APPLIED_FILE = "applied.json"
 TRAEFIK_STATIC_CONFIG = "/etc/traefik/traefik.yml"  # where Traefik reads its static config
@@ -137,20 +140,66 @@ def follower_units(config: Mapping[str, Any], units: Collection[str]) -> dict[st
     return found
 
 
-def followed_services(config: Mapping[str, Any], checkout: Path) -> frozenset[str]:
+@dataclass(frozen=True)
+class Checkout:
+    """The checkout and what its HEAD tracks at each bind source in it: the path relative to the
+    checkout -> its kind. One value per plan, read once, so planning, recording and the realm step
+    answer alike."""
+
+    path: Path
+    kinds: Mapping[str, EntryKind]
+
+    @classmethod
+    def read(cls, config: Mapping[str, Any], git: Git) -> "Checkout":
+        """The kinds of every bind source of every service of `config` that lies in the tree; a
+        source that is neither a file nor a directory at HEAD is an error before any plan."""
+        sources = {
+            source
+            for service in config["services"].values()
+            for source in _checkout_sources(service, git.tree)
+        }
+        relative = (source.relative_to(git.tree).as_posix() for source in sources)
+        found = cls(git.tree, git.entry_kinds(sorted(relative)))
+        for source in sorted(sources):
+            found.is_file_bind(source)
+        return found
+
+    def kind_of(self, source: Path) -> EntryKind:
+        """The tree entry at HEAD of a bind source; an error when HEAD does not track it."""
+        if (kind := self.kinds.get(source.relative_to(self.path).as_posix())) is None:
+            raise CoreError(f"{source} is a bind source and HEAD does not track it")
+        return kind
+
+    def is_file_bind(self, source: Path) -> bool:
+        """Whether the source is a file bind; false for a directory bind, an error for a symlink
+        or a submodule."""
+        match self.kind_of(source):
+            case EntryKind.FILE:
+                return True
+            case EntryKind.DIRECTORY:
+                return False
+            case kind:
+                raise CoreError(f"{source} is a {kind.value} at HEAD, not a file or a directory")
+
+
+def followed_services(config: Mapping[str, Any], checkout: Checkout) -> frozenset[str]:
     """Every service, of any profile and running or not, that binds a file from the checkout."""
     return frozenset(name for name in config["services"] if follows(config, name, checkout))
 
 
-def follows(config: Mapping[str, Any], service: str, checkout: Path) -> bool:
+def follows(config: Mapping[str, Any], service: str, checkout: Checkout) -> bool:
     """Edge follows the service, and keeps its entry in the record, while it binds a file from
     the checkout (#87 rule 6)."""
     return bool(file_binds(config["services"][service], checkout))
 
 
-def file_binds(service: Mapping[str, Any], checkout: Path) -> tuple[Path, ...]:
-    """The bind sources of a resolved service that lie in the checkout and are no directory."""
-    return tuple(source for source in _checkout_sources(service, checkout) if not _is_dir(source))
+def file_binds(service: Mapping[str, Any], checkout: Checkout) -> tuple[Path, ...]:
+    """The bind sources of a resolved service that lie in the checkout and are files at HEAD."""
+    return tuple(
+        source
+        for source in _checkout_sources(service, checkout.path)
+        if checkout.is_file_bind(source)
+    )
 
 
 def _checkout_sources(service: Mapping[str, Any], checkout: Path) -> tuple[Path, ...]:
@@ -158,14 +207,6 @@ def _checkout_sources(service: Mapping[str, Any], checkout: Path) -> tuple[Path,
         Path(mount["source"]) for mount in service.get("volumes", []) if mount.get("type") == "bind"
     )
     return tuple(source for source in sources if source.is_relative_to(checkout))
-
-
-def _is_dir(source: Path) -> bool:
-    # Python 3.12 raises from is_dir() when a directory on the way cannot be entered.
-    try:
-        return source.is_dir()
-    except OSError as error:
-        raise _cannot_read(source, error) from error
 
 
 def digests(sources: Iterable[Path], checkout: Path) -> dict[str, str]:
@@ -292,7 +333,7 @@ def plan_core(
     config: Mapping[str, Any],
     containers: Sequence[compose.Container],
     hashes: Mapping[str, str],
-    checkout: Path,
+    checkout: Checkout,
     record: Record,
 ) -> list[CorePlan]:
     """Each changed core service in start order, with `hashes` from `docker compose config
@@ -306,7 +347,7 @@ def plan_core(
     changed = changed_definitions(containers, core_services(config), hashes)
     plans: dict[str, CorePlan] = {}
     for service in start_order(config):
-        current = digests(file_binds(config["services"][service], checkout), checkout)
+        current = digests(file_binds(config["services"][service], checkout), checkout.path)
         whys = _own_changes(config, service, service in changed, checkout, current, reading)
         left_unstarted = _left_unstarted(config, states, reading, checkout, service)
         if left_unstarted and Cause(CauseKind.UNFINISHED) not in whys:
@@ -353,7 +394,7 @@ def plan_followers(
     config: Mapping[str, Any],
     containers: Sequence[compose.Container],
     hashes: Mapping[str, str],
-    checkout: Path,
+    checkout: Checkout,
     record: Record,
     gates: Mapping[str, Gate],
 ) -> list[FollowerPlan]:
@@ -369,7 +410,7 @@ def plan_followers(
     plans = []
     for follower, unit in units.items():
         gate = gates[unit]
-        current = digests(file_binds(config["services"][follower], checkout), checkout)
+        current = digests(file_binds(config["services"][follower], checkout), checkout.path)
         whys = _own_changes(config, follower, follower in changed, checkout, current, reading)
         if not whys:
             continue
@@ -387,7 +428,7 @@ def _own_changes(
     config: Mapping[str, Any],
     service: str,
     definition_changed: bool,
-    checkout: Path,
+    checkout: Checkout,
     current: Digests,
     reading: Reading,
 ) -> list[Cause]:
@@ -405,7 +446,7 @@ def _left_unstarted(
     config: Mapping[str, Any],
     states: Mapping[str, set[str]],
     reading: Reading,
-    checkout: Path,
+    checkout: Checkout,
     service: str,
 ) -> bool:
     """The service's container was created and never started by a recreate of edge's that did
@@ -427,7 +468,7 @@ def _pulled_in(
 
 
 def _recreate_unfinished(
-    config: Mapping[str, Any], reading: Reading, checkout: Path, service: str
+    config: Mapping[str, Any], reading: Reading, checkout: Checkout, service: str
 ) -> bool:
     """The record marks unfinished a recreate that took the service in: its own, or that of a core
     service depending on it, which a recreate of the service always pulls in while it is live. Only

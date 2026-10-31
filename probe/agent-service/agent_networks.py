@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 AGENT_NETWORKS = ("agent_songmaker", "agent_presentator", "agent_hopin")
 CALLER_PORT = 8000
 READY_SECONDS = 90
+EMBEDDED_RESOLVER = "127.0.0.11"
 
 
 def service_networks(probe: Probe, project: str) -> tuple[str, ...]:
@@ -31,6 +32,25 @@ def service_networks(probe: Probe, project: str) -> tuple[str, ...]:
     ]
     expect(all(name.startswith(prefix) for name in names), f"a network outside {prefix}*: {names}")
     return tuple(name.removeprefix(prefix) for name in names)
+
+
+def listeners_of(probe: Probe, service: str) -> dict[str, list[str]]:
+    """The TCP and UDP sockets `service` has open in its own namespace."""
+    found = probe.client_in_namespace_of(probe.container(service), "listeners")
+    # Docker's embedded resolver listens on this loopback address in every container's own
+    # namespace; no other container can reach it.
+    return {
+        protocol: [name for name in names if not name.startswith(EMBEDDED_RESOLVER + ":")]
+        for protocol, names in found.items()
+    }
+
+
+def gateway_listeners(probe: Probe, gateway: str, expected_addresses: list[str]) -> None:
+    """The gateway listens on exactly `expected_addresses` (each `address:port`) over TCP and holds
+    no UDP socket. The probe copy's static file names the addresses."""
+    found = listeners_of(probe, gateway)
+    expect(sorted(found["tcp"]) == sorted(expected_addresses), f"listeners: TCP {found['tcp']}")
+    expect(found["udp"] == [], f"listeners: UDP sockets {found['udp']}")
 
 
 def cell_p36(

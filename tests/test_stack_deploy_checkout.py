@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 import support.throwaway_home as throwaway_home
-from app_support import COMPOSE, URL, Origin, origin_at
-from git_support import plain_git
+from support.app_support import COMPOSE, URL, Origin, origin_at
+from support.git_support import plain_git
 
 from hal.stack import checkout, deploy_checkout
 
