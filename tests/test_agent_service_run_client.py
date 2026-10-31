@@ -6,6 +6,7 @@ holds the drive tests of cells_12b's paid turn (R2 and B9) against a fake clock,
 from __future__ import annotations
 
 import http.client
+import importlib
 import io
 import json
 import socket
@@ -115,13 +116,19 @@ class Clock:
         self.now += seconds
 
 
+def read_run_record():
+    """smoke.py's reader of the run record, which `main` hands the client; importable while the
+    `run_client` fixture holds the probe's import path."""
+    return importlib.import_module("smoke").read_run_record
+
+
 def started(run_client, vocabulary, service, frames, stdin="", clock=None):
     clock = clock or Clock()
     out = io.StringIO()
     client = run_client.RunClient(
-        connect=service.connect, frames=frames, vocabulary=vocabulary, body=b"{}", headers={},
-        stdin=io.StringIO(stdin), out=out, clock=lambda: clock.now, pause=clock.pause,
-        wall=lambda: WALL,
+        connect=service.connect, frames=frames, read_record=read_run_record(),
+        vocabulary=vocabulary, body=b"{}", headers={}, stdin=io.StringIO(stdin), out=out,
+        clock=lambda: clock.now, pause=clock.pause, wall=lambda: WALL,
     )  # fmt: skip
     code = client.run()
     return code, out.getvalue().splitlines(), client
@@ -253,6 +260,25 @@ def test_a_status_read_that_fails_prints_the_exception_type_alone(run_client, vo
     assert (code, lines[-1]) == (1, "broke off TimeoutError")
 
 
+@pytest.fixture(scope="module")
+def smoke(run_client):
+    return importlib.import_module("smoke")
+
+
+@pytest.mark.parametrize("kind", ["no object", "over the limit"])
+def test_a_status_record_the_reader_refuses_prints_broke_off_and_fails(
+    run_client, vocabulary, smoke, kind
+):
+    """#807: the status read refuses a record that is no object or exceeds the reader's limit."""
+    if kind == "no object":
+        answer = FakeResponse(200, [ENDED])
+    else:
+        answer = FakeResponse(200, raw=json.dumps(ENDED).ljust(smoke.MAX_RECORD_BYTES + 1).encode())
+    service = FakeService(FakeResponse(200), answer)
+    code, lines, _ = started(run_client, vocabulary, service, stream(service, STARTED))
+    assert (code, lines[-1]) == (1, "broke off ValueError")
+
+
 def test_a_run_that_never_started_has_no_status_to_read(run_client, vocabulary):
     """Matrix row 8: a run that never started has no run id and so no status to read."""
     service = FakeService(FakeResponse(200))
@@ -306,8 +332,8 @@ def test_a_status_read_that_stalls_ends_at_its_socket_timeout(run_client, vocabu
         port = silent.getsockname()[1]
         client = run_client.RunClient(
             connect=lambda: http.client.HTTPConnection("127.0.0.1", port),
-            frames=lambda _: [], vocabulary=vocabulary, body=b"{}", headers={},
-            stdin=io.StringIO(), out=io.StringIO(),
+            frames=lambda _: [], read_record=read_run_record(), vocabulary=vocabulary,
+            body=b"{}", headers={}, stdin=io.StringIO(), out=io.StringIO(),
         )  # fmt: skip
         client.run_id = RUN_ID
         ended: list[BaseException] = []

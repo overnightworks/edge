@@ -31,7 +31,6 @@ STATUS_SECONDS = 30  # twice the close's own bounds, 14.6 s after the loss
 STATUS_POLL_SECONDS = 0.5
 MINIMUM_SOCKET_SECONDS = 0.1  # a socket timeout of 0 would make the read non-blocking
 SMOKE_DIRECTORY = "/opt/smoke"
-RUN_ID = re.compile(r"[0-9a-f-]{36}")
 MAXIMUM_BODY_BYTES = 65536
 CLIENT_LINE = re.compile(
     r"answer (?P<answer>\d{3})(?: (?P<answer_code>[a-z_]+))?"
@@ -111,6 +110,9 @@ class RunClient:
         *,
         connect: Callable[[], http.client.HTTPConnection],
         frames: Callable[[http.client.HTTPResponse], Iterable],
+        read_record: Callable[
+            [http.client.HTTPConnection, object, dict[str, str]], tuple[int, dict]
+        ],
         vocabulary: Vocabulary,
         body: bytes,
         headers: dict[str, str],
@@ -121,12 +123,13 @@ class RunClient:
         wall: Callable[[], float] = time.time,
     ) -> None:
         self.connect, self.frames, self.vocabulary = connect, frames, vocabulary
+        self.read_record = read_record
         self.body, self.headers, self.stdin, self.out = body, headers, stdin, out
         self.clock, self.pause, self.wall = clock, pause, wall
         self.lock = threading.Lock()
         self.closing = False
         self.finished = False
-        self.run_id: str | None = None
+        self.run_id: object = None
 
     def say(self, line: str) -> None:
         self.out.write(line + "\n")
@@ -159,9 +162,8 @@ class RunClient:
     def read_events(self, response: http.client.HTTPResponse) -> None:
         for frame in self.frames(response):
             self.say(event_line(frame.event, self.vocabulary))
-            run_id = frame.data.get("run_id")
-            if self.run_id is None and isinstance(run_id, str) and RUN_ID.fullmatch(run_id):
-                self.run_id = run_id
+            if self.run_id is None:
+                self.run_id = frame.data.get("run_id")
 
     def close_on_command(self, connection: http.client.HTTPConnection) -> None:
         """On the host's `close`: shut the socket down, stamp t0, close it, say so."""
@@ -195,19 +197,15 @@ class RunClient:
             self.pause(STATUS_POLL_SECONDS)
 
     def status_once(self, seconds: float) -> tuple[bool, str]:
-        """One read of the status; a socket that stalls for `seconds` ends it."""
+        """One read of the status through `read_record`, which checks the run id and the record
+        and closes the connection; a socket that stalls for `seconds` ends it."""
         connection = self.connect()
         connection.timeout = seconds  # read when the connection opens its socket
-        try:
-            connection.request("GET", f"/runs/{self.run_id}", None, self.headers)
-            response = connection.getresponse()
-            if response.status != http.HTTPStatus.OK:
-                return True, refused_line(refusal_code(response), self.vocabulary)
-            document = json.loads(response.read(MAXIMUM_BODY_BYTES))
-            line = status_line(document["state"], document["client_lost"], self.vocabulary)
-            return document["ended_at"] is not None, line
-        finally:
-            connection.close()
+        status, document = self.read_record(connection, self.run_id, self.headers)
+        if status != http.HTTPStatus.OK:
+            return True, refused_line(document.get("code"), self.vocabulary)
+        line = status_line(document["state"], document["client_lost"], self.vocabulary)
+        return document["ended_at"] is not None, line
 
 
 def refusal_code(response: http.client.HTTPResponse) -> object:
@@ -233,6 +231,7 @@ def main() -> int:
     return RunClient(
         connect=lambda: http.client.HTTPConnection(smoke.SERVICE_HOST, smoke.SERVICE_PORT),
         frames=smoke.frames,
+        read_record=smoke.read_run_record,
         vocabulary=vocabulary_from(wire),
         body=smoke.request_body(R2_PROMPT, R2_TOOLS),
         headers=headers,
