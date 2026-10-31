@@ -35,7 +35,6 @@ def load_probe() -> ModuleType:
 
 
 PROBE_MODULE = load_probe()
-COPIED_CLI = re.compile(r"^COPY --from=\S+ --chown=0:0 --chmod=0555 \S+ \S+$", re.MULTILINE)
 
 
 def dockerfile_argument(name: str) -> str:
@@ -59,13 +58,12 @@ def test_every_base_image_is_pinned_by_digest():
 
 
 @pytest.mark.parametrize("prefix", PROBE_MODULE.DOCKERFILE_PREFIXES.values())
-def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_on_its_output_file(prefix):
+def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_while_it_is_fetched(
+    prefix,
+):
     assert re.fullmatch(r"\d+\.\d+\.\d+", dockerfile_argument(f"{prefix}_VERSION"))
     assert re.fullmatch(r"[0-9a-f]{64}", dockerfile_argument(f"{prefix}_SHA256"))
-    output = PROBE_MODULE.checked_download(prefix)
-    assert f'echo "${{{prefix}_SHA256}}  {output}" | sha256sum -c -' in PROBE_MODULE.download_step(
-        prefix
-    )
+    assert re.search(rf"^ADD --checksum=sha256:\${{{prefix}_SHA256}} ", DOCKERFILE, re.MULTILINE)
 
 
 @pytest.mark.parametrize("moving_name", ["latest", "stable", "install.sh", "claude.ai/install"])
@@ -73,10 +71,9 @@ def test_the_recipe_never_names_a_moving_cli_release(moving_name):
     assert moving_name not in DOCKERFILE
 
 
-def test_every_cli_is_installed_root_owned_and_not_writable_once_per_download():
-    downloads = re.findall(r"^RUN curl ", DOCKERFILE, re.MULTILINE)
-    assert len(COPIED_CLI.findall(DOCKERFILE)) == len(downloads)
-    assert len(re.findall(r"^COPY --from=", DOCKERFILE, re.MULTILINE)) == len(downloads)
+def test_every_cli_is_installed_root_owned_and_not_writable():
+    installs = re.findall(r"^COPY --from=\S+ --chown=0:0 --chmod=0555 ", DOCKERFILE, re.MULTILINE)
+    assert len(installs) == len(PROBE_MODULE.DOCKERFILE_PREFIXES)
 
 
 def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards():
@@ -85,9 +82,9 @@ def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards()
     assert "&& pip check" in DOCKERFILE
 
 
-def test_the_recipe_runs_only_the_download_and_the_hashed_install():
+def test_the_recipe_runs_only_the_archive_extraction_and_the_hashed_install():
     steps = re.findall(r"^RUN (\S+ \S+)", DOCKERFILE, re.MULTILINE)
-    assert steps == ["curl --fail", "curl --fail", "pip install"]
+    assert steps == ["tar -xzf", "pip install"]
 
 
 @pytest.mark.parametrize("package_manager", ["apt", "apt-get", "apk"])

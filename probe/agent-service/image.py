@@ -52,7 +52,6 @@ SHIPPED_CONFIGURATION = REPOSITORY / "agent-service" / "service.toml"
 # The ARG-name prefix of each provider's CLI pins in the Dockerfile, and what its `--version` says.
 DOCKERFILE_PREFIXES = {"anthropic": "CLAUDE", "openai": "CODEX"}
 VERSION_REPORTS = {"anthropic": "{version} (Claude Code)", "openai": "codex-cli {version}"}
-RUN_STEP = re.compile(r"^RUN [^\n]*(?:\n(?!\S)[^\n]*)*", re.MULTILINE)
 SERVICE_PORT = 8080
 LISTEN_SECONDS = 60
 BUILD_SECONDS = 1500
@@ -132,17 +131,6 @@ def shipped_cli(provider: str) -> dict:
     return shipped["cli"][provider]
 
 
-def download_step(prefix: str) -> str:
-    """The Dockerfile's RUN step that fetches the CLI whose ARG names start with `prefix`."""
-    dockerfile = (IMAGE_DIRECTORY / "Dockerfile").read_text(encoding="utf-8")
-    return next(step for step in RUN_STEP.findall(dockerfile) if f"${{{prefix}_VERSION}}" in step)
-
-
-def checked_download(prefix: str) -> str:
-    """The file the download step of the CLI with ARG-name `prefix` writes and checks by sha256."""
-    return re.search(r"--output (\S+)", download_step(prefix)).group(1)
-
-
 def normalized_name(name: str) -> str:
     """A distribution name as pip and the lock may spell it (`ruamel.yaml`, `ruamel-yaml`)."""
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -163,11 +151,6 @@ def cell_i1(output: Path) -> None:
     result = build(IMAGE_DIRECTORY, output / "i1-build.txt")
     expect(result.returncode == 0, f"I1: the build failed (see {output / 'i1-build.txt'})")
     text = result.stdout + result.stderr
-    for provider, prefix in DOCKERFILE_PREFIXES.items():
-        expect(
-            f"{checked_download(prefix)}: OK" in text,
-            f"I1: the build did not report the {provider} download's sha256 as OK",
-        )
     expect("No broken requirements found." in text, "I1: pip check did not pass in the build")
 
 
@@ -183,8 +166,8 @@ def cell_i2(output: Path, scratch: Path) -> None:
         )
         expect(altered.returncode != 0, f"I2: a build with an altered {provider} hash succeeded")
         expect(
-            f"{checked_download(prefix)}: FAILED" in altered.stdout + altered.stderr,
-            f"I2: sha256sum did not fail on the {provider} download",
+            "digest mismatch" in altered.stdout + altered.stderr,
+            f"I2: BuildKit did not refuse the {provider} download's altered sha256",
         )
     context = scratch / "altered-wheel"
     shutil.copytree(IMAGE_DIRECTORY, context)
