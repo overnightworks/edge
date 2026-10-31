@@ -11,8 +11,10 @@ hosts, and it never calls `egress.py`'s live cells.
 
 Measured: a run takes about six minutes and its teardown a few seconds (K 30 s, CAP 1800 s).
 
-"No connection" is the outcome of `tcp_connect`: no connect within its 8 s, or an unreachable
-answer; a refusal means a host answered and is no exclusion. A cell "from a namespace" runs the
+"No connection" is an outcome of `tcp_connect` in `egress_observe.UNREACHABLE`, the rule the egress
+probe and the live smoke share; a timeout, a refusal or any other error fails the cell. X8 reads the
+first TLS record the gateway sends back: an alert holds it, a ServerHello fails it, and the same
+reading for the provider's name is its control. A cell "from a namespace" runs the
 stand-in client in a throwaway that joins that container's namespace, so the front and the gateway
 (Traefik images without Python) are observed like the rest.
 
@@ -28,7 +30,6 @@ Exit 0: every cell held, 1: a cell failed or was not driven.
 
 from __future__ import annotations
 
-import argparse
 import json
 import secrets
 import sys
@@ -43,17 +44,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "agent-service"))
 
-from agent_networks import listeners_of, start_caller  # noqa: E402
+from agent_networks import CALLER_PORT, listeners_of, start_caller  # noqa: E402
 from egress import (  # noqa: E402
+    GATEWAY_PORT,
     LABEL,
     PROJECT,
     SERVICE_PORT,
     NotDriven,
-    ProbeFailed,
+    alerted,
     expect,
-    run_probe,
-    scratch_directory,
+    run_scratch_probe,
 )
+from egress_observe import UNREACHABLE  # noqa: E402
 from issuer import ISSUER_PORT, ISSUER_SERVICE, SERVICE  # noqa: E402
 from litellm import (  # noqa: E402
     ENTRYPOINT_ADDRESS,
@@ -65,8 +67,10 @@ from litellm import (  # noqa: E402
     LISTENING,
     LITELLM,
     PROVIDER_HOST,
+    START_LISTENER,
     TLS_PROGRAM,
     LitellmProbe,
+    mounted_file,
 )
 
 CAPTURE_LITELLM = "capture-litellm"
@@ -77,12 +81,29 @@ GATE_PROGRAM = f'while [ ! -e {GATE_DIRECTORY}/{GATE_FILE} ]; do sleep 0.2; done
 START_SECONDS = 120  # LiteLLM's start and the controls around it
 SESSION_SECONDS = 300  # the gateway window over the start and every driving cell
 WINDOW_MARGIN_SECONDS = 3
-LITELLM_PORT = 4000
-GATEWAY_PORT = 443
-CALLER_PORT = 8000
 CA_IN_CLIENT = "/run/secrets/step_ca_root_certificate"
-REFUSED = "ECONNREFUSED"
 LOOPBACK = "lo"
+PROVIDER_ON_INTERNET = "fake provider on internet"
+TLS_HANDSHAKE, TLS_ALERT, SERVER_HELLO = 22, 21, 2  # record content types, handshake type
+FIRST_RECORD_PROGRAM = """\
+import json, socket, ssl, sys
+address, name, port = sys.argv[1:4]
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+context.check_hostname, context.verify_mode = False, ssl.CERT_NONE
+hello = ssl.MemoryBIO()
+client = context.wrap_bio(ssl.MemoryBIO(), hello, server_hostname=name)
+try:
+    client.do_handshake()
+except ssl.SSLWantReadError:
+    pass
+received = b""
+with socket.create_connection((address, int(port)), timeout=8) as raw:
+    raw.sendall(hello.read())
+    while len(received) < 6 and (chunk := raw.recv(6 - len(received))):
+        received += chunk
+record = {"content_type": received[0], "first_byte": received[5]} if len(received) == 6 else {}
+print(json.dumps({"bytes": len(received), **record}))
+"""
 SERVICE_NETWORKS = {
     "X2a": "agent-songmaker", "X2b": "agent-presentator", "X2c": "agent-hopin",
     "X2d": "egress", "X2e": "mcp", "X2f": "litellm-api",
@@ -109,13 +130,16 @@ class NetworkProbe(LitellmProbe):
         self.gate = scratch / "gate"
         self.gate.mkdir()
         self.gate.chmod(0o755)
-        self.overlays.append(self.write_network_overlay(scratch))
+        resolved = self.resolved()["services"]
+        # LiteLLM's port as its shipped start.sh declares it, read the way L3 reads it.
+        start = mounted_file(resolved[LITELLM], resolved[LITELLM]["entrypoint"][0]).read_text()
+        self.litellm_port = int(START_LISTENER.search(start).group(2))
+        self.overlays.append(self.write_network_overlay(scratch, resolved))
         self.expect_fake_only()
 
-    def write_network_overlay(self, scratch: Path) -> Path:
+    def write_network_overlay(self, scratch: Path, resolved: dict) -> Path:
         """The start gate for LiteLLM and the window service in its namespace, derived from the
         shipped entrypoint and from `capture-egress`, so no pin of either is restated."""
-        resolved = json.loads(self.compose("config", "--format", "json").stdout)["services"]
         shipped = resolved[LITELLM]["entrypoint"]
         capture = {
             key: value
@@ -147,11 +171,15 @@ class NetworkProbe(LitellmProbe):
         found = json.loads(self.run(["docker", "inspect", self.container(service)]).stdout)[0]
         return found["NetworkSettings"]["Networks"][name]["IPAddress"]
 
-    def entrypoint_addresses(self) -> list[str]:
-        return [
-            declared.rsplit(":", 1)[0]
-            for declared in ENTRYPOINT_ADDRESS.findall(self.static_file.read_text())
-        ]
+    def second_entrypoint(self) -> str:
+        """Entrypoint 2: the static file's address that is not entrypoint 1, the probe's own."""
+        declared = {
+            found.rsplit(":", 1)[0]
+            for found in ENTRYPOINT_ADDRESS.findall(self.static_file.read_text())
+        }
+        others = declared - {self.address}
+        expect(self.address in declared and len(others) == 1, f"the gateway declares {declared}")
+        return others.pop()
 
     # --- one observer -------------------------------------------------------------------------
 
@@ -159,22 +187,30 @@ class NetworkProbe(LitellmProbe):
         container = self.container(source)
         return self.client_in_namespace_of(container, "connect", address, str(port))["result"]
 
-    def reach(self, step: Reach) -> None:
+    def reach(self, step: Reach, intervals: dict[str, tuple[float, float]]) -> None:
+        """One connect, judged; its wall-clock interval goes into `intervals`."""
+        started = time.time()
         result = self.connect_result(step.source, step.address, step.port)
+        intervals[step.cell] = (started, time.time())
         where = f"{step.source} -> {step.target} {step.address}:{step.port}"
-        if step.connects:
-            expect(result == "connected", f"{step.cell}: {where}: {result}")
-        else:
-            # A refusal is an answer from a host, which is a path.
-            expect(result not in ("connected", REFUSED), f"{step.cell}: {where}: {result}")
-        self.hold(step.cell, f"{where}: {'connected' if step.connects else result}")
+        wanted = ("connected",) if step.connects else UNREACHABLE
+        expect(result in wanted, f"{step.cell}: {where}: {result}")
+        self.hold(step.cell, f"{where}: {result}")
 
     def handshake(self, name: str) -> dict:
-        """R3: LiteLLM's handshake on entrypoint 2 for `name`, verified against the scratch CA."""
+        """R3: LiteLLM's handshake on entrypoint 2 for `name`, verified against the scratch CA.
+        It overrides the egress probe's, so R3 is the control of `refused_without_a_dial`."""
         mount = ["-v", f"{self.scratch_secrets.ca_certificate}:{CA_IN_CLIENT}:ro"]
         network = [f"--network=container:{self.container(LITELLM)}", *mount]
-        seen = self.throwaway(network, [self.entrypoint_addresses()[1], name], TLS_PROGRAM)
+        seen = self.throwaway(network, [self.second_entrypoint(), name], TLS_PROGRAM)
         return {"handshake": True, **seen}
+
+    def first_record(self, name: str) -> dict:
+        """The first TLS record the gateway sends back on entrypoint 2 to LiteLLM's ClientHello for
+        `name`, read on the raw socket: its content type and the first byte of its body."""
+        network = [f"--network=container:{self.container(LITELLM)}"]
+        arguments = [self.second_entrypoint(), name, str(GATEWAY_PORT)]
+        return self.throwaway(network, arguments, FIRST_RECORD_PROGRAM)
 
     # --- the windows --------------------------------------------------------------------------
 
@@ -237,22 +273,30 @@ class NetworkProbe(LitellmProbe):
                   "certificate of the scratch CA")  # fmt: skip
 
     def cell_s1(self, result: dict, asked: str, control_ended: float) -> None:
+        """The window must show the control's own query, not only its reply: a window that
+        dropped queries would miss an unanswered one from LiteLLM's start."""
         self.complete(result, "S1", control_ended)
-        seen = result["labels"].get(asked, 0)
-        if not seen:
-            raise NotDriven("S1: not driven: the control's question is not in LiteLLM's DNS window")
+        seen, queries = result["labels"].get(asked, 0), result["queries"].get(asked, 0)
+        if not queries:
+            raise NotDriven("S1: not driven: the control's query is not in LiteLLM's DNS window")
         expect(
             result["frames"] == seen,
-            f"S1: {result['frames'] - seen} port-53 frames are not the control's",
+            f"S1: {result['frames'] - seen} DNS frames are not the control's",
         )
-        self.hold("S1", f"LiteLLM's DNS window holds only the control's {seen} frames")
+        self.hold(
+            "S1", f"LiteLLM's DNS window holds only the control's {seen} frames, {queries} queries"
+        )
 
     def cell_s2(self, result: dict, control_ended: float) -> None:
         """No SYN leaves LiteLLM's namespace but the control's to entrypoint 2; LiteLLM's own
         connects to its loopback address stay inside it and are counted apart."""
         self.complete(result, "S2", control_ended)
-        entrypoint = (self.entrypoint_addresses()[1], GATEWAY_PORT)
+        entrypoint = (self.second_entrypoint(), GATEWAY_PORT)
         leaving = [syn for syn in result["syns"] if syn["interface"] != LOOPBACK]
+        inside = sorted({
+            f"{syn['destination']}:{syn['port']}"
+            for syn in result["syns"] if syn["interface"] == LOOPBACK
+        })  # fmt: skip
         stray = [(syn["destination"], syn["port"]) for syn in leaving]
         expect(
             all(found == entrypoint for found in stray),
@@ -260,15 +304,16 @@ class NetworkProbe(LitellmProbe):
         )
         if not leaving:
             raise NotDriven("S2: not driven: the control's SYN is not in LiteLLM's SYN window")
-        inside = len(result["syns"]) - len(leaving)
         self.hold(
             "S2",
             f"{len(leaving)} SYNs left LiteLLM's namespace, all to "
-            f"{entrypoint[0]}:{entrypoint[1]}; {inside} stayed on {LOOPBACK}",
+            f"{entrypoint[0]}:{entrypoint[1]}; {len(result['syns']) - len(leaving)} stayed on "
+            f"{LOOPBACK}, to {', '.join(inside) or 'nothing'}",
         )
 
     def cells_x(self, observed: dict[str, dict]) -> None:
-        front, litellm = FRONT, LITELLM
+        front, litellm, port = FRONT, LITELLM, self.litellm_port
+        intervals: dict[str, tuple[float, float]] = {}
         litellm_backend = self.address_of(LITELLM, "litellm-backend")
         litellm_egress = self.address_of(LITELLM, "litellm-egress")
         service_addresses = {
@@ -278,24 +323,24 @@ class NetworkProbe(LitellmProbe):
             set(SERVICE_NETWORKS.values()) == set(self.resolved()["services"][SERVICE]["networks"]),
             "the service joins networks the cells do not name",
         )
-        first, second = self.entrypoint_addresses()
+        first, second = self.address, self.second_entrypoint()
         provider = self.address_of(FAKE_PROVIDER, "internet")
         issuer = self.address_of(ISSUER_SERVICE, "agent-songmaker")
         caller = start_caller(
             self, PROJECT, LABEL, self.network_suffix("mcp"), f"{PROJECT}-caller-mcp"
         )
         steps = [
-            Reach("X1a", SERVICE, "litellm-backend", litellm_backend, LITELLM_PORT, False),
-            Reach("X1b", SERVICE, "litellm-egress", litellm_egress, LITELLM_PORT, False),
-            Reach("X1c", front, "litellm-backend", litellm_backend, LITELLM_PORT, True),
-            Reach("X1d", GATEWAY, "litellm-egress", litellm_egress, LITELLM_PORT, True),
+            Reach("X1a", SERVICE, "litellm-backend", litellm_backend, port, False),
+            Reach("X1b", SERVICE, "litellm-egress", litellm_egress, port, False),
+            Reach("X1c", front, "litellm-backend", litellm_backend, port, True),
+            Reach("X1d", GATEWAY, "litellm-egress", litellm_egress, port, True),
             *[
                 Reach(cell, litellm, SERVICE_NETWORKS[cell], address, SERVICE_PORT, False)
                 for cell, address in service_addresses.items()
             ],
         ]  # fmt: skip
         for step in steps:
-            self.reach(step)
+            self.reach(step, intervals)
         found = listeners_of(self, SERVICE)["tcp"]
         expect(found == [f"0.0.0.0:{SERVICE_PORT}"], f"X2L: the service listens on {found}")
         self.hold("X2L", f"the service has exactly one TCP listener, {found[0]}")
@@ -312,14 +357,15 @@ class NetworkProbe(LitellmProbe):
             Reach("X6a", front, "agent-egress egress", first, GATEWAY_PORT, False),
             Reach("X6b", front, "agent-egress litellm-egress", second, GATEWAY_PORT, False),
             Reach("X6c", litellm, "agent-egress litellm-egress", second, GATEWAY_PORT, True),
-            Reach("X7a", front, "fake provider on internet", provider, GATEWAY_PORT, False),
-            Reach("X7b", litellm, "fake provider on internet", provider, GATEWAY_PORT, False),
-            Reach("X7c", SERVICE, "fake provider on internet", provider, GATEWAY_PORT, False),
-            Reach("X7d", GATEWAY, "fake provider on internet", provider, GATEWAY_PORT, True),
+            Reach("X7a", front, PROVIDER_ON_INTERNET, provider, GATEWAY_PORT, False),
+            Reach("X7b", litellm, PROVIDER_ON_INTERNET, provider, GATEWAY_PORT, False),
+            Reach("X7c", SERVICE, PROVIDER_ON_INTERNET, provider, GATEWAY_PORT, False),
+            Reach("X7d", GATEWAY, PROVIDER_ON_INTERNET, provider, GATEWAY_PORT, True),
         ):
-            self.reach(step)
+            self.reach(step, intervals)
         self.cells_x8_to_x11(second)
         observed["cells_ended"] = {"at": time.time()}
+        observed["x1d"] = {"started": intervals["X1d"][0], "ended": intervals["X1d"][1]}
 
     def network_suffix(self, network: str) -> str:
         name = self.resolved()["networks"][network]["name"]
@@ -328,24 +374,29 @@ class NetworkProbe(LitellmProbe):
         return name.removeprefix(prefix)
 
     def cells_x8_to_x11(self, entrypoint: str) -> None:
-        def refused(name: str) -> Callable[[], str]:
-            def attempt() -> str:
-                result = self.client_in_namespace_of(
-                    self.container(LITELLM), "tls", entrypoint, name, str(GATEWAY_PORT), "noverify"
-                )
-                # An SSLError is the gateway's own alert; a reset or a timeout would say less.
-                expect(
-                    not result["handshake"]
-                    and "certificate" not in result
-                    and result["error"].startswith("SSLError"),
-                    f"{name}: {result}",
-                )
-                return f"SNI {name!r} on entrypoint 2: the handshake ended ({result['error']})"
+        def ended(name: str) -> str:
+            result = self.client_in_namespace_of(
+                self.container(LITELLM), "tls", entrypoint, name, str(GATEWAY_PORT), "noverify"
+            )
+            alerted(result, name)
+            return f"SNI {name!r} on entrypoint 2: the handshake ended ({result['error']})"
 
-            return attempt
+        def no_server_hello() -> str:
+            record = self.first_record(ISSUER_HOST)
+            expect(record.get("content_type") == TLS_ALERT, f"X8: the first record is {record}")
+            return (
+                f"{ended(ISSUER_HOST)}; its first record is an alert, where {PROVIDER_HOST}'s is "
+                "a ServerHello"
+            )
 
-        self.refused_without_a_dial("X8", refused(ISSUER_HOST))
-        self.refused_without_a_dial("X9", refused("example.com"))
+        control = self.first_record(PROVIDER_HOST)
+        expect(
+            (control.get("content_type"), control.get("first_byte"))
+            == (TLS_HANDSHAKE, SERVER_HELLO),
+            f"X8: the control's first record for {PROVIDER_HOST} is no ServerHello: {control}",
+        )
+        self.refused_without_a_dial("X8", no_server_hello)
+        self.refused_without_a_dial("X9", lambda: ended("example.com"))
         container = self.container(LITELLM)
         outside = self.client_in_namespace_of(container, "resolve", "example.com")["addresses"]
         expect(outside == [], f"X10: example.com resolves to {outside}")
@@ -355,25 +406,34 @@ class NetworkProbe(LitellmProbe):
         self.hold("X11", f"LiteLLM resolves {PROVIDER_HOST} to {entrypoint}, entrypoint 2")
 
     def cell_g20(self, observed: dict[str, dict]) -> None:
+        """The gateway dials only the fake hosts; X1d's own connect from its namespace to LiteLLM
+        is allowed inside X1d's interval alone."""
         result = observed["g20"]
         self.complete(result, "G20", observed["cells_ended"]["at"])
-        provider = self.address_of(FAKE_PROVIDER, "internet")
-        issuer = self.address_of(FAKE_ISSUER, "internet")
-        # X1d is the probe's own connect from the gateway's namespace to LiteLLM.
-        control = (self.address_of(LITELLM, "litellm-egress"), LITELLM_PORT)
-        allowed = {(provider, GATEWAY_PORT), (issuer, GATEWAY_PORT), control}
-        seen = {(syn["destination"], syn["port"]) for syn in result["syns"]}
-        expect(seen <= allowed, f"G20: the gateway sent SYNs to {sorted(seen - allowed)}")
-        if (provider, GATEWAY_PORT) not in seen or control not in seen:
-            raise ProbeFailed("G20: not driven: the controls' SYNs are not in the gateway's window")
-        self.hold("G20", f"the gateway sent SYNs to {len(seen)} destinations, all fake hosts")
+        provider = (self.address_of(FAKE_PROVIDER, "internet"), GATEWAY_PORT)
+        issuer = (self.address_of(FAKE_ISSUER, "internet"), GATEWAY_PORT)
+        x1d = (self.address_of(LITELLM, "litellm-egress"), self.litellm_port)
+        interval = observed["x1d"]
+
+        def of_x1d(syn: dict) -> bool:
+            at_x1d = (syn["destination"], syn["port"]) == x1d
+            return at_x1d and interval["started"] <= syn["at"] <= interval["ended"]
+
+        controls = [syn for syn in result["syns"] if of_x1d(syn)]
+        seen = {(syn["destination"], syn["port"]) for syn in result["syns"] if not of_x1d(syn)}
+        stray = seen - {provider, issuer}
+        expect(not stray, f"G20: the gateway sent SYNs to {sorted(stray)}")
+        if provider not in seen or not controls:
+            raise NotDriven("G20: not driven: the controls' SYNs are not in the gateway's window")
+        self.hold(
+            "G20",
+            f"the gateway sent SYNs only to the fake hosts {sorted(seen)}, and to LiteLLM within "
+            "X1d's interval",
+        )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=scratch_directory, required=True)
-    arguments = parser.parse_args()
-    return run_probe(lambda: NetworkProbe(arguments.scratch))
+    return run_scratch_probe(__doc__.splitlines()[0], NetworkProbe)
 
 
 if __name__ == "__main__":

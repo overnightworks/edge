@@ -306,8 +306,11 @@ def ipv6(next_header: int, body: bytes) -> bytes:
     return ethernet(0x86DD, header + source + destination + body)
 
 
-def ipv4_header(protocol: int, body: bytes, fragment: int = 0) -> bytes:
-    fields = (0x45, 0, 20 + len(body), 0, fragment, 64, protocol, 0, bytes(4), bytes(4))
+def ipv4_header(
+    protocol: int, body: bytes, fragment: int = 0, destination: str = "0.0.0.0"
+) -> bytes:
+    address = socket.inet_aton(destination)
+    fields = (0x45, 0, 20 + len(body), 0, fragment, 64, protocol, 0, bytes(4), address)
     return struct.pack("!BBHHHBBH4s4s", *fields) + body
 
 
@@ -332,9 +335,9 @@ def tcp_with_options(payload: bytes) -> bytes:
     return header + struct.pack("!H", len(payload)) + payload
 
 
-def dns_message(name: str) -> bytes:
+def dns_message(name: str, flags: int = 0x0100) -> bytes:
     labels = b"".join(bytes([len(part)]) + part.encode() for part in name.split("."))
-    return struct.pack("!HHHHHH", 1, 0x0100, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
+    return struct.pack("!HHHHHH", 1, flags, 1, 0, 0, 0) + labels + b"\0\0\1\0\1"
 
 
 def parse(capture, frame: bytes):
@@ -557,6 +560,47 @@ def test_the_dns_filter_lets_ipv6_extension_header_chains_through_to_be_walked(
 ):
     """E10: the filter cannot read ports behind an extension header, so it passes the chain on."""
     assert filter_passes(capture, ipv6(protocol, body)) is passes
+
+
+REWRITTEN_PORT = 46519  # where Docker's rule in a container sends a query to its resolver
+DNS_REPLY_FLAGS = 0x8180
+
+
+@pytest.mark.parametrize(
+    ("destination", "passes"),
+    [("127.0.0.11", True), ("127.0.0.12", False)],
+    ids=["Docker's embedded resolver", "another loopback address"],
+)
+def test_the_dns_filter_passes_a_query_to_the_embedded_resolver_on_its_rewritten_port(
+    capture, destination, passes
+):
+    """S1: Docker rewrites the port of a container's query to 127.0.0.11 before the frame is
+    captured, so the filter cannot wait for port 53 on it."""
+    body = udp(40000, REWRITTEN_PORT, dns_message("label.example.com"))
+    frame = ethernet(0x0800, ipv4_header(17, body, destination=destination))
+
+    assert filter_passes(capture, frame) is passes
+
+
+@pytest.mark.parametrize(
+    ("ports", "destination", "flags", "queries"),
+    [
+        ((40000, REWRITTEN_PORT), "127.0.0.11", 0x0100, {"label": 1}),
+        ((53, 40000), "127.0.0.1", DNS_REPLY_FLAGS, {}),
+    ],
+    ids=["a query on the rewritten port", "the reply from port 53"],
+)  # fmt: skip
+def test_the_dns_window_counts_a_query_to_the_embedded_resolver_apart_from_its_reply(
+    capture, ports, destination, flags, queries
+):
+    """S1: the window names the control's query, not only its reply."""
+    body = udp(*ports, dns_message("label.example.com", flags))
+    segment = parse(capture, ethernet(0x0800, ipv4_header(17, body, destination=destination)))
+    window = capture.Window()
+
+    window.see(segment, ["label"])
+
+    assert (window.label_frames, window.query_frames) == ({"label": 1}, queries)
 
 
 # --- the unit probe's refused-start decision, on synthetic state and logs ----------------------

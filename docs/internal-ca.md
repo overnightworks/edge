@@ -83,9 +83,9 @@ and `:443`: `egress` (`172.31.252.10` of the network `egress`, for the agent ser
 both entrypoints, `issuer` to `egress` alone, so LiteLLM reaches the provider and nothing else. The
 three networks of the API route (`litellm-api`, `litellm-backend`, `litellm-egress`) are internal and
 isolated like the others, and the exclusions between them hold: the service reaches LiteLLM only
-through the front; LiteLLM reaches neither the service, entrypoint 1, the issuer, `mcp` nor the
-internet, only the provider's name on entrypoint 2; the front reaches only LiteLLM, and the
-service's `litellm-api` address answers it. Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config
+through the front; LiteLLM reaches the front and, beyond it, only the provider's name on
+entrypoint 2, and neither the service, entrypoint 1, the issuer, `mcp` nor the internet; the front
+reaches LiteLLM, and the service's `litellm-api` address answers it. Like `traefik-mcp` it is a follower: its static file is bound at Traefik's static-config
 path, so `hal apply` recreates it alone while the unit `agent-service` is on; no plain
 `docker compose up -d` starts it.
 
