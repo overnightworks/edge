@@ -2134,7 +2134,7 @@ class Probe:
             "refresh token are as ruled; a person's token has the "
             f"{AGENT_SERVICE} audience and no {AGENT_WORKLOAD_ROLE} role, and its "
             f"client_credentials token has {AGENT_WORKLOAD_ROLE}, client_id and azp {name}, no "
-            "group and the realm's access token lifespan to live (W1 to W3)",
+            "group and the realm's lifespan or 1 s more to live (W1 to W3)",
         )
 
     def browser(self, name: str) -> OpenerDirector:
@@ -2257,7 +2257,7 @@ class Probe:
         self, admin: Admin, client_secret: str, client: AppClient
     ) -> None:
         """Cells W1, W2: the client-credentials token is the app's workload identity and lives the
-        realm's 300 s (proof 8) or 1 s more: Keycloak reads the clock twice (webauth#544)."""
+        realm's 300 s (proof 8) or 1 s more: Keycloak reads the clock twice."""
         name = client.client_id
         override = admin.find(f"/{REALM}/clients", "clientId", name)["attributes"].get(
             "access.token.lifespan"
