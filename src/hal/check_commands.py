@@ -79,8 +79,8 @@ EXPOSURE_RULES = {
 def _read_exposure() -> list[Finding]:
     """The scan as the daily check's findings; a scan that cannot run raises."""
     return [
-        Finding(EXPOSURE_RULES[found.problem].value, found.subject, json.dumps(found.as_json()))
-        for found in inspection.inspect(inspection.DEFAULT_ALLOW_LIST)
+        Finding(EXPOSURE_RULES[group.problem].value, group.subject, group.fact)
+        for group in exposure_rows.groups_of(inspection.inspect(inspection.DEFAULT_ALLOW_LIST))
     ]
 
 

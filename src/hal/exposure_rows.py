@@ -5,6 +5,7 @@ protocol and the count, never an address, a port or a problem code; `--json` lis
 from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
+from typing import NamedTuple
 
 from hal.exposure.exposure import Finding, Problem, Protocol
 from hal.output import Glyph, Noun, Row, TrailingNoun, Verdict, counted, write_row, write_verdict
@@ -57,19 +58,31 @@ def _groups(findings: Sequence[Finding]) -> dict[_GroupKey, Counter[Protocol]]:
     return groups
 
 
-def rows_of(findings: Sequence[Finding]) -> tuple[Row, ...]:
-    rows = []
+class Group(NamedTuple):
+    problem: Problem
+    subject: str
+    fact: str
+
+
+def groups_of(findings: Sequence[Finding]) -> tuple[Group, ...]:
+    """One group for each row of `hal check exposure`, in its order, with the fact it states."""
+    groups = []
     for (problem, subject, routing_name), sockets in _groups(findings).items():
-        event, template = _EVENT_AND_FACT[problem]
+        _, template = _EVENT_AND_FACT[problem]
         ports = ", ".join(
             counted(sockets[protocol], label)
             for protocol, label in PORT_LABELS.items()
             if sockets[protocol]
         )
-        rows.append(
-            Row(Glyph.NEEDS_YOU, subject, event, template.format(ports=ports, name=routing_name))
-        )
-    return tuple(rows)
+        groups.append(Group(problem, subject, template.format(ports=ports, name=routing_name)))
+    return tuple(groups)
+
+
+def rows_of(findings: Sequence[Finding]) -> tuple[Row, ...]:
+    return tuple(
+        Row(Glyph.NEEDS_YOU, group.subject, _EVENT_AND_FACT[group.problem][0], group.fact)
+        for group in groups_of(findings)
+    )
 
 
 def verdict_of(findings: Sequence[Finding]) -> Verdict:

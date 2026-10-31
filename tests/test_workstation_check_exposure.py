@@ -85,7 +85,9 @@ def test_the_same_exposure_on_another_port_is_not_news(clean_home, runner, mail_
     home_check(clean_home, runner, listeners=SSHD_ON_PORT.format(port=2222))
 
     assert len(mail_stub.sent) == 1
-    assert "2222" in Layout(clean_home).check_report_file.read_text()
+    assert "| reachable-beyond-loopback | sshd | 1 TCP port beyond loopback |" in (
+        Layout(clean_home).check_report_file.read_text()
+    )
 
 
 def test_an_exposure_that_is_gone_is_reported_done(clean_home, runner, mail_stub) -> None:
@@ -171,6 +173,9 @@ def test_neither_the_address_the_port_nor_an_env_value_reach_mail_or_popup(
         layout.check_findings_file.read_text(),
     ]
     assert not any(ENV_CANARY in text for text in everywhere)
+    report = layout.check_report_file.read_text()
+    assert PUBLISHED_ADDRESS not in report
+    assert "8080" not in report
 
 
 def test_a_duplicate_routing_name_is_an_action(clean_home, runner, mail_stub, tmp_path) -> None:
@@ -193,7 +198,27 @@ def test_a_duplicate_routing_name_is_an_action(clean_home, runner, mail_stub, tm
     )
 
 
-def test_many_ports_of_one_process_are_one_row_and_one_mail_line_and_every_report_row(
+def test_a_container_that_publishes_beyond_loopback_and_without_a_host_ip_stays_two_lines(
+    clean_home, runner, mail_stub, tmp_path
+) -> None:
+    container = published_container("edge-web-1", PUBLISHED_ADDRESS, "8080")
+    container["HostConfig"]["PortBindings"]["81/tcp"] = [{"HostIp": "", "HostPort": "8081"}]
+    docker = docker_with_containers(tmp_path, container)
+
+    home_check(clean_home, runner, docker_script=docker)
+
+    layout = Layout(clean_home)
+    report = layout.check_report_file.read_text()
+    assert "| reachable-beyond-loopback | edge-web-1 | 1 TCP port beyond loopback |" in report
+    assert "| reachable-beyond-loopback | edge-web-1 | 1 TCP port without a host IP |" in report
+    assert "| 1 finding" in report.splitlines()[0]
+    assert "| 2 findings" in next(line for line in report.splitlines() if "# exposure" in line)
+    identities = json.loads(layout.check_findings_file.read_text())
+    assert "exposure\treachable-beyond-loopback\tedge-web-1" in identities
+    assert len(identities) == 1
+
+
+def test_many_ports_of_one_process_are_one_row_one_mail_line_and_one_report_line_with_the_count(
     clean_home, runner, mail_stub, capsys
 ) -> None:
     listeners = "".join(
@@ -209,12 +234,11 @@ def test_many_ports_of_one_process_are_one_row_and_one_mail_line_and_every_repor
     assert "dnsmasq can be reached from beyond this PC" in exposure_rows[0]
     assert "dnsmasq can be reached from beyond this PC." in body
     assert body.count("dnsmasq") == 2  # the sentence and its step
-    assert (
-        Layout(clean_home)
-        .check_report_file.read_text()
-        .count("| reachable-beyond-loopback | dnsmasq |")
-        == 272
-    )
+    report = Layout(clean_home).check_report_file.read_text()
+    assert report.count("| reachable-beyond-loopback | dnsmasq |") == 1
+    assert "| reachable-beyond-loopback | dnsmasq | 272 UDP ports beyond loopback |" in report
+    assert "| 1 finding" in report.splitlines()[0]
+    assert "| 1 finding" in next(line for line in report.splitlines() if "# exposure" in line)
 
 
 def test_switching_notifications_off_silences_exposure_news(clean_home, runner, mail_stub) -> None:

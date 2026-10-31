@@ -16,7 +16,7 @@ class ExposureRule(StrEnum):
 
 
 ExposureReader = Callable[[], Sequence[Finding]]
-"""Scans the PC and returns one finding per socket or routing name; raises when the scan cannot run."""
+"""Scans the PC and returns one finding per process, container or routing name; raises when the scan cannot run."""
 
 
 def inspect(read: ExposureReader, now: datetime) -> tuple[list[Finding], str]:
