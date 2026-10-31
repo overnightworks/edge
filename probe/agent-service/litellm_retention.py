@@ -71,7 +71,7 @@ SETTINGS_SECTIONS = {
     "general_settings": {"custom_auth": "auth.user_api_key_auth"},
     "router_settings": {"num_retries": "0"},
 }
-STORE_NAMES = re.compile(r"DATABASE|REDIS|CALLBACK|LANGFUSE|LITELLM_LOG|VERBOSE|SPEND|S3_", re.I)
+STORE_NAMES = re.compile(r"DATABASE|REDIS|CALLBACK|LANGFUSE|VERBOSE|SPEND|S3_", re.I)
 PYTHON_CONTAINERS = frozenset({LITELLM, SERVICE})
 
 
@@ -392,10 +392,12 @@ class RetentionProbe(FailureProbe):
         names = self.run(["docker", "exec", litellm, "env"]).stdout
         stores = sorted({n.split("=")[0] for n in names.splitlines() if STORE_NAMES.search(n)})
         expect(not stores, f"B11: LiteLLM's environment names {stores}")
+        level = [n for n in names.splitlines() if n.startswith("LITELLM_LOG=")]
+        expect(level == ["LITELLM_LOG=CRITICAL"], f"B11: LiteLLM's log level {level}")
         static = self.run(["docker", "exec", front, "cat", FRONT_STATIC]).stdout
         expect("accessLog" not in static and "level: INFO" in static, "B11: the front's log")
         self.hold("B11", "LiteLLM: message logging off, redaction on, custom_auth only, retries 0, "
-                  "no callback, cache, database or spend setting, no such environment name; the "
+                  "no callback, cache, database or spend setting, no such environment name, log level CRITICAL; the "
                   "front: INFO and no access log")  # fmt: skip
 
 
