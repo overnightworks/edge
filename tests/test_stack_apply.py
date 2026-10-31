@@ -948,7 +948,8 @@ def test_while_another_apply_runs_it_never_writes_an_environment_file(switch, re
 def test_while_another_apply_runs_it_refuses_and_touches_nothing(
     switch, scripted, scripted_git, state
 ):
-    """#95 rule 4, S8, G8: exit 1, the line names both commands; no git or compose call."""
+    """#95 rule 4, S8, G8: exit 1, the line names both commands (#783);
+    no git or compose call."""
     with apply_lock_held(state):
         exit_code, _, err = switch()
 
