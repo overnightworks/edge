@@ -1,14 +1,32 @@
 """Host listeners, read from `ss -H -ltnupe` output."""
 
 import re
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from enum import StrEnum
+from pathlib import PurePath
 
 from hal.exposure.exposure import Protocol, UnreadableOutputError, checked_address
 
-_PROCESS_NAME = re.compile(r'users:\(\("([^"]+)"')
+_PROCESS = re.compile(r'users:\(\("([^"]+)",pid=(\d+)')
 _CGROUP = re.compile(r"cgroup:(\S+)")
 _LOCAL_ADDRESS_COLUMN = 4
 _SYSTEM_SLICE = "/system.slice/"
+_VERSION_SUFFIX = re.compile(r"[\d.]+$")
+_MODULE_OPTION = "-m"
+_INLINE_CODE_OPTIONS = ("-c", "-e")
+
+CommandLineReader = Callable[[int], tuple[str, ...] | None]
+
+
+class Interpreter(StrEnum):
+    """Programs whose process name says nothing about the script they run."""
+
+    PYTHON = "python"
+    NODE = "node"
+    NODEJS = "nodejs"
+    PERL = "perl"
+    RUBY = "ruby"
 
 
 @dataclass(frozen=True)
@@ -20,18 +38,23 @@ class Listener:
     port: int
     process: str | None
     cgroup: str | None
+    process_id: int | None = None
+    program: str | None = None
+    """The script or module an interpreter runs, when its command line names one."""
 
     @property
     def owner(self) -> str | None:
-        """What a finding names: the process when ss shows it, otherwise its unit or scope."""
-        return self.process or self._unit()
+        """What a finding names: the program an interpreter runs, else the process when ss shows
+        it, otherwise its unit or scope."""
+        return self.program or self.process or self._unit()
 
     def is_owned_by(self, owner: str) -> bool:
-        """One name matches as user and as root: the process, or a unit of the system slice.
+        """One name matches as user and as root: the process, the program an interpreter runs, or
+        a unit of the system slice.
 
         A unit elsewhere, such as another user's `systemd-run --user --unit`, never matches.
         """
-        return owner in (self.process, self._system_unit())
+        return owner in (self.process, self.program, self._system_unit())
 
     def _unit(self) -> str | None:
         return (self.cgroup.rpartition("/")[2] or None) if self.cgroup else None
@@ -41,8 +64,18 @@ class Listener:
         return self._unit() if in_system_slice else None
 
 
-def parse_listeners(ss_output: str) -> list[Listener]:
-    return [_parse_line(line) for line in ss_output.splitlines() if line.strip()]
+def parse_listeners(ss_output: str, read_command_line: CommandLineReader) -> list[Listener]:
+    """Each interpreter process has its command line read once, however many sockets it holds."""
+    programs: dict[int, str | None] = {}
+    listeners = []
+    for line in (line for line in ss_output.splitlines() if line.strip()):
+        listener = _parse_line(line)
+        if listener.process_id is not None and _is_interpreter(listener.process):
+            if listener.process_id not in programs:
+                programs[listener.process_id] = _program_in(read_command_line(listener.process_id))
+            listener = replace(listener, program=programs[listener.process_id])
+        listeners.append(listener)
+    return listeners
 
 
 def _parse_line(line: str) -> Listener:
@@ -55,18 +88,34 @@ def _parse_line(line: str) -> Listener:
 def _parse_columns(line: str) -> Listener:
     columns = line.split()
     address, _, port = columns[_LOCAL_ADDRESS_COLUMN].rpartition(":")
+    process = _PROCESS.search(line)
+    cgroup = _CGROUP.search(line)
     return Listener(
         protocol=Protocol(columns[0]),
         address=checked_address(_bare_address(address)),
         port=int(port),
-        process=_first_group(_PROCESS_NAME, line),
-        cgroup=_first_group(_CGROUP, line),
+        process=process.group(1) if process else None,
+        cgroup=cgroup.group(1) if cgroup else None,
+        process_id=int(process.group(2)) if process else None,
     )
 
 
-def _first_group(pattern: re.Pattern[str], line: str) -> str | None:
-    match = pattern.search(line)
-    return match.group(1) if match else None
+def _is_interpreter(process: str | None) -> bool:
+    return process is not None and _VERSION_SUFFIX.sub("", process) in set(Interpreter)
+
+
+def _program_in(command_line: tuple[str, ...] | None) -> str | None:
+    """The module after `-m`, else the first argument that is no option, as its file name;
+    None for inline code or when no command line could be read."""
+    arguments = iter(command_line[1:] if command_line else ())
+    for argument in arguments:
+        if argument == _MODULE_OPTION:
+            return next(arguments, None)
+        if argument in _INLINE_CODE_OPTIONS:
+            return None
+        if not argument.startswith("-"):
+            return PurePath(argument).name or None
+    return None
 
 
 def _bare_address(address: str) -> str:
