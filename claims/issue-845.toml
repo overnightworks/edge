@@ -1,0 +1,7 @@
+claim_id = "5aa7ab90b3a340b2aeb8a62956823224"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "ed44d3733db1be3a250a9ea7fc9142c11794c814"
+branch = "claude/issue-845-compose-reader-and-project-move-name-the"
+scope = ["src/hal/stack/compose.py", "src/hal/stack/project_move.py"]
+opened_commit = "949a775c181ccc9a4b8ef5fcead99f5235c247bd"
