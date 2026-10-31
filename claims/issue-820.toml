@@ -3,6 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "e11c3dd09da942aebca602668f13a94b090a0fea"
 branch = "claude/issue-820-h5i-s1-hal-migrate-stack"
-scope = ["pyproject.toml", "src/hal/cli.py", "src/hal/migrate_commands.py", "src/hal/output/command.py", "src/hal/stack/project_move.py", "tests/test_hal_cli.py", "tests/test_hal_migrate_stack.py"]
+scope = ["pyproject.toml", "src/hal/cli.py", "src/hal/migrate_commands.py", "src/hal/output/command.py", "src/hal/stack/compose.py", "src/hal/stack/project_move.py", "tests/test_hal_cli.py", "tests/test_hal_migrate_stack.py"]
 opened_commit = "9fdf0026895c95fba580a3151c1d8cc4a8f235c0"
 whole_reason = "The door, its steps and the one-line registrations are dead apart (#789 decision 13): the command, its plan and docker calls, its verb and its layer entry only work together."
