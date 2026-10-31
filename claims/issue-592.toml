@@ -1,8 +1,0 @@
-claim_id = "7e38f64c9ad045f2ab16aa82b9e3bc96"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "e11c3dd09da942aebca602668f13a94b090a0fea"
-branch = "claude/issue-592-switches-probe-beside-live-edge"
-scope = ["probe/edge_copy.py", "probe/switches/built_image.py", "probe/switches/probe.py", "tests/test_probe_isolation.py", "tests/test_step_ca_init.py"]
-opened_commit = "119c79cca716f845a560d0d2d18d86c09ab19af4"
-whole_reason = "One move of the switches probe beside the live edge: the edge_copy owner it needs, the probe, its tests, and the one entry built_image.py shares with it so no clone pair is left."
