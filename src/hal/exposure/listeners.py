@@ -73,7 +73,8 @@ class Listener:
     cgroup: str | None
     process_id: int | None = None
     program: str | None = None
-    """The script or module an interpreter runs, when its command line names one."""
+    """The script or module an interpreter runs, when its command line names one; it names a
+    finding and never matches an allow-list entry."""
 
     @property
     def owner(self) -> str | None:
@@ -82,16 +83,14 @@ class Listener:
         return self.program or self.process or self._unit()
 
     def is_owned_by(self, owner: str) -> bool:
-        """One name matches as user and as root: the process, the program an interpreter runs, or
-        a unit of the system slice.
-
-        A unit name matches only a unit of the system slice, which only root can place: never a
-        unit elsewhere, such as another user's `systemd-run --user --unit`, nor a process or
-        script any user can name like a unit.
+        """A unit name matches only a unit of the system slice, which only root can place: never a
+        unit elsewhere, such as another user's `systemd-run --user --unit`, nor a process any user
+        can name like a unit. Any other name matches the process. The program an interpreter runs
+        never matches, since any process chooses its arguments.
         """
         if _is_unit_name(owner):
             return owner == self._system_unit()
-        return owner in (self.process, self.program)
+        return owner == self.process
 
     def _unit(self) -> str | None:
         return (self.cgroup.rpartition("/")[2] or None) if self.cgroup else None

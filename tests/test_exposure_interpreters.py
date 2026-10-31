@@ -1,7 +1,9 @@
 """A listener run by an interpreter is named by its script or module, and the allow-list agrees."""
 
 import json
+import os
 import subprocess
+import sys
 
 import pytest
 
@@ -134,11 +136,11 @@ CASES = {
         allowing("python3"),
         [],
     ),
-    "the script's name in the allow-list permits its sockets": (
+    "an entry naming the script does not permit it, and the finding names the script": (
         WSDD_SOCKETS,
         {93017: WSDD},
         allowing("wsdd"),
-        [],
+        ["wsdd"] * 3,
     ),
     "a script named like a system unit is not permitted by that unit's entry": (
         one_socket("python3"),
@@ -177,6 +179,14 @@ def test_a_listener_named_like_dockers_unit_on_a_published_port_is_reported(
     assert "docker.service" in subjects_on(sockets, command_lines.get, docker=publishing(8080))
 
 
+def test_a_script_named_like_a_shipped_process_entry_is_reported_under_its_name(subjects_on):
+    sockets = one_socket("python3", "udp", 5353)
+    script = {PID: ("python3", "/home/u/chrome")}
+    shipped = inspection.DEFAULT_ALLOW_LIST.read_text(encoding="utf-8")
+
+    assert subjects_on(sockets, script.get, shipped) == ["chrome"]
+
+
 def test_a_command_line_is_read_once_per_process(subjects_on):
     reads = []
 
@@ -190,11 +200,7 @@ def test_a_command_line_is_read_once_per_process(subjects_on):
 
 
 def test_the_host_reads_the_arguments_a_running_process_was_started_with():
-    with subprocess.Popen(["sleep", "30"]) as process:  # noqa: S607 - a harmless program to read the arguments of
-        try:
-            assert host.command_line(process.pid) == ("sleep", "30")
-        finally:
-            process.kill()
+    assert host.command_line(os.getpid()) == tuple(sys.orig_argv)
 
 
 def test_the_host_reads_no_arguments_of_a_process_that_has_ended():
