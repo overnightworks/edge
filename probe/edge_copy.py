@@ -32,7 +32,7 @@ from typing import Any
 import yaml
 
 from hal.backup.docker import PROJECT_LABEL
-from hal.stack import catalog, checkout, compose
+from hal.stack import catalog, checkout, compose, deploy_checkout
 
 APPLY_SECONDS = 600
 NOT_RUNNABLE = 3  # a probe's exit when its preconditions fail, before it touches anything
@@ -238,9 +238,8 @@ def expect_project_networks(resolved: dict, project: str) -> None:
 def copy_compose_prefix(copy: Path) -> list[str]:
     """Compose as edge calls it in `copy`: its project directory and file, named so that no
     inherited `COMPOSE_FILE` selects another."""
-    return [
-        "docker", "compose", "--project-directory", str(copy), "--file", str(copy / "compose.yaml"),
-    ]  # fmt: skip
+    compose_file = copy / deploy_checkout.COMPOSE_FILE
+    return ["docker", "compose", "--project-directory", str(copy), "--file", str(compose_file)]
 
 
 def copy_compose_command(copy: Path) -> list[str]:
@@ -356,7 +355,7 @@ def live_project(repository: Path) -> LiveProject:
             timeout=APPLY_SECONDS,
         ).stdout.splitlines()  # fmt: skip
 
-    name = yaml.safe_load((repository / "compose.yaml").read_text())["name"]
+    name = yaml.safe_load((repository / deploy_checkout.COMPOSE_FILE).read_text())["name"]
     selector = f"label={PROJECT_LABEL}={name}"
     identifiers = docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", selector)
     inspected = docker(
@@ -404,7 +403,7 @@ def repository_copy(
     fleet_file = copy / catalog.FLEET_FILE
     fleet_file.write_text(without_inherited_apps(fleet_file.read_text()))
     if project:
-        compose_file = copy / "compose.yaml"
+        compose_file = copy / deploy_checkout.COMPOSE_FILE
         compose_file.write_text(namespaced_compose(compose_file.read_text(), project))
     if not (copy / ".git").is_dir():
         remote = scratch / REMOTE
