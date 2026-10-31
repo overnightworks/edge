@@ -3,6 +3,6 @@ agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
 role = "builder"
 base = "e11c3dd09da942aebca602668f13a94b090a0fea"
 branch = "claude/issue-809-sonar-first-scan-agent-service"
-scope = ["agent-service/image/Dockerfile", "agent-service/litellm/auth.py", "agent-service/litellm/gate.py", "agent-service/litellm/start.sh", "agent-service/live_signer.py", "probe/agent-service/image.py", "sonar-project.properties", "tests/test_agent_service_image.py"]
+scope = ["agent-service/image/Dockerfile", "agent-service/litellm/auth.py", "agent-service/litellm/gate.py", "agent-service/litellm/start.sh", "agent-service/live_signer.py", "probe/agent-service/image.py", "tests/test_agent_service_image.py"]
 opened_commit = "12d88441921d85ef097f2c3c6fdd180b14d3b2e2"
 whole_reason = "One scanner's first full scan of one directory: twelve findings that share one cause and one proof, and that turn main green only together."
