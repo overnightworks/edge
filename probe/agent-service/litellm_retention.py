@@ -8,7 +8,7 @@ only the fakes.
     flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 1800 \\
         python3 probe/agent-service/litellm_retention.py --scratch DIR
 
-Measured: a run takes about seven minutes (B8 waits for the fake's 120 s hold limit) and its
+Measured: a run takes about four minutes (B8 waits for the fake's 120 s hold limit) and its
 teardown a few seconds (K 30 s, CAP 1800 s).
 
 Evidence: F is the fake provider's request log, R the canary's verdict lines, C the census's verdict
