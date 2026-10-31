@@ -87,6 +87,8 @@ VERDICT_SECONDS = 15
 REFUSED_BY_GATEWAY = "UpstreamRefused"
 UNREACHABLE_GATEWAY = "UpstreamUnreachable"
 NO_TEXT_FAILURE = "provider_error"
+NO_BACKEND_CELL = "L4a no backend"
+CAPABILITY_CELL = "L4b the capability"
 
 
 def mcp_origin(service_toml: Path) -> str:
@@ -219,17 +221,17 @@ def l4a_cell(output: str, service_log: str, known: Secrets) -> Cell:
     refusal = None if events else REFUSAL_LINE.search(output)
     if refusal and refusal["code"] == "forbidden":
         return Cell(
-            "L4a no backend", Verdict.FAILED, f"forbidden: the service lacks the origin; {said}"
+            NO_BACKEND_CELL, Verdict.FAILED, f"forbidden: the service lacks the origin; {said}"
         )
     if {"succeeded", "assistant_text"} & set(events):
-        return Cell("L4a no backend", Verdict.FAILED, f"a fallback answered; {said}")
+        return Cell(NO_BACKEND_CELL, Verdict.FAILED, f"a fallback answered; {said}")
     if UNREACHABLE_GATEWAY in service_log:
         return Cell(
-            "L4a no backend", Verdict.FAILED, f"the gateway was unreachable (TLS or route); {said}"
+            NO_BACKEND_CELL, Verdict.FAILED, f"the gateway was unreachable (TLS or route); {said}"
         )
     held = failed_without_text(events, text) and REFUSED_BY_GATEWAY in service_log
     return Cell(
-        "L4a no backend", Verdict.HELD if held else Verdict.FAILED,
+        NO_BACKEND_CELL, Verdict.HELD if held else Verdict.FAILED,
         f"the gateway refused and the run failed without text; {said}" if held
         else f"no {REFUSED_BY_GATEWAY} with a failed run; {said}",
     )  # fmt: skip
@@ -239,15 +241,13 @@ def l4b_cell(verdict: str | None, output: str, known: Secrets) -> Cell:
     output = known.redact(output)
     events, text = event_names(output), other_lines(output)
     if verdict is None:
-        return Cell("L4b the capability", Verdict.FAILED, "no verdict from the stand-in")
+        return Cell(CAPABILITY_CELL, Verdict.FAILED, "no verdict from the stand-in")
     if verdict != VERIFIED:
-        return Cell("L4b the capability", Verdict.FAILED, f"the stand-in {verdict}")
+        return Cell(CAPABILITY_CELL, Verdict.FAILED, f"the stand-in {verdict}")
     if not failed_without_text(events, text):
-        return Cell(
-            "L4b the capability", Verdict.FAILED, f"verified, but the run went events {events}"
-        )
+        return Cell(CAPABILITY_CELL, Verdict.FAILED, f"verified, but the run went events {events}")
     return Cell(
-        "L4b the capability",
+        CAPABILITY_CELL,
         Verdict.HELD,
         "verified against public.pem; the run failed without text",
     )
@@ -301,7 +301,7 @@ def standin_cells(stack: Stack, known: Secrets, report: Report, origin: str) -> 
     try:
         if read_line(process, LISTEN_SECONDS) != LISTENING_LINE:
             report.add(
-                Cell("L4b the capability", Verdict.FAILED, "the stand-in printed no listening line")
+                Cell(CAPABILITY_CELL, Verdict.FAILED, "the stand-in printed no listening line")
             )
             return
         output, _, cleanup = run_smoke(stack, known)
