@@ -301,19 +301,23 @@ class StreamedConnection:
     def __init__(self, response: StreamedResponse) -> None:
         self.response = response
 
-    def request(self, *_: object) -> None:
-        return None
+    sent: list[bytes] = []
+
+    def request(self, _method: str, _path: str, body: bytes, _headers: dict) -> None:
+        self.sent.append(body)
 
     def getresponse(self) -> StreamedResponse:
         return self.response
 
 
-def run_canary(canary, monkeypatch, response, marker="m4rker"):
+def run_canary(canary, monkeypatch, response, marker="m4rker", options=()):
     monkeypatch.setattr(
         canary.http.client, "HTTPConnection", lambda *_, **__: StreamedConnection(response)
     )
     out = io.StringIO()
-    code = canary.main(["--marker", marker], stdin=io.StringIO("person\nworkload\n"), out=out)
+    code = canary.main(
+        ["--marker", marker, *options], stdin=io.StringIO("person\nworkload\n"), out=out
+    )
     return code, out.getvalue().splitlines()
 
 
@@ -331,6 +335,29 @@ def test_the_canary_prints_only_verdict_lines_for_a_succeeded_run_that_holds_the
         0,
         ["answer 200", "event run_started", "route api", "event succeeded", "marker yes"],
     )
+
+
+def sent_prompt() -> str:
+    (body,) = StreamedConnection.sent
+    return json.loads(body)["turn"]["messages"][0]["text"]
+
+
+def test_the_canary_adds_the_request_marker_to_the_prompt_it_sends(canary, monkeypatch):
+    StreamedConnection.sent = []
+    response = StreamedResponse(200, [("run_started", {"route": "api"})])
+
+    run_canary(canary, monkeypatch, response, options=["--request-marker", "r3quest-9c1"])
+
+    assert "r3quest-9c1" in sent_prompt()
+
+
+def test_the_canary_sends_the_same_prompt_every_time_without_a_request_marker(canary, monkeypatch):
+    StreamedConnection.sent = []
+    response = StreamedResponse(200, [("run_started", {"route": "api"})])
+
+    run_canary(canary, monkeypatch, response)
+
+    assert "r3quest" not in sent_prompt() and "m4rker" not in sent_prompt()
 
 
 def test_the_canary_prints_the_route_as_other_when_run_started_names_none_in_a_closed_word(
