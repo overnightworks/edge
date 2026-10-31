@@ -82,7 +82,7 @@ def test_each_cli_is_fetched_by_its_pinned_version_and_checked_by_sha256_while_i
 
 
 @pytest.mark.parametrize(("provider", "prefix"), PROBE_MODULE.DOCKERFILE_PREFIXES.items())
-def test_each_download_stage_fails_unless_the_cli_reports_its_pinned_version(provider, prefix):
+def test_each_download_stage_holds_a_version_check_that_exits_1_on_a_mismatch(provider, prefix):
     (check,) = RUN_STEP.findall(download_stage(prefix))
     expected = PROBE_MODULE.VERSION_REPORTS[provider].format(version=f"${{{prefix}_VERSION}}")
     assert f'expected="{expected}"' in check
@@ -107,7 +107,7 @@ def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards()
     assert "&& pip check" in DOCKERFILE
 
 
-def test_the_recipe_runs_only_the_download_checks_and_the_hashed_install():
+def test_the_recipe_holds_only_download_stages_and_a_final_stage_running_only_pip_install():
     downloads = {download_stage(prefix) for prefix in PROBE_MODULE.DOCKERFILE_PREFIXES.values()}
     (*_, final) = STAGES
     assert set(STAGES) == downloads | {final}

@@ -11,7 +11,8 @@ the truth: `compose.yaml` (the `agent-service` service, its `agent-songmaker`, `
 `agent-service/image/` is the recipe of the service's image (agent-runtime, Claude Code
 `2.1.302`, Codex `0.163.0`; the pins are in the Dockerfile and `requirements.txt`). Every byte that enters it is
 pinned: the base image by digest, the Python packages by hash, each CLI by its sha256 and its reported version (Codex as its release archive, whose one executable the Dockerfile unpacks by name). A
-changed or vanished artifact fails the build. The image is never pulled from a registry, because its
+wrong hash fails the build, and so does a CLI that does not report its pinned version; a build that
+fetches also fails on a changed or vanished artifact. The image is never pulled from a registry, because its
 name could be anyone's on a public one (`pull_policy: never`), so it is built on the PC.
 `agent-service/setup` builds it when it is missing, and `hal apply` asks to run that setup before it
 switches the unit on. The build line it runs, from the repository root:

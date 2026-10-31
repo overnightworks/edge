@@ -521,7 +521,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         scratch = Path(scratch_name)
         try:
             cell_i1(output)
-            write_line("I1 held: built without cache, both CLI downloads checked, pip check passed")
+            write_line(
+                "I1 held: built with --no-cache, the CLI files served by digest, "
+                "both versions checked, pip check passed"
+            )
             cell_i2(output, scratch)
             write_line("I2 held: an altered hash of either CLI or of a wheel fails the build")
             refusals = cell_i3(output)
