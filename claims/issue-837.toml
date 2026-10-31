@@ -1,8 +1,0 @@
-claim_id = "7b127657363542d98ecbaaa6e25dcd20"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "61668904fb8f86dedc7c0d468a8036517c8bd818"
-branch = "claude/issue-837-s1-of-674-the-realm-gives-hopin-the-spee"
-scope = ["docs/architecture.md", "docs/keycloak.md", "keycloak/realm.yaml", "probe/keycloak/README.md", "probe/keycloak/probe.py", "probe/keycloak/service_audience_cell.py", "quality/baseline.toml", "tests/test_keycloak_probe.py", "tests/test_stack_keycloak_unit.py"]
-opened_commit = "410b8ccaf3b18bf96ebee59f65c2c5160f779782"
-whole_reason = "The role, scope, group and client land with the probe decodes that prove them: a realm grant the probe does not decode is unproven, and probe pins without the realm fail."
