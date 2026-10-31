@@ -8,10 +8,10 @@ network takes a free /24 from 172.31.200.0 up. Both modes need an empty or new `
 directory and always tear the stack down. While a probe runs, `hal check exposure` reports its Keycloak as a
 routing name that is not valid, by design of the `edge.name: PROBE` label that keeps the live Traefik away.
 
-    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 540 \
+    flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 50 720 \
         python3 probe/keycloak/probe.py [run|hold] --scratch DIR
 
-Measured teardown: 11 s (K 50 s, CAP 540 s).
+Measured teardown: 11 s (K 50 s, CAP 720 s).
 
 Before each `compose up` the probe writes appkit's tokens and fonts into this checkout, where the
 themes read them (`appkit-<version>/` beside each theme's `css/`), through
@@ -120,7 +120,7 @@ argument (`--scratch` must be a new or empty directory). Under the `timeout` wra
 reaches the probe, so stop it with `kill -TERM` on the probe. A SIGTERM or Ctrl-C stop of `run`
 ends with exit 1 and a finished teardown.
 
-The lock is held for at most 590 seconds: at 540 `timeout` stops the probe, which still tears down
+The lock is held for at most 770 seconds: at 720 `timeout` stops the probe, which still tears down
 (exit 124), and 50 seconds later it kills the probe and its teardown (exit 137). After an exit 137
 or a `teardown: stack edge-kc-probe FAILED` line, remove the project under the lock, from a
 directory without a compose file, because Compose finds its containers, networks and volumes by the
