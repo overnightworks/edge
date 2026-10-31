@@ -190,6 +190,34 @@ clears only Cloudflare's copy; a browser that already holds the old file keeps i
 >   observer (`realm-observer`, `src/hal/stack/realm/observe.py`) reads the realms before and after,
 >   and `hal.stack.realm` compares the two reads and prints one line per change with its realm.
 
+### Terms of use
+
+Every account is asked once, at its first sign-in, to accept the terms of use: `realm.yaml` declares the
+required action `TERMS_AND_CONDITIONS` as enabled and default, so a new account carries it. The page shows
+a short sentence with a link to the central terms page (`legal/sections/allgemein/nutzungsbedingungen.html`)
+and Keycloak's own Accept and Decline buttons, in German or English by the browser; the words are `termsTitle`
+and `termsText` in the theme's message files. The text itself exists only on the central page. The
+acceptance counts for the whole Keycloak account, so every app at once. Decline signs nobody in and
+removes the stored time; the account stays and is asked again at the next sign-in. A service account
+(`client_credentials`) is never asked.
+
+Keycloak stores the time of the last acceptance as the user attribute `terms_and_conditions`, in Unix
+seconds, and no list of earlier ones. Only an admin sees it in the console; the person's account page
+and the tokens do not carry it, and an admin cannot set it, only ask again. A deleted account takes its
+time with it, except in the backups.
+
+Ask one person again: open the account in the admin console, add "Terms and Conditions" under Required
+user actions and save. This is also how an existing account is asked once after the action went live,
+because Keycloak gives the action by itself only to new accounts. Ask again when the terms change in
+substance; a typo or a new link is no reason.
+
+The action reaches Keycloak in this order: merge the checkout (`git merge --ff-only`), restart Keycloak
+(Theme and language), then `hal apply`, which publishes the legal pages and applies the realm. The
+messages must be served before the action is on, or the page shows Keycloak's placeholder text.
+
+Switch it off with `enabled: false` and `defaultAction: false` in the block, never by deleting the block:
+the apply deletes nothing, so a removed block leaves the action on.
+
 ## Secrets
 
 No secret is in any file of this repository or in any container's `Config.Env`. Compose mounts

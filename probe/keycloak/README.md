@@ -97,9 +97,17 @@ stack behind, ends with `PROBE FAILED` and exit 1.
   user's stored events are exactly one LOGIN and one LOGIN_ERROR, both with exactly the
   `Forwarded` address, a wrong password from an IPv6 address stores that address, and the logout
   stores none. The probe simulates the rule; it does not prove that Cloudflare applies it (#190).
+  Cells P1 and TC1 to TC6 (#775) run in proof 10, for songmaker first: the required action
+  `TERMS_AND_CONDITIONS` is enabled, default and has the declared priority (P1); a user made through the admin API carries it,
+  one made with `Admin.create_user` does not (TC1); the sign-in meets the terms page after the password, with title, text and
+  link as the theme's message files say, in German for `Accept-Language: de` and in English for none, with Accept and Decline
+  (TC2); Decline ends in `access_denied` with no session and no stored time (TC3); Accept stores the time as Unix seconds,
+  which an admin reads and the account REST, both tokens and an admin PUT do not show or change (TC4); a later
+  sign-in to hopin and presentator asks nothing (TC5); asked again, Decline removes the old time and Accept stores a new one (TC6).
 - `hold` brings the same stack up, runs no proof and keeps it for another repository's proof.
   It seeds nothing beyond the realm's `songmaker`, `hopin` and `presentator` clients, which callers must not create
-  themselves; they create their other clients and users through the admin API.
+  themselves; they create their other clients and users through the admin API. A hallucinai user created there carries
+  `TERMS_AND_CONDITIONS` pending, so its first browser sign-in meets the terms page (#775).
 
 ## Exit codes, stopping and cleanup
 

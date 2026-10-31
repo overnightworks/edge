@@ -95,6 +95,16 @@ clientScopes:
           # Stated, because Keycloak would otherwise default it on create and the next apply flip it.
           userinfo.token.claim: "false"
           introspection.token.claim: "true"
+# Every new account is asked once to accept the terms of use (docs/keycloak.md, "Terms of use").
+# `priority` is stated because config-cli writes 0 for a missing one. Deleting this block does not
+# switch the action off (IMPORT_MANAGED_REQUIREDACTION is no-delete in compose.yaml): set `enabled: false`.
+requiredActions:
+  - alias: TERMS_AND_CONDITIONS
+    providerId: TERMS_AND_CONDITIONS
+    name: Terms and Conditions
+    enabled: true
+    defaultAction: true
+    priority: 20
 # Only the service accounts of the clients that call the agent service (A1d, #183) are users here, and
 # only to hold agent-workload; no person is ever listed, and no group.
 users:

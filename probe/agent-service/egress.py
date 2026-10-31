@@ -156,6 +156,17 @@ def classify_syns(
     return early, stray, bool(controls)
 
 
+def alerted(result: dict, what: str) -> None:
+    """The gateway ended the handshake of `tls`: an SSLError is its own alert; a reset or a
+    timeout would say less."""
+    expect(
+        not result["handshake"]
+        and "certificate" not in result
+        and result["error"].startswith("SSLError"),
+        f"{what}: {result}",
+    )
+
+
 class Client:
     """What the stand-in does inside its own namespaces; every command prints one JSON line."""
 
@@ -537,15 +548,6 @@ class Probe:
         return set(self.client_in_namespace_of(gateway, "resolve", name)["addresses"])
 
     def cells_e3_to_e5(self) -> None:
-        def alerted(result: dict, what: str) -> None:
-            # An SSLError is the gateway's own alert; a reset or a timeout would say less.
-            expect(
-                not result["handshake"]
-                and "certificate" not in result
-                and result["error"].startswith("SSLError"),
-                f"{what}: {result}",
-            )
-
         def sni(name: str) -> Callable[[], str]:
             def attempt() -> str:
                 result = self.client("tls", self.address, name, str(GATEWAY_PORT), "noverify")
@@ -770,6 +772,15 @@ def run_probe(open_probe: Callable[[], Probe]) -> int:
         return 1
     write_line(f"PROBE PASSED: held {', '.join(probe.held)}", flush=True)
     return 0
+
+
+def run_scratch_probe(description: str, open_probe: Callable[[Path], Probe]) -> int:
+    """The entry of a probe whose one argument is `--scratch`: drive the probe `open_probe` makes
+    in that directory."""
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
+    scratch = parser.parse_args().scratch
+    return run_probe(lambda: open_probe(scratch))
 
 
 def main() -> int:

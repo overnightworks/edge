@@ -7,7 +7,7 @@ import re
 import stat
 from collections.abc import Callable, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 from support.workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
@@ -18,7 +18,7 @@ from support.terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
 from hal.workstation import ports as home_ports
 from hal.workstation import secrets_view
-from hal.workstation.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
+from hal.workstation.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, UNVERIFIED_FACT, Boundaries, Verdict
 from hal.workstation.setup import RERUN
 from hal.workstation.secrets_view import ManifestError, SecretEntry, TokenSource, load_manifest
 
@@ -27,12 +27,16 @@ HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"
 URL_SAFE_48_BYTES = re.compile(r"[A-Za-z0-9_-]{64}")
 TURN_KEY_ID = ".secrets/cloudflare/turn-hopin/key-id"
 TURN_API_TOKEN = ".secrets/cloudflare/turn-hopin/api-token"
-CLOUDFLARE_DASHBOARD = "https://dash.cloudflare.com/"
 NOW = datetime(2026, 10, 15, 9, 0)
 
 
 def packaged_entry(name: str) -> SecretEntry:
     return next(entry for entry in load_manifest(PACKAGED_MANIFEST) if entry.name == name)
+
+
+def _anthropic_key_place() -> PurePosixPath:
+    (place,) = packaged_entry("litellm/anthropic").paths
+    return place
 
 
 @pytest.fixture
@@ -130,21 +134,22 @@ def run_turn_setup(sandbox: Sandbox, capsys: pytest.CaptureFixture[str], termina
 
 
 UNVERIFIED_ENTRY = '[[secret]]\nname = "turn"\nkind = "unverified-token"\nread_by = []\nrecreate = "r"\n'
+PAGE = 'page = "https://example.invalid/keys"\n'
 
 
 @pytest.mark.parametrize(
-    "keys",
+    ("keys", "refusal"),
     [
-        'paths = ["~/.secrets/turn/a"]\nprovider = "cloudflare"\nresource = "zone"\nscope = ["a"]\nexpires_in_days = 30\npurpose = "p"\n',
-        'paths = ["~/.secrets/turn/a", "~/.secrets/turn/b"]\n',
+        (PAGE + 'paths = ["~/.secrets/turn/a"]\nprovider = "cloudflare"\nresource = "zone"\nscope = ["a"]\nexpires_in_days = 30\npurpose = "p"\n', "on a token entry only"),
+        (PAGE + 'paths = ["~/.secrets/turn/a", "~/.secrets/turn/b"]\n', "exactly one place without a wildcard"),
     ],
     ids=["a provider source", "two paths"],
 )
-def test_an_unverified_token_cannot_name_a_provider_to_verify_with_nor_two_files(tmp_path: Path, keys: str) -> None:
+def test_an_unverified_token_cannot_name_a_provider_to_verify_with_nor_two_files(tmp_path: Path, keys: str, refusal: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(UNVERIFIED_ENTRY + keys)
 
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError, match=refusal):
         load_manifest(manifest)
 
 
@@ -175,13 +180,60 @@ def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboa
 
     key_id = packaged_entry("cloudflare/turn-hopin/key-id")
     lines = [" ".join(line.split()) for line in output.splitlines()]
-    assert "› cloudflare/turn-hopin/key-id new token Cloudflare cannot check this one" in lines
+    assert f"› cloudflare/turn-hopin/key-id new token {UNVERIFIED_FACT}" in lines
     assert f"why: {key_id.purpose}" in lines
     assert f"create: {key_id.recreate}" in lines
     assert OPEN_PROMPT in terminal.prompts
-    assert set(terminal.opened) == {CLOUDFLARE_DASHBOARD}
-    assert f"no browser opened · open it yourself: {CLOUDFLARE_DASHBOARD}" in lines
+    assert set(terminal.opened) == {key_id.page}
+    assert f"no browser opened · open it yourself: {key_id.page}" in lines
     assert not any(line.startswith("opened ") for line in lines)
+
+
+PAGE_REFUSALS = [
+    (UNVERIFIED_ENTRY + 'paths = ["~/.secrets/turn/a"]\n', "page"),
+    (UNVERIFIED_ENTRY + 'paths = ["~/.secrets/turn/a"]\npage = "http://example.invalid"\n', "page"),
+    ('[[secret]]\nname = "t"\nkind = "token"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n' + PAGE, "page"),
+    ('[[secret]]\nname = "t"\nkind = "service-password"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n' + PAGE, "page"),
+    ('[[secret]]\nname = "t"\nkind = "configuration"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n' + PAGE, "page"),
+]
+
+
+@pytest.mark.parametrize(("text", "key"), PAGE_REFUSALS, ids=["no page", "page not https", "page on a token", "page on a service password", "page on a configuration"])
+def test_the_manifest_refuses_a_missing_misplaced_or_insecure_page_naming_its_key(tmp_path: Path, text: str, key: str) -> None:
+    manifest = tmp_path / "manifest.toml"
+    manifest.write_text(text)
+
+    with pytest.raises(ManifestError, match=key):
+        load_manifest(manifest)
+
+
+@pytest.fixture
+def anthropic_home(packaged_home: Sandbox) -> Sandbox:
+    """The packaged manifest with every entry in place but the provider key LiteLLM reads."""
+    (packaged_home.home / _anthropic_key_place()).unlink()
+    return packaged_home
+
+
+def test_the_wizard_asks_the_provider_key_hidden_opens_its_page_and_stores_it_at_0600_unverified_and_unseen(
+    anthropic_home: Sandbox, capsys: pytest.CaptureFixture[str]
+) -> None:
+    terminal = FakeTerminal(pastes=["FAKE-PROVIDER-KEY-0001"])
+
+    code, output = run_turn_setup(anthropic_home, capsys, terminal)
+
+    entry = packaged_entry("litellm/anthropic")
+    stored = anthropic_home.home / _anthropic_key_place()
+    lines = [" ".join(line.split()) for line in output.splitlines()]
+    assert code == 0
+    assert stored.read_text() == "FAKE-PROVIDER-KEY-0001"
+    assert [stat.S_IMODE(path.stat().st_mode) for path in (stored, stored.parent)] == [0o600, 0o700]
+    assert f"› litellm/anthropic new token {UNVERIFIED_FACT}" in lines
+    assert f"why: {entry.purpose}" in lines
+    assert f"create: {entry.recreate}" in lines
+    assert terminal.opened == [entry.page]
+    assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT]
+    assert f"✓ litellm/anthropic stored not verified · ~/{_anthropic_key_place()} (600)" in lines
+    assert "FAKE-PROVIDER" not in output
 
 
 def test_a_declined_open_prompt_opens_nothing_and_asks_for_no_paste(turn_home: Sandbox, capsys: pytest.CaptureFixture[str]) -> None:

@@ -5,8 +5,8 @@ compose project, HOME and copy of the repository.
 
 It starts the real Traefik, socket proxy and the `hello` whoami of compose.yaml under their own
 project name, drives the real `hal stop`, `hal start` and `hal apply --local` of a copy, and
-checks that `hello.<domain>` answers 404 with `X-Edge-Barrier: probe` on 127.0.0.1:8081 behind
-the barrier, also after a Traefik restart with the container up. It always removes its
+checks that `hello.<domain>` answers 404 with `X-Edge-Barrier: probe` on the copy's edge address
+behind the barrier, also after a Traefik restart with the container up. It always removes its
 containers, networks and volumes. Proof 8 (#70) drives `hal offline` and `hal online` on
 a throwaway `systemctl --user` unit `edge-probe-tunnel-<random>.service` (`sleep infinity`) that
 it removes again, with the real boot drop-in of `tunnel/`, and shows #76's boot skip: a start
@@ -36,32 +36,28 @@ both strings, and the apply still changes nothing and asks nothing; Z3 reverted,
 The copy is a clean `main` with a bare remote: every edit above is published (committed and
 pushed) before the apply that follows it (#95 P1); the #95 cell P2, after P2, applies with one
 unpublished `traefik.yml` edit and requires exit 3 naming it, with traefik's container kept. The
-#98 cell P1 then pushes one commit to the remote from a work clone (appending to
-`dynamic/.gitkeep` and `README.md`): the copy's apply shows it as one behind row with the merge
-line and that the plan applies HEAD, and changes nothing, HEAD and every container kept; the
-copy then runs the shown `git merge --ff-only <sha>` and is current again.
-Every transcript line names its item. It never touches the live stack
-or the live state. It needs 127.0.0.1:8081 free, so the live Traefik is down while it runs.
+#98 cell P1 pushes one commit to the remote from a work clone: the copy's apply shows it as one
+behind row, changes nothing, and the shown `git merge --ff-only <sha>` makes the copy current.
+Every transcript line names its item. It runs beside the live stack (#592): its Traefik listens on
+`edge_copy.PROBE_HOST` and routes only its project, behind a network guard. Residual: the live
+Traefik also routes the probe's `hello` until teardown.
 
     flock -o -w 1200 /tmp/probe-stack.lock setpriv --pdeathsig TERM timeout -k 30 900 \\
         python3 probe/switches/probe.py --scratch DIR
 
-Measured teardown: not measured yet (K 30 s, CAP 900 s); the probe refuses while the live edge holds
-127.0.0.1:8081 (#592), so no cut run exists.
-
-Needs an existing, empty --scratch directory, and `uv`: it runs `uv sync` in the copy.
+Measured teardown: 2.8 s after a SIGTERM at 120 s (K 30 s, CAP 900 s; the full run took under
+643 s with the lock wait). Needs an existing, empty --scratch directory, and `uv`: it runs
+`uv sync` in the copy.
 """
 
 from __future__ import annotations
 
-import argparse
 import grp
 import http.client
 import json
 import os
 import re
 import secrets
-import socket
 import subprocess
 import sys
 import time
@@ -76,15 +72,16 @@ import edge_copy  # noqa: E402
 from edge_copy import ProbeFailed, expect  # noqa: E402
 
 from hal.output import write_line  # noqa: E402
-from hal.stack import checkout, compose, core, tunnel  # noqa: E402
+from hal.stack import barrier, checkout, compose, core, tunnel  # noqa: E402
 from hal.stack.plan_rows import PlanEvent  # noqa: E402
 
 PROJECT = "edge-switches-probe"
 UNIT = "probe"
 DOMAIN = "probe.invalid"
 HOST = f"hello.{DOMAIN}"
-EDGE_ADDRESS = ("127.0.0.1", 8081)
-FLEET = "cloudflare:\ngithub:\nservices:\n  probe:\n    run:\n      enabled: true\n"
+FLEET = (
+    f"cloudflare:\n  zone: {DOMAIN}\ngithub:\nservices:\n  probe:\n    run:\n      enabled: true\n"
+)
 NOT_FOUND = (404, b"404 page not found\n", UNIT)  # status, body, X-Edge-Barrier
 UNCONFIGURED = (404, b"404 page not found\n", None)  # a Traefik that has loaded no router yet
 WHOAMI_SEEN = b"Hostname:"
@@ -130,6 +127,8 @@ class Probe:
             "NO_COLOR": "1",
         }
         self.environment.pop("DBUS_SESSION_BUS_ADDRESS", None)
+        self.live_before = edge_copy.live_project(REPO)
+        self.guard: edge_copy.NetworkGuard | None = None
         self.copy = checkout.live_checkout(self.home)
         self.state = self.home / ".local" / "state" / "edge"
         self.marker = self.state / "stopped" / UNIT
@@ -154,7 +153,7 @@ class Probe:
         return result
 
     def compose(self, *arguments: str) -> subprocess.CompletedProcess[bytes]:
-        return self.docker("compose", *arguments)
+        return self.docker(*edge_copy.guarded_compose(self.copy, self.guard, arguments))
 
     def container_ids(self) -> dict[str, str]:
         """The container id of each service that has one."""
@@ -220,14 +219,22 @@ class Probe:
         )
 
     def teardown(self) -> None:
+        if self.guard is None:
+            return
         self.compose("--profile", "*", "down", "--volumes", "--remove-orphans")
+        left = {"containers": self.container_ids(), "volumes": self.volumes()}
+        expect(not any(left.values()), f"the teardown left {left}")
+        self.guard.expect_clean_teardown()
+        live = edge_copy.expect_live_project_unchanged(self.live_before, REPO)
+        write_line(f"#592 V7 held: {PROJECT} left nothing, hal_ networks as before. V8: {live}")
 
     # --- what a client of the tunnel sees ----------------------------------------------------
 
     def ask(self) -> tuple[int, bytes, str | None] | None:
         """`GET /` with the unit's Host on the edge entrypoint: status, body and the barrier mark;
         None when nothing listens."""
-        connection = http.client.HTTPConnection(*EDGE_ADDRESS, timeout=REQUEST_SECONDS)
+        host, _, port = barrier.edge_address(self.copy).rpartition(":")
+        connection = http.client.HTTPConnection(host, int(port), timeout=REQUEST_SECONDS)
         try:
             connection.request("GET", "/", headers={"Host": HOST})
             response = connection.getresponse()
@@ -281,10 +288,16 @@ class Probe:
     # --- the cells ---------------------------------------------------------------------------
 
     def bring_up(self) -> None:
-        self.copy = edge_copy.repository_copy(REPO, self.home, self.scratch)
+        self.copy = edge_copy.repository_copy(REPO, self.home, self.scratch, PROJECT)
+        self.guard = edge_copy.NetworkGuard(
+            PROJECT, lambda command: self.docker(*command[1:]).stdout
+        )
+        traefik_yml = self.copy / TRAEFIK_FILE
+        traefik_yml.write_text(edge_copy.beside_the_live_edge(traefik_yml.read_text(), PROJECT))
         (self.copy / "fleet.yaml").write_text(FLEET)
-        edge_copy.publish(self.copy, "probe: the probe's fleet")
-        self.compose("up", "--detach", "socket-proxy", "traefik")
+        edge_copy.publish(self.copy, "probe: the probe's fleet and its Traefik beside the live one")
+        self.compose("up", "--detach", "socket-proxy", "traefik")  # the guard checks it first
+        write_line(f"#592 V6 held: project {PROJECT}, Traefik on {barrier.edge_address(self.copy)}")
 
     def cell_p7_the_real_bind_shape(self) -> None:
         resolved = json.loads(self.compose("--profile", "*", "config", "--format", "json").stdout)
@@ -727,11 +740,6 @@ class ThrowawayTunnel:
         self.systemctl("daemon-reload")
 
 
-def port_is_busy() -> bool:
-    with socket.socket() as probe:
-        return probe.connect_ex(EDGE_ADDRESS) == 0
-
-
 def prove(probe: Probe) -> int:
     try:
         probe.bring_up()
@@ -774,18 +782,13 @@ def prove(probe: Probe) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=edge_copy.scratch_directory, required=True)
-    arguments = parser.parse_args(argv)
-    return edge_copy.run_probe(
-        arguments.scratch,
+    return edge_copy.run_main(
+        __doc__.splitlines()[0],
+        argv,
         Probe,
         prove,
         "PROBE PASSED: #61 proofs 1-7, #70 proof 8, #85 P1-P7, #87 Q1-Q6, #91 Z1-Z3, "
-        "#95 P1-P2, #98 P1 hold",
-        blocker=lambda: (
-            "127.0.0.1:8081 is in use, the live edge must be down" if port_is_busy() else None
-        ),
+        "#95 P1-P2, #98 P1, #592 V1, V4, V6-V8 hold",
     )
 
 
