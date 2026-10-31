@@ -27,7 +27,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import IO, NoReturn
+from typing import IO, NamedTuple, NoReturn
 
 PROTOCOL_VERSION = 4
 AGENT = "chat"
@@ -51,6 +51,8 @@ SERVICE_PORT = 8080
 DEFAULT_TIMEOUT_SECONDS = 300.0
 TEXT_EVENTS = {"assistant_text", "succeeded"}
 MAX_REFUSAL_BYTES = 65536
+MAX_RECORD_BYTES = 65536
+RUN_ID = re.compile(r"[0-9a-f-]{36}")
 REDACTED = "[token]"
 
 
@@ -75,6 +77,14 @@ class Tokens:
 class Frame:
     event: str
     data: dict
+
+
+class RecordAnswer(NamedTuple):
+    """One answer to `GET /runs/{id}`: the status, and the run's record (agent-runtime's
+    `RunStatus`) when it is OK, else the refusal's object or an empty one."""
+
+    status: int
+    document: dict
 
 
 Connect = Callable[[str, int, float], http.client.HTTPConnection]
@@ -131,6 +141,33 @@ def refusal_line(response: http.client.HTTPResponse) -> str:
         return f"refused with {response.status} {document['code']}: {document['message']}"
     except (ValueError, KeyError, TypeError):
         return f"refused with {response.status}"
+
+
+def read_run_record(
+    connection: http.client.HTTPConnection, run_id: object, headers: dict[str, str]
+) -> RecordAnswer:
+    """One read of the run's record on `connection`, which it closes. A run id not of the
+    service's shape is never sent; a body over MAX_RECORD_BYTES and an OK body that is no JSON
+    object raise ValueError, whose message holds no value of the answer."""
+    if not (isinstance(run_id, str) and RUN_ID.fullmatch(run_id)):
+        raise ValueError("a run id not of the service's shape")
+    try:
+        connection.request("GET", f"/runs/{run_id}", None, headers)
+        response = connection.getresponse()
+        body = response.read(MAX_RECORD_BYTES + 1)
+    finally:
+        connection.close()
+    if len(body) > MAX_RECORD_BYTES:
+        raise ValueError(f"a run record over {MAX_RECORD_BYTES} bytes")
+    try:
+        document = json.loads(body)
+    except ValueError:
+        document = None
+    if isinstance(document, dict):
+        return RecordAnswer(response.status, document)
+    if response.status == http.HTTPStatus.OK:
+        raise ValueError("a run record that is no JSON object")
+    return RecordAnswer(response.status, {})
 
 
 class Smoke:
