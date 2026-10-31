@@ -1,21 +1,25 @@
 """A bounded packet window for the agent-service probe (#189): standard library only, run in a
 container with NET_RAW and nothing else, in the namespace it is asked to watch.
 
-    capture.py syn                     TCP SYNs that leave this namespace
-    capture.py dns LABEL [LABEL ...]   DNS questions on port 53, UDP or TCP, naming a label
+    capture.py [--seconds N] syn                     TCP SYNs that leave this namespace
+    capture.py [--seconds N] dns LABEL [LABEL ...]   DNS frames on port 53 or to Docker's
+                                                     embedded resolver, UDP or TCP, naming a
+                                                     label, and the queries among them
 
-It opens an `AF_PACKET` socket on every interface, prints `ready`, watches for at most
-WINDOW_SECONDS or FRAME_CAP frames, whichever comes first, and prints one JSON line: the counts,
-the addresses and ports named below, and the kernel's own PACKET_STATISTICS for the socket. Every
-frame is parsed in memory and dropped. No packet file, and no payload in any output or diagnostic:
-the host's window also sees the operator's own traffic. The caller decides whether the window was
-complete (no drop, nothing undecoded, still open when its control ended).
+It opens an `AF_PACKET` socket on every interface, prints `ready`, watches for at most N seconds
+(default WINDOW_SECONDS) or FRAME_CAP frames, whichever comes first, and prints one JSON line: the
+counts, the addresses and ports named below, and the kernel's own PACKET_STATISTICS for the
+socket. Every frame is parsed in memory and dropped. No packet file, and no payload in any output
+or diagnostic: the host's window also sees the operator's own traffic. The caller decides whether
+the window was complete (no drop, nothing undecoded, still open when its control ended).
 
 Every SYN carries the kernel's receive timestamp of its frame (SO_TIMESTAMPNS), not the time this
 script got round to reading it.
 
-The `dns` window attaches a kernel filter that passes only frames with port 53 (and every frame of
-an interface without an Ethernet header), so a busy host does not fill the frame cap with traffic
+The `dns` window attaches a kernel filter that passes only frames with port 53, IPv4 frames to
+Docker's embedded resolver on any port (Docker rewrites a container's query to it to another port
+before the frame is captured, while its reply leaves with port 53 again) and every frame of an
+interface without an Ethernet header, so a busy host does not fill the frame cap with traffic
 the window does not look at. IPv6 frames that carry an extension header pass too: the ports lie
 behind the chain, which `parse` walks. A frame the window cannot fully decode is counted in
 `undecoded` and makes the window incomplete: an IPv4 first fragment, an IPv6 chain or extension
@@ -73,6 +77,8 @@ IPV6_FRAGMENT_OFFSET_BITS = 0xFFF8
 IPV6_CHAIN_LIMIT = 8
 DNS_PORT = 53
 DNS_HEADER_BYTES = 12
+DNS_RESPONSE_BIT = 0x80  # QR, the top bit of the header's third byte
+EMBEDDED_RESOLVER = "127.0.0.11"  # Docker's resolver inside every container on a user network
 LABEL = re.compile(r"[a-z0-9]{1,63}")
 
 # Classic BPF: opcodes, and the ancillary load of the interface's hardware type (SKF_AD_OFF + 28).
@@ -83,6 +89,7 @@ JUMP_EQUAL, JUMP_ANY_BIT, RETURN = 0x15, 0x45, 0x06
 HARDWARE_TYPE_OFFSET = 0xFFFFF01C
 PASS_FRAME, DROP_FRAME = 0xFFFF, 0
 ETHERTYPE_OFFSET, IPV4_PROTOCOL_OFFSET, IPV4_FRAGMENT_OFFSET, IPV4_HEADER_OFFSET = 12, 23, 20, 14
+IPV4_DESTINATION_OFFSET = 30
 IPV6_PROTOCOL_OFFSET, IPV6_SOURCE_PORT_OFFSET = 20, 54
 FRAGMENT_BITS = 0x1FFF
 
@@ -100,6 +107,7 @@ class Segment:
     flags: int
     question: str
     at: float  # the kernel's receive time
+    query: bool = False  # a DNS message with QR 0
     undecoded: bool = False  # the frame could not be fully decoded
     partial_dns: bool = False  # TCP port 53 with a payload that is not one whole DNS message
 
@@ -217,16 +225,26 @@ def parse(
     declared_bytes = (
         header_bytes if protocol == PROTOCOL_TCP else struct.unpack_from("!H", transport, 4)[0]
     )
-    carries_dns = DNS_PORT in (source_port, destination_port)
+    carries_dns = is_dns(destination, source_port, destination_port)
     if carries_dns and (truncated or declared_bytes > len(transport)):
         # The capture cut the DNS message (or its TCP options): the question is not all here.
         return gap
     flags, payload, partial = transport_contents(protocol, transport, header_bytes, carries_dns)
-    question = dns_question(payload) if carries_dns else ""
+    question, query = dns_reading(payload) if carries_dns else ("", False)
     return Segment(
         outgoing, interface, protocol, destination, source_port, destination_port, flags,
-        question, at, partial_dns=partial,
+        question, at, query=query, partial_dns=partial,
     )  # fmt: skip
+
+
+def is_dns(destination: str, source_port: int, destination_port: int) -> bool:
+    """Port 53 either way, or any port to Docker's embedded resolver, which rewrites it."""
+    return DNS_PORT in (source_port, destination_port) or destination == EMBEDDED_RESOLVER
+
+
+def dns_reading(message: bytes) -> tuple[str, bool]:
+    """The first question's name, and whether the message is a query (QR 0)."""
+    return dns_question(message), len(message) > 2 and not message[2] & DNS_RESPONSE_BIT
 
 
 def dns_question(message: bytes) -> str:
@@ -256,6 +274,8 @@ DNS_FILTER: list[Step] = [
     (None, JUMP_EQUAL, PROTOCOL_UDP, IPV4_PORTS, "drop"),
     (IPV4_PORTS, LOAD_HALF, IPV4_FRAGMENT_OFFSET, None, None),
     (None, JUMP_ANY_BIT, FRAGMENT_BITS, "drop", None),
+    (None, LOAD_WORD, IPV4_DESTINATION_OFFSET, None, None),
+    (None, JUMP_EQUAL, int.from_bytes(socket.inet_aton(EMBEDDED_RESOLVER)), "pass", None),
     (None, LOAD_HEADER_LENGTH_INTO_X, IPV4_HEADER_OFFSET, None, None),
     (None, LOAD_HALF_INDEXED, IPV4_HEADER_OFFSET, None, None),
     (None, JUMP_EQUAL, DNS_PORT, "pass", None),
@@ -305,6 +325,7 @@ class Window:
         self.frames = 0
         self.syns: list[dict] = []
         self.label_frames: dict[str, int] = {}
+        self.query_frames: dict[str, int] = {}
         self.undecoded = 0
 
     def see(self, segment: Segment, labels: list[str]) -> None:
@@ -326,6 +347,8 @@ class Window:
         for label in labels:
             if label in segment.question:
                 self.label_frames[label] = self.label_frames.get(label, 0) + 1
+                if segment.query:
+                    self.query_frames[label] = self.query_frames.get(label, 0) + 1
 
 
 def open_socket(steps: list[Step] | None) -> socket.socket:
@@ -349,8 +372,10 @@ def read_statistics(watcher: socket.socket) -> tuple[int, int]:
     return struct.unpack("II", watcher.getsockopt(SOL_PACKET, PACKET_STATISTICS, 8))
 
 
-def watch(watcher: socket.socket, labels: list[str]) -> tuple[Window, str]:
-    window, deadline = Window(), time.monotonic() + WINDOW_SECONDS
+def watch(
+    watcher: socket.socket, labels: list[str], seconds: int = WINDOW_SECONDS
+) -> tuple[Window, str]:
+    window, deadline = Window(), time.monotonic() + seconds
     while window.frames < FRAME_CAP:
         if time.monotonic() >= deadline:
             return window, "seconds"
@@ -368,11 +393,11 @@ def watch(watcher: socket.socket, labels: list[str]) -> tuple[Window, str]:
     return window, "frames"
 
 
-def run(mode: str, labels: list[str]) -> dict:
+def run(mode: str, labels: list[str], seconds: int = WINDOW_SECONDS) -> dict:
     watcher = open_socket(DNS_FILTER if mode == "dns" else None)
     print("ready", flush=True)
     started = time.time()
-    window, ended_by = watch(watcher, labels)
+    window, ended_by = watch(watcher, labels, seconds)
     packets, drops = read_statistics(watcher)
     result = {
         "started_at": started,
@@ -383,18 +408,35 @@ def run(mode: str, labels: list[str]) -> dict:
         "drops": drops,
         "undecoded": window.undecoded,
     }
-    return result | ({"syns": window.syns} if mode == "syn" else {"labels": window.label_frames})
+    if mode == "syn":
+        return result | {"syns": window.syns}
+    return result | {"labels": window.label_frames, "queries": window.query_frames}
 
 
-def main(arguments: list[str]) -> int:
+def parse_arguments(arguments: list[str]) -> tuple[int, str, list[str]] | None:
+    """The window's length in seconds, its mode and its labels; None for arguments that are none
+    of the usages."""
+    seconds = WINDOW_SECONDS
+    if arguments[:1] == ["--seconds"]:
+        if len(arguments) < 2 or not re.fullmatch(r"[1-9]\d{0,5}", arguments[1]):
+            return None
+        seconds, arguments = int(arguments[1]), arguments[2:]
     mode, labels = (arguments[0] if arguments else ""), [label.lower() for label in arguments[1:]]
     valid = (mode == "syn" and not labels) or (
         mode == "dns" and labels and all(LABEL.fullmatch(label) for label in labels)
     )
-    if not valid:
-        print("usage: capture.py syn | capture.py dns LABEL [LABEL ...]", file=sys.stderr)
+    return (seconds, mode, labels) if valid else None
+
+
+def main(arguments: list[str]) -> int:
+    if (parsed := parse_arguments(arguments)) is None:
+        print(
+            "usage: capture.py [--seconds N] syn | capture.py [--seconds N] dns LABEL [LABEL ...]",
+            file=sys.stderr,
+        )
         return 2
-    print(json.dumps(run(mode, labels)), flush=True)
+    seconds, mode, labels = parsed
+    print(json.dumps(run(mode, labels, seconds)), flush=True)
     return 0
 
 

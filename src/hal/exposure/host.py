@@ -1,8 +1,10 @@
-"""The only place that touches the host: two read-only commands, fixed argv, no shell."""
+"""The only place that touches the host: two read-only commands, fixed argv, no shell, and the
+command line of a process."""
 
 import json
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from hal.exposure.exposure import UnreadableOutputError
 
@@ -39,6 +41,17 @@ def docker_inspect_json() -> str:
 
 def socket_listeners() -> str:
     return _run(SOCKET_LISTENERS)
+
+
+def command_line(pid: int) -> tuple[str, ...] | None:
+    """The arguments the process was started with, or None when they cannot be read (another
+    user's process, one that has ended)."""
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return None
+    arguments = raw.decode(errors="replace").split("\0")
+    return tuple(arguments[:-1]) if arguments[-1] == "" else tuple(arguments)
 
 
 def _require_every_container_inspected(inspect_json: str, listed: int) -> None:

@@ -5,13 +5,18 @@ from collections import defaultdict
 from hal.exposure.allowlist import AllowEntry
 from hal.exposure.docker import TRAEFIK_NAME, Container, Publication, parse_containers
 from hal.exposure.exposure import Finding, PortRange, Problem, is_loopback, ordered
-from hal.exposure.listeners import Listener, parse_listeners
+from hal.exposure.listeners import CommandLineReader, Listener, parse_listeners
 
 # docker-proxy runs in dockerd's unit: ss shows that cgroup to every caller, the process to root.
 _DOCKER_PROXY_UNIT = "docker.service"
 
 
-def check(inspect_json: str, ss_output: str, allow_list: tuple[AllowEntry, ...]) -> list[Finding]:
+def check(
+    inspect_json: str,
+    ss_output: str,
+    allow_list: tuple[AllowEntry, ...],
+    read_command_line: CommandLineReader,
+) -> list[Finding]:
     containers = parse_containers(inspect_json)
     publications = [
         publication for container in containers for publication in container.publications
@@ -24,7 +29,8 @@ def check(inspect_json: str, ss_output: str, allow_list: tuple[AllowEntry, ...])
     ]
     findings = publication_findings(publications)
     findings += edge_name_findings(containers)
-    findings += listener_findings(parse_listeners(ss_output), allow_list, running_publications)
+    listeners = parse_listeners(ss_output, read_command_line)
+    findings += listener_findings(listeners, allow_list, running_publications)
     return ordered(findings)
 
 

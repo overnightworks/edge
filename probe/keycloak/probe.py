@@ -58,7 +58,9 @@ sys.path[:0] = [str(REPO / "src"), str(REPO / "probe/keycloak")]
 import backchannel_cell  # noqa: E402
 import device_grant_cell  # noqa: E402
 import logout_actions_cell  # noqa: E402
+import terms_cell  # noqa: E402
 from admin import AdminToken  # noqa: E402
+from test_rp import token_claims as claims  # noqa: E402
 
 from hal.output import write_line  # noqa: E402
 from hal.stack import checkout, compose, core, switches  # noqa: E402
@@ -396,11 +398,6 @@ def stored_event_types(events: list[dict[str, Any]], request_address: str) -> li
             f"not the request's {request_address}",
         )
     return sorted(event["type"] for event in events)
-
-
-def claims(jwt: str) -> dict[str, Any]:
-    payload = jwt.split(".")[1]
-    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
 
 
 def audience_of(access: dict[str, Any]) -> list[str]:
@@ -825,7 +822,7 @@ class Admin:
         expect(response.status in (200, 204), f"{method} {path} answered {response.status}")
 
     def create_user(self, realm: str, username: str, password: str) -> str:
-        return self.create(
+        user_id = self.create(
             f"/{realm}/users",
             {
                 "username": username,
@@ -837,6 +834,7 @@ class Admin:
                 "credentials": [{"type": "password", "value": password, "temporary": False}],
             },
         )
+        return terms_cell.without_pending_terms(self, user_id) if realm == REALM else user_id
 
     def join_group(self, user_id: str, group_path: str) -> None:
         group = self.get(f"/{REALM}/group-by-path{group_path}")
@@ -2113,9 +2111,7 @@ class Probe:
         admin.join_group(member_id, client.group)
         admin.join_group(member_id, SUBSCRIPTION_GROUP)
         client_secret = self.secret_values[client.secret_file]
-        browser = new_opener(
-            ReceivedCookies(lambda cookie, value: self.keep_secret(f"{name} {cookie}", value))
-        )
+        browser = self.browser(name)
         tokens = self.app_client_sign_in(client, browser, username, password, client_secret)
         groups = claims(tokens["id_token"]).get("groups", [])
         expect(client.group in groups, f"{name}'s ID token groups are {groups}")
@@ -2125,6 +2121,7 @@ class Probe:
         self.app_client_logout_pages(client, browser)
         self.app_client_representation(admin, client)
         self.workload_token_carries_the_role(admin, client_secret, client)
+        terms_cell.prove(self, expect, form_with, client)
         self.held(
             "10",
             f"a member of {client.group} signs in to {name} with PKCE and gets a code "
@@ -2139,6 +2136,9 @@ class Probe:
             f"client_credentials token has {AGENT_WORKLOAD_ROLE}, client_id and azp {name}, no "
             "group and the realm's access token lifespan to live (W1 to W3)",
         )
+
+    def browser(self, name: str) -> OpenerDirector:
+        return new_opener(ReceivedCookies(lambda c, v: self.keep_secret(f"{name} {c}", v)))
 
     @staticmethod
     def app_client_authorization_query(client: AppClient, **changes: str) -> str:

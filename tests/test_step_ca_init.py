@@ -577,7 +577,7 @@ def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
         "#!/bin/sh\n"
         'case "$*" in\n'
         f'  *" down "*) kill -{stop_signal} $PPID; touch "{down_finished}" ;;\n'
-        '  *" config "*) echo "{}" ;;\n'
+        f"  *\" config \"*) echo '{json.dumps({'name': probe.PROJECT})}' ;;\n"
         "  ps*|volume*|network*) ;;\n"
         "  *) exit 1 ;;\n"
         "esac\n",
@@ -602,7 +602,7 @@ def test_teardown_finishes_when_a_stop_signal_arrives_during_cleanup(
 
 @pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT])
 def test_teardown_commands_survive_a_stop_signal_to_the_probe_process_group(
-    tmp_path: Path, stop_signal: signal.Signals
+    probe: ModuleType, tmp_path: Path, stop_signal: signal.Signals
 ) -> None:
     """defect:#38 PR 39 follow-up 1: cleanup commands run in their own session, so a signal to
     the probe's process group (Ctrl-C, timeout) cannot kill them half-way."""
@@ -620,7 +620,7 @@ def test_teardown_commands_survive_a_stop_signal_to_the_probe_process_group(
         f"    os.killpg(os.getpgid(os.getppid()), {int(stop_signal)})\n"
         f"    open({str(down_finished)!r}, 'w').close()\n"
         "elif ' config ' in ' ' + args:\n"
-        "    print('{}')\n"
+        f"    print({json.dumps({'name': probe.PROJECT})!r})\n"
         "elif sys.argv[1:2] in (['ps'], ['network']) or sys.argv[1:3] == ['volume', 'ls']:\n"
         "    pass\n"
         "else:\n"
