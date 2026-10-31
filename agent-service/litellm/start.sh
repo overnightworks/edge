@@ -4,11 +4,12 @@
 # one line that names the path only; a key never reaches argv or a log.
 set -eu
 read_key() {
-  if [ ! -f "$1" ] || [ "$(grep -c '' "$1")" -ne 1 ] || LC_ALL=C grep -Evq '^[!-~]+$' "$1"; then
-    echo "litellm: $1 does not hold exactly one printable key line" >&2
+  key_file=$1
+  if [ ! -f "$key_file" ] || [ "$(grep -c '' "$key_file")" -ne 1 ] || LC_ALL=C grep -Evq '^[!-~]+$' "$key_file"; then
+    echo "litellm: $key_file does not hold exactly one printable key line" >&2
     exit 1
   fi
-  cat "$1"
+  cat "$key_file"
 }
 ANTHROPIC_API_KEY=$(read_key "$1")
 LITELLM_MASTER_KEY=$(read_key "$2")
