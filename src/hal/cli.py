@@ -10,6 +10,7 @@ from hal import (
     backup_commands,
     check_commands,
     legal_commands,
+    migrate_commands,
     rename_commands,
     secrets_commands,
     setup_commands,
@@ -30,6 +31,7 @@ COMMANDS = (
     *secrets_commands.COMMANDS,
     *setup_commands.COMMANDS,
     *rename_commands.COMMANDS,
+    *migrate_commands.COMMANDS,
     *legal_commands.COMMANDS,
     version.COMMAND,
 )

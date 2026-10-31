@@ -20,6 +20,7 @@ class Verb(StrEnum):
     VERSION = "version"
     LEGAL = "legal"
     RENAME = "rename"
+    MIGRATE = "migrate"
     SECRETS = "secrets"
 
 

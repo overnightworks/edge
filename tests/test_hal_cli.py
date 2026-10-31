@@ -216,6 +216,7 @@ VALID_ARGUMENTS = {
     "stop": ("unit",),
     "start": ("unit",),
     "rename": ("former", "current"),
+    "migrate": ("stack",),
     "legal": ("key",),
     "secrets": ("--by-service",),
 }
