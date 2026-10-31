@@ -58,6 +58,7 @@ from egress import (  # noqa: E402
 from egress_observe import UNREACHABLE  # noqa: E402
 from issuer import ISSUER_PORT, ISSUER_SERVICE, SERVICE  # noqa: E402
 from litellm import (  # noqa: E402
+    CA_IN_CLIENT,
     ENTRYPOINT_ADDRESS,
     FAKE_ISSUER,
     FAKE_PROVIDER,
@@ -81,7 +82,6 @@ GATE_PROGRAM = f'while [ ! -e {GATE_DIRECTORY}/{GATE_FILE} ]; do sleep 0.2; done
 START_SECONDS = 120  # LiteLLM's start and the controls around it
 SESSION_SECONDS = 300  # the gateway window over the start and every driving cell
 WINDOW_MARGIN_SECONDS = 3
-CA_IN_CLIENT = "/run/secrets/step_ca_root_certificate"
 LOOPBACK = "lo"
 PROVIDER_ON_INTERNET = "fake provider on internet"
 TLS_HANDSHAKE, TLS_ALERT, SERVER_HELLO = 22, 21, 2  # record content types, handshake type

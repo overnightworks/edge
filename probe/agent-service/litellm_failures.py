@@ -18,7 +18,6 @@ F9 only, the fake's certificate from a second scratch CA. Exit 0: every cell hel
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 import secrets
@@ -49,8 +48,7 @@ from litellm import (
     LitellmProbe,
     ProbeFailed,
     expect,
-    run_probe,
-    scratch_directory,
+    run_scratch_probe,
 )
 from scratch_secrets import issue_certificate, write_new, write_scratch_secrets
 
@@ -464,10 +462,7 @@ class FailureProbe(LitellmProbe):
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--scratch", type=scratch_directory, required=True)
-    arguments = parser.parse_args()
-    return run_probe(lambda: FailureProbe(arguments.scratch))
+    return run_scratch_probe(__doc__.splitlines()[0], FailureProbe)
 
 
 if __name__ == "__main__":

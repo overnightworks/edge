@@ -75,16 +75,18 @@ with socket.create_connection(("litellm-front", 4000), timeout=60) as raw:
         reply += chunk
 print(json.dumps({"status": int(reply.split(b" ", 2)[1])}))
 """
-TLS_PROGRAM = """\
+# The step-ca root inside a client container, at the path of compose.yaml's secret mount.
+CA_IN_CLIENT = "/run/secrets/step_ca_root_certificate"
+TLS_PROGRAM = f"""\
 import json, socket, ssl, sys
 address, name = sys.argv[1:3]
-context = ssl.create_default_context(cafile="/run/secrets/step_ca_root_certificate")
+context = ssl.create_default_context(cafile="{CA_IN_CLIENT}")
 with socket.create_connection((address, 443), timeout=10) as raw:
     with context.wrap_socket(raw, server_hostname=name) as secured:
         certificate = secured.getpeercert()
 subject = dict(pair[0] for pair in certificate["subject"])
 issuer = dict(pair[0] for pair in certificate["issuer"])
-print(json.dumps({"subject": subject["commonName"], "issuer": issuer["commonName"]}))
+print(json.dumps({{"subject": subject["commonName"], "issuer": issuer["commonName"]}}))
 """
 
 
