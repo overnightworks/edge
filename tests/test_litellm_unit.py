@@ -301,23 +301,19 @@ class StreamedConnection:
     def __init__(self, response: StreamedResponse) -> None:
         self.response = response
 
-    sent: list[bytes] = []
-
-    def request(self, _method: str, _path: str, body: bytes, _headers: dict) -> None:
-        self.sent.append(body)
+    def request(self, *_: object) -> None:
+        return None
 
     def getresponse(self) -> StreamedResponse:
         return self.response
 
 
-def run_canary(canary, monkeypatch, response, marker="m4rker", options=()):
+def run_canary(canary, monkeypatch, response, marker="m4rker"):
     monkeypatch.setattr(
         canary.http.client, "HTTPConnection", lambda *_, **__: StreamedConnection(response)
     )
     out = io.StringIO()
-    code = canary.main(
-        ["--marker", marker, *options], stdin=io.StringIO("person\nworkload\n"), out=out
-    )
+    code = canary.main(["--marker", marker], stdin=io.StringIO("person\nworkload\n"), out=out)
     return code, out.getvalue().splitlines()
 
 
@@ -337,27 +333,35 @@ def test_the_canary_prints_only_verdict_lines_for_a_succeeded_run_that_holds_the
     )
 
 
-def sent_prompt() -> str:
-    (body,) = StreamedConnection.sent
+class RequestRecordingConnection(StreamedConnection):
+    def __init__(self) -> None:
+        super().__init__(StreamedResponse(403, []))
+        self.bodies: list[bytes] = []
+
+    def request(self, _method: str, _path: str, body: bytes, _headers: dict) -> None:
+        self.bodies.append(body)
+
+
+def prompt_sent_by(canary, monkeypatch, options: list[str]) -> str:
+    connection = RequestRecordingConnection()
+    monkeypatch.setattr(canary.http.client, "HTTPConnection", lambda *_, **__: connection)
+    canary.main(
+        ["--marker", "m4rker", *options], stdin=io.StringIO("person\nworkload\n"), out=io.StringIO()
+    )
+    (body,) = connection.bodies
     return json.loads(body)["turn"]["messages"][0]["text"]
 
 
 def test_the_canary_adds_the_request_marker_to_the_prompt_it_sends(canary, monkeypatch):
-    StreamedConnection.sent = []
-    response = StreamedResponse(200, [("run_started", {"route": "api"})])
+    prompt = prompt_sent_by(canary, monkeypatch, ["--request-marker", "r3quest-9c1"])
 
-    run_canary(canary, monkeypatch, response, options=["--request-marker", "r3quest-9c1"])
-
-    assert "r3quest-9c1" in sent_prompt()
+    assert "r3quest-9c1" in prompt
 
 
-def test_the_canary_sends_the_same_prompt_every_time_without_a_request_marker(canary, monkeypatch):
-    StreamedConnection.sent = []
-    response = StreamedResponse(200, [("run_started", {"route": "api"})])
+def test_the_canary_sends_the_plain_prompt_without_a_request_marker(canary, monkeypatch):
+    prompt = prompt_sent_by(canary, monkeypatch, [])
 
-    run_canary(canary, monkeypatch, response)
-
-    assert "r3quest" not in sent_prompt() and "m4rker" not in sent_prompt()
+    assert prompt == canary.ANSWER_PROMPT
 
 
 def test_the_canary_prints_the_route_as_other_when_run_started_names_none_in_a_closed_word(

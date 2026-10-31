@@ -6,8 +6,8 @@ Stdin holds the person's token and then the workload's, as smoke.py reads them. 
 `answer <status>`, one `event <name>` per frame, `route <word>` for the route `run_started` names,
 `code <code>` for a failed run and `marker yes|no`: whether the text of the answer holds TEXT. It
 never prints a message, a token or a run id. `--request-marker` adds its text to the prompt, so a
-retention census (#814) can look for the request's content. Exit 0 when the run succeeded and the answer held the
-marker.
+retention census can look for the request's content. Exit 0 when the run succeeded and the answer
+held the marker.
 
 With `--cancel` it holds the stream open for smoke.py's hold, then closes it, reads the run's record
 (`GET /runs/{id}`) until it has ended and prints `status <state>`: a client that closes its stream

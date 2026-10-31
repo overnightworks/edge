@@ -115,7 +115,7 @@ def test_the_retention_mode_answers_through_run_with_the_table_and_the_mounts(
 def test_the_program_sent_to_a_container_calls_emit_with_exactly_the_settings(
     tree: ModuleType,
 ) -> None:
-    asked = {"key": KEY.hex(), "mode": "retention", "tokens": {"request": "it's \"q\""}}
+    asked = {"key": KEY.hex(), "mode": "retention", "tokens": {"request": 'it\'s "q"'}}
 
     text = tree.program(asked)
 
