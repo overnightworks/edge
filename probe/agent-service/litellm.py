@@ -281,8 +281,8 @@ class LitellmProbe(IssuerProbe):
     def access_lines(self) -> list[str]:
         return [line for line in self.log_of(LITELLM).splitlines() if ACCESS_LINE.search(line)]
 
-    def canary(self, app: str) -> dict[str, str]:
-        """R: the canary's verdict lines of one run of `app` by a person of the API group alone."""
+    def canary_input(self, app: str) -> str:
+        """The two tokens of a person of the API group alone, as the canary reads them."""
         claims = {
             "sub": self.identity["sub"], "preferred_username": self.identity["username"],
             "email": self.identity["email"], "azp": app, "groups": [f"/apps/{app}", API_GROUP],
@@ -294,17 +294,41 @@ class LitellmProbe(IssuerProbe):
             {"sub": "workload", "azp": app, "client_id": app,
              "realm_access": {"roles": ["agent-workload"]}},
         )  # fmt: skip
-        result = self.run(
-            self.compose_command("run", "--rm", "-T", "--no-deps", "--label", LABEL, CANARY,
-                                 "--marker", self.marker),
-            stdin=f"{person}\n{workload}\n", check=False, timeout=CANARY_SECONDS,
+        return f"{person}\n{workload}\n"
+
+    def canary_command(self, options: tuple[str, ...] = ()) -> list[str]:
+        return self.compose_command(
+            "run", "--rm", "-T", "--no-deps", "--label", LABEL, CANARY,
+            "--marker", self.marker, *options,
         )  # fmt: skip
-        verdicts = {
-            name: value
-            for name, space, value in (line.partition(" ") for line in result.stdout.splitlines())
-            if space
-        }
-        return {**verdicts, "exit": str(result.returncode)}
+
+    @staticmethod
+    def verdicts(stdout: str, exit_code: int) -> dict[str, str]:
+        """R: the canary's verdict lines by name (the last of a repeated name) and its exit code."""
+        lines = (line.partition(" ") for line in stdout.splitlines())
+        return {**{name: value for name, space, value in lines if space}, "exit": str(exit_code)}
+
+    def canary(self, app: str, options: tuple[str, ...] = ()) -> dict[str, str]:
+        """R: the canary's verdict lines of one run of `app` by a person of the API group alone."""
+        result = self.run(
+            self.canary_command(options), stdin=self.canary_input(app), check=False,
+            timeout=CANARY_SECONDS,
+        )  # fmt: skip
+        return self.verdicts(result.stdout, result.returncode)
+
+    def steer_fake(self, **steering: object) -> None:
+        """Writes the provider fake's control file; the fake re-reads it on every request."""
+        folder = self.fake / PROVIDER_HOST
+        draft = folder / "control.json.new"
+        draft.write_text(json.dumps(steering), encoding="utf-8")
+        draft.chmod(0o644)
+        draft.replace(folder / "control.json")
+
+    def recreate_litellm(self) -> None:
+        self.compose(
+            "up", "--detach", "--wait", "--force-recreate", "--no-deps", LITELLM, timeout=300
+        )
+        self.wait_until(LITELLM, LISTENING)
 
     def http(self, method: str, path: str, bearer: str | None = None, body: dict | None = None):
         """The status of one raw request from a throwaway on `litellm-api`, through the front."""
@@ -395,10 +419,7 @@ class LitellmProbe(IssuerProbe):
         new = self.model_id(text, "anthropic/sonnet")
         expect(old != new, "G4: the two families share an id")
         self.litellm_config.write_text(text.replace(f"anthropic/{old}", f"anthropic/{new}", 1))
-        self.compose(
-            "up", "--detach", "--wait", "--force-recreate", "--no-deps", LITELLM, timeout=300
-        )
-        self.wait_until(LITELLM, LISTENING)
+        self.recreate_litellm()
         before = len(self.provider_requests())
         run = self.canary(DEFAULT_APP)
         sent = self.provider_requests()[before:]

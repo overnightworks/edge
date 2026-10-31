@@ -229,10 +229,22 @@ has no `[api]` table.
 - **A change reaches LiteLLM only through a recreate** of its container: `config.yaml` (model
   remapping included), `auth.py`, `gate.py` and `start.sh` are read once at start, and the three
   secrets (provider key, master key and service credential) are files mounted at create time.
+- **A failure ends the run by name.** LiteLLM, the front or the gateway stopped, an upstream 500,
+  529, timeout, reset or broken answer, an untrusted certificate, a refused credential and
+  Anthropic's billing refusal all end the run as `failed: provider_unavailable` on route `api`;
+  the run never falls back to the subscription. A used-up balance therefore looks like an outage
+  until the operator checks his credit. A cancelled run ends `cancelled`, but LiteLLM does not pass
+  the close on to the provider, which finishes the request and bills it.
+- **Rotating a key is a recreate.** A replaced provider key file reaches LiteLLM only through its
+  recreate, until then it keeps sending the old key. A replaced service credential reaches each
+  reader only through its own recreate, LiteLLM first, then `agent-service`; in between every run
+  fails `provider_unavailable`. A missing or empty key file stops LiteLLM's start with a line that
+  names the path only.
 - **Proof:** `probe/agent-service/litellm.py` runs the whole path on a fake-only stack (its
   docstring gives the command line): the fake Anthropic and a fake issuer sit on `internet`, made
   internal, and the probe refuses to start otherwise. Re-run it for every LiteLLM, Traefik or Docker
-  bump. The CI job `front` runs the front's table of requests (`tests/test_litellm_front.py`) for
+  bump. `probe/agent-service/litellm_failures.py` drives the failure, key and rotation
+  cases on the same stack. The CI job `front` runs the front's table of requests (`tests/test_litellm_front.py`) for
   every Traefik bump; a LiteLLM bump still needs the probe.
 
 ## Proofs

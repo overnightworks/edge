@@ -320,15 +320,26 @@ def test_the_canary_prints_only_verdict_lines_for_a_succeeded_run_that_holds_the
     canary, monkeypatch
 ):
     response = StreamedResponse(
-        200, [("run_started", {}), ("succeeded", {"text": "the m4rker", "files": []})]
+        200,
+        [("run_started", {"route": "api"}), ("succeeded", {"text": "the m4rker", "files": []})],
     )
 
     code, lines = run_canary(canary, monkeypatch, response)
 
     assert (code, lines) == (
         0,
-        ["answer 200", "event run_started", "event succeeded", "marker yes"],
+        ["answer 200", "event run_started", "route api", "event succeeded", "marker yes"],
     )
+
+
+def test_the_canary_prints_the_route_as_other_when_run_started_names_none_in_a_closed_word(
+    canary, monkeypatch
+):
+    response = StreamedResponse(200, [("run_started", {"route": "A route!"})])
+
+    _, lines = run_canary(canary, monkeypatch, response)
+
+    assert "route other" in lines
 
 
 def test_the_canary_names_the_code_of_a_failed_run_and_exits_non_zero(canary, monkeypatch):
@@ -346,3 +357,88 @@ def test_the_canary_reports_a_refusal_by_its_status_alone(canary, monkeypatch):
     code, lines = run_canary(canary, monkeypatch, StreamedResponse(403, []))
 
     assert (code, lines) == (1, ["answer 403", "marker no"])
+
+
+class RecordConnection(StreamedConnection):
+    """The service for a cancelled run: the run's stream, then one record per status read."""
+
+    def __init__(self, response, records: list[tuple[int, dict]]) -> None:
+        super().__init__(response)
+        self.records = records
+        self.requests: list[tuple[str, str]] = []
+        self.current = response
+
+    def request(self, method, path, *_):
+        self.requests.append((method, path))
+        if method == "GET":
+            status, document = self.records.pop(0)
+            self.current = StreamedResponse(status, [])
+            self.current.read = lambda: json.dumps(document).encode()
+
+    def getresponse(self):
+        return self.current
+
+    def close(self):
+        return None
+
+
+def run_cancelled_canary(canary, monkeypatch, run_id, records):
+    started = StreamedResponse(200, [("run_started", {"route": "api", "run_id": run_id})])
+    connection = RecordConnection(started, records)
+    monkeypatch.setattr(canary.http.client, "HTTPConnection", lambda *_, **__: connection)
+    monkeypatch.setattr(canary.time, "sleep", lambda _: None)
+    out = io.StringIO()
+    code = canary.main(
+        ["--marker", "m", "--cancel"], stdin=io.StringIO("person\nworkload\n"), out=out
+    )
+    return code, out.getvalue().splitlines(), connection
+
+
+RUN = "0123abcd-0123-4abc-8def-0123456789ab"
+
+
+def test_the_canary_with_cancel_reads_the_ended_record_and_prints_only_its_state(
+    canary, monkeypatch
+):
+    records = [(200, {"state": "running", "ended_at": None}),
+               (200, {"state": "cancelled", "ended_at": "t"})]  # fmt: skip
+
+    code, lines, connection = run_cancelled_canary(canary, monkeypatch, RUN, records)
+
+    assert (code, lines) == (
+        0,
+        ["answer 200", "event run_started", "route api", "status cancelled"],
+    )
+    assert [method for method, _ in connection.requests] == ["POST", "GET", "GET"]
+    assert RUN not in "".join(lines)
+
+
+def test_the_canary_with_cancel_exits_non_zero_when_the_run_did_not_end_cancelled(
+    canary, monkeypatch
+):
+    records = [(200, {"state": "succeeded", "ended_at": "t"})]
+
+    code, lines, _ = run_cancelled_canary(canary, monkeypatch, RUN, records)
+
+    assert (code, lines[-1]) == (1, "status succeeded")
+
+
+def test_the_canary_with_cancel_reports_a_run_that_never_ended_as_running(canary, monkeypatch):
+    records = [(200, {"state": "running", "ended_at": None})] * canary.STATUS_POLLS
+
+    code, lines, _ = run_cancelled_canary(canary, monkeypatch, RUN, records)
+
+    assert (code, lines[-1]) == (1, "status running")
+
+
+def test_the_canary_with_cancel_reports_a_refused_record_as_other(canary, monkeypatch):
+    code, lines, _ = run_cancelled_canary(canary, monkeypatch, RUN, [(404, {})])
+
+    assert (code, lines[-1]) == (1, "status other")
+
+
+def test_the_canary_with_cancel_reads_no_record_for_a_run_id_it_cannot_trust(canary, monkeypatch):
+    code, lines, connection = run_cancelled_canary(canary, monkeypatch, "../x", [])
+
+    assert (code, lines[-1]) == (1, "status other")
+    assert [method for method, _ in connection.requests] == ["POST"]
