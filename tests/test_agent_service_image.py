@@ -65,9 +65,12 @@ def release_tag() -> str:
     return re.match(r"# agent-runtime (v\S+), commit [0-9a-f]{40}\n", LOCK).group(1)
 
 
-def test_every_base_image_is_pinned_by_digest():
-    base_images = re.findall("^FROM ", DOCKERFILE, re.MULTILINE)
-    assert len(DIGEST_PINNED_IMAGE.findall(DOCKERFILE)) == len(base_images)
+def test_every_stage_starts_from_a_digest_pinned_image_or_an_earlier_stage():
+    earlier_stages = set()
+    for stage in STAGES:
+        base, _, name = stage.partition("\n")[0].removeprefix("FROM ").partition(" AS ")
+        assert DIGEST_PINNED_IMAGE.match(stage) or base in earlier_stages
+        earlier_stages.add(name)
 
 
 @pytest.mark.parametrize("prefix", PROBE_MODULE.DOCKERFILE_PREFIXES.values())
@@ -107,10 +110,11 @@ def test_packages_install_only_from_the_hashed_lock_and_are_checked_afterwards()
     assert "&& pip check" in DOCKERFILE
 
 
-def test_the_recipe_holds_only_download_stages_and_a_final_stage_running_only_pip_install():
+def test_the_recipe_holds_only_bare_base_stages_download_stages_and_a_final_running_pip_install():
     downloads = {download_stage(prefix) for prefix in PROBE_MODULE.DOCKERFILE_PREFIXES.values()}
+    bare_bases = {stage for stage in STAGES if "\n" not in stage.strip()}
     (*_, final) = STAGES
-    assert set(STAGES) == downloads | {final}
+    assert set(STAGES) == bare_bases | downloads | {final}
     assert [step.split()[1:3] for step in RUN_STEP.findall(final)] == [["pip", "install"]]
 
 

@@ -1,7 +1,9 @@
 # The agent service image: every byte that enters it is pinned by digest or sha256.
 # Built on the PC with the command in docs/agent-service.md; the context is this directory.
 
-FROM docker.io/library/python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999 AS claude-download
+FROM docker.io/library/python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999 AS python-base
+
+FROM python-base AS claude-download
 ARG CLAUDE_VERSION=2.1.302
 ARG CLAUDE_SHA256=60d7eb7f12fbb28a52533fe8be5884097403562aa02dc73991a021c7067e29a5
 # BuildKit checks the file's sha256 while it fetches it, but serves a file it already holds by that
@@ -15,7 +17,7 @@ RUN expected="${CLAUDE_VERSION} (Claude Code)" \
         echo "claude --version reports '${reported}', not '${expected}'" >&2; exit 1; \
     fi
 
-FROM docker.io/library/python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999 AS codex-download
+FROM python-base AS codex-download
 ARG CODEX_VERSION=0.163.0
 ARG CODEX_SHA256=beb339e8ecd9ba057a6bb2dc81ad8ca474812edfbf0fc5056ca818797648dde4
 # The archive's sha256 and the version are checked as for claude. The static musl executable is
@@ -30,7 +32,7 @@ RUN tar -xzf /tmp/codex.tar.gz -C /tmp codex-x86_64-unknown-linux-musl \
         echo "codex --version reports '${reported}', not '${expected}'" >&2; exit 1; \
     fi
 
-FROM docker.io/library/python:3.14.10-slim-trixie@sha256:3cabfd7d7aaf394e6040e79fa1eec6ca1c52b74ed9188650472695d9a9326999
+FROM python-base
 COPY --from=claude-download --chown=0:0 --chmod=0555 /tmp/claude /opt/claude/claude
 COPY --from=codex-download --chown=0:0 --chmod=0555 /tmp/codex-x86_64-unknown-linux-musl /opt/codex/codex
 COPY requirements.txt /tmp/requirements.txt

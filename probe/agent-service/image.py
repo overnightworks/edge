@@ -71,7 +71,9 @@ TOKEN_SEARCH = (
     '[ "$status" -le 1 ] || exit "$status"; '
     "done"
 )
-BASE_IMAGE = re.compile(r"^FROM (docker\.io/library/python:\S+@sha256:[0-9a-f]{64})$", re.MULTILINE)
+BASE_IMAGE = re.compile(
+    r"^FROM (docker\.io/library/python:\S+@sha256:[0-9a-f]{64})(?: AS \S+)?$", re.MULTILINE
+)
 LOGIN_PATHS = (
     "managed-settings.json",
     "managed-mcp.json",
