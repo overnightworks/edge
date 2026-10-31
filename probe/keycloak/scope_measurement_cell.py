@@ -1,4 +1,4 @@
-"""Cells F0, U3-0 to U3-c, U4-0 to U4c, RF0 to RF2 of probe.py (#674 S2): what Keycloak does with
+"""Cells F0, U3-0 to U3-c, U4-0 to U4c, RF0 to RF2 of probe.py: what Keycloak does with
 an audience scope, measured on clients, a scope and a role the probe makes. The scope is copied from
 the declared `speech-service-audience`, so `include.in.token.scope: "false"` is the real one. U3: a
 workload token's audience and roles under Keycloak's defaults (the control), without the default
@@ -33,6 +33,17 @@ WORKLOAD_CLIENT = "probe-u3-workload"
 SESSION_CLIENT = "probe-u4-session"
 CALLBACK = "https://probe-u4.invalid/callback"
 USERNAME = "probe-u4-member"
+OAUTH_REDIRECT_ERRORS = frozenset(
+    {
+        "invalid_request",
+        "unauthorized_client",
+        "access_denied",
+        "unsupported_response_type",
+        "invalid_scope",
+        "server_error",
+        "temporarily_unavailable",
+    }
+)
 DEFAULT_ROLES = f"default-roles-{REALM}"
 OAUTH_ERRORS = frozenset(
     {
@@ -137,14 +148,16 @@ def hopin_scopes_without_audiences() -> list[str]:
     return [name for name in hopin["defaultClientScopes"] if name not in audience_scopes]
 
 
-def line_of(claims: dict[str, Any]) -> str:
-    """The claims a measured line shows: no token and no subject."""
+def line_of(claims: dict[str, Any], workload: bool = False) -> str:
+    """The claims a measured line shows: no token and no subject. Only a workload token can hold
+    the role, so only a U3 line says whether it is kept."""
     audience = audiences(claims)
     roles = claims.get("realm_access", {}).get("roles", [])
+    kept = f"role {ROLE} {'kept' if ROLE in roles else 'not kept'}, " if workload else ""
     return (
         f"aud {audience} ({'exact' if audience == [TARGET] else 'not exact'}), roles {roles}, "
         f"resource_access {sorted(claims.get('resource_access', {}))}, "
-        f"role {ROLE} {'kept' if ROLE in roles else 'not kept'}, scope {claims.get('scope')!r}"
+        f"{kept}scope {claims.get('scope')!r}"
     )
 
 
@@ -235,11 +248,13 @@ class ScopeMeasurement:
             f"default scopes without its audience scopes {sorted(base)}",
         )
 
-    def measure(self, holder: str, answer: Answer) -> tuple[str, dict[str, Any]]:
+    def measure(
+        self, holder: str, answer: Answer, workload: bool = False
+    ) -> tuple[str, dict[str, Any]]:
         """A 200 is registered for proof 7; a 400 must be an OAuth error; anything else fails."""
         if answer.status == 200:
             tokens = self.probe.tokens_from(holder, answer)
-            return f"200, {line_of(token_claims(tokens['access_token']))}", tokens
+            return f"200, {line_of(token_claims(tokens['access_token']), workload)}", tokens
         error = answer.json().get("error") if answer.status == 400 else None
         self.expect(
             error in OAUTH_ERRORS, f"{holder} answered {answer.status}: neither 200 nor OAuth"
@@ -250,25 +265,28 @@ class ScopeMeasurement:
         form = {"client_id": client_id, "client_secret": secret, **fields}
         return self.probe.through_tunnel("POST", TOKEN_PATH, form=form)
 
-    def workload_token(self, made: Made, proof: str) -> dict[str, Any]:
+    def workload_token(self, made: Made, proof: str, control: bool = False) -> dict[str, Any]:
         answer = self.ask(
             WORKLOAD_CLIENT,
             made.workload_secret,
             grant_type="client_credentials",
             scope=SCOPE,
         )
-        line, tokens = self.measure(f"{WORKLOAD_CLIENT} {proof}", answer)
+        line, tokens = self.measure(f"{WORKLOAD_CLIENT} {proof}", answer, workload=True)
+        if control:
+            self.expect(bool(tokens), f"the U3 control answered {line}: not a token")
+            claims = token_claims(tokens["access_token"])
+            self.expect(
+                ROLE in claims.get("realm_access", {}).get("roles", [])
+                and TARGET in audiences(claims)
+                and claims.get("client_id") == claims.get("azp") == WORKLOAD_CLIENT,
+                f"the U3 control is not the shape the arms compare against: {line}",
+            )
         self.probe.held(proof, f"{WORKLOAD_CLIENT} client_credentials asking for {SCOPE}: {line}")
         return tokens
 
     def workload_arms(self, made: Made) -> None:
-        control = token_claims(self.workload_token(made, "U3-0")["access_token"])
-        self.expect(
-            ROLE in control.get("realm_access", {}).get("roles", [])
-            and TARGET in audiences(control)
-            and control.get("client_id") == control.get("azp") == WORKLOAD_CLIENT,
-            f"the U3 control is not the shape the arms compare against: {line_of(control)}",
-        )
+        self.workload_token(made, "U3-0", control=True)
         account = f"/{REALM}/users/{made.account_id}/role-mappings/realm"
         default_roles = self.admin.get(f"/{REALM}/roles/{DEFAULT_ROLES}")
         self.admin.must("DELETE", account, [default_roles])
@@ -301,15 +319,17 @@ class ScopeMeasurement:
         return self.browsers[who]
 
     def sign_in(self, made: Made, who: str, password: str, scope: str) -> dict[str, Any]:
+        """One user per session: the probe registers a sign-in's tokens under the user's name."""
         client = SessionClient(SESSION_CLIENT, CALLBACK)
         return self.probe.app_client_sign_in(
-            client, self.browser(who), USERNAME, password,
+            client, self.browser(who), f"{USERNAME}-{who.lower()}", password,
             made.session_secret, scope=scope,
         )  # fmt: skip
 
     def session_arms(self, made: Made) -> None:
         password = self.probe.keep_secret(f"{USERNAME} password", secrets.token_urlsafe(16))
-        self.admin.create_user(REALM, USERNAME, password)
+        for who in ("sa", "sb", "sc"):
+            self.admin.create_user(REALM, f"{USERNAME}-{who}", password)
         asked = f"openid {SCOPE}"
         old = self.sign_in(made, "Sa", password, "openid")
         named = self.sign_in(made, "Sb", password, asked)
@@ -328,6 +348,11 @@ class ScopeMeasurement:
         self.admin.must(
             "PUT", f"/{REALM}/clients/{made.session_id}/optional-client-scopes/{made.scope_id}"
         )
+        optional = self.scopes_of(made.session_id, "optional")
+        self.expect(
+            SCOPE in optional and SCOPE not in self.scopes_of(made.session_id, "default"),
+            f"{SESSION_CLIENT} has optional scopes {optional} after the move: {SCOPE} is not there",
+        )
         newest = self.refresh(made, "U4a", old["refresh_token"]).get(
             "refresh_token", old["refresh_token"]
         )
@@ -345,6 +370,26 @@ class ScopeMeasurement:
         self.refresh(made, "RF1", fresh["refresh_token"], asked)
         self.silent_sign_in(made, asked)
 
+    def redirect_outcome(self, location: str) -> str:
+        """A redirect must go to the callback and carry a code or an RFC 6749 error code."""
+        self.expect(
+            location.startswith(f"{CALLBACK}?"),
+            f"the silent sign-in redirected to {urlsplit(location)._replace(query='').geturl()!r}, "
+            f"not to {CALLBACK}",
+        )
+        parameters = parse_qs(urlsplit(location).query)
+        if "code" in parameters:
+            self.probe.keep_secret(
+                f"{SESSION_CLIENT} RF2 authorization code", parameters["code"][0]
+            )
+            return "302 to the callback with a code"
+        error = parameters.get("error", [None])[0]
+        self.expect(
+            error in OAUTH_REDIRECT_ERRORS,
+            f"the silent sign-in redirected to the callback with no code and error {error}",
+        )
+        return f"302 to the callback with error {error}"
+
     def silent_sign_in(self, made: Made, scope: str) -> None:
         """Whether a session's browser gets a code for the scope with no password; not exchanged."""
         query = urlencode(
@@ -361,16 +406,7 @@ class ScopeMeasurement:
         opener = self.browser("Sc")
         answer = self.probe.through_tunnel("GET", f"{AUTH_PATH}?{query}", opener=opener)
         if answer.status == 302:
-            parameters = parse_qs(urlsplit(answer.headers.get("Location", "")).query)
-            if "code" in parameters:
-                self.probe.keep_secret(
-                    f"{SESSION_CLIENT} RF2 authorization code", parameters["code"][0]
-                )
-            outcome = (
-                "302 to the callback with a code"
-                if "code" in parameters
-                else (f"302 with error {parameters.get('error')}")
-            )
+            outcome = self.redirect_outcome(answer.headers.get("Location", ""))
         else:
             self.expect(
                 answer.status == 200 and 'name="username"' in answer.text,

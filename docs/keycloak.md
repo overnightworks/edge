@@ -87,8 +87,8 @@ What an audience scope does under other settings was measured on Keycloak 26.8.1
 to RF2 of the Keycloak probe, #674). They run on clients, a scope and a realm role the probe makes: the
 scope is a copy of `speech-service-audience` read from `realm.yaml` (so `include.in.token.scope` is
 `"false"`), and the clients have hopin's default scopes without its audience scopes. A workload token
-that asks for the scope has the audience `probe-measured-service` and also `account` (from the `roles`
-scope), the role, and the default roles with `offline_access` and `uma_authorization`. Without the
+that asks for the scope has the audience `probe-measured-service` and also `account` (the default roles'
+`account` client roles), the role, and the default roles with `offline_access` and `uma_authorization`. Without the
 default roles on the service account, the `aud` is exactly the service and the role is kept. With
 `fullScopeAllowed` off, the `aud` is exact but the token has no realm role at all; adding the role as a
 realm scope mapping on the client keeps it. A session signed in while the scope was a default keeps
