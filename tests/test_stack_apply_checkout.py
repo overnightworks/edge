@@ -51,9 +51,15 @@ ENVIRONMENTS = ("present", "missing", "differing")
 
 
 @pytest.mark.parametrize("environment", ENVIRONMENTS)
-@pytest.mark.parametrize("waiting", [1, 3])
+@pytest.mark.parametrize(
+    ("waiting", "refusal"),
+    [
+        (1, "error: 1 commit waits on origin main; nothing changed"),
+        (3, "error: 3 commits wait on origin main; nothing changed"),
+    ],
+)
 def test_a_behind_checkout_is_refused_naming_hal_update_and_writes_nothing(
-    switch, scripted, real_main, origin, repository, waiting, environment  # noqa: F811
+    switch, scripted, real_main, origin, repository, waiting, refusal, environment  # noqa: F811
 ):  # fmt: skip
     """#783 F2: behind origin, whatever `.env` holds, the apply names the waiting commits and
     `hal update`; no `.env` is written or refused, nothing is planned or asked."""
@@ -72,11 +78,7 @@ def test_a_behind_checkout_is_refused_naming_hal_update_and_writes_nothing(
         out, CHECKOUT, CheckoutEvent.BEHIND, f"origin/main {short(real_main, 'origin/main')}"
     )
     assert f"{waiting} behind" in plain(out)
-    assert err.splitlines() == [
-        f"error: {waiting} commit{'s' if waiting - 1 else ''} wait{'' if waiting - 1 else 's'}"
-        " on origin main; nothing changed",
-        "next: hal update",
-    ]
+    assert err.splitlines() == [refusal, "next: hal update"]
     assert not detail_lines(out)
     assert "the plan" not in out and ".env" not in out
     assert scripted.calls == []

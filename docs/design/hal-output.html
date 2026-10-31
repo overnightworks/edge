@@ -1077,7 +1077,8 @@ Type <span class="w">yes</span> to apply 1 change: yes
 <pre class="term"><span class="p">$</span> <span class="u">hal apply</span>
 <span class="y">  !</span> checkout        3 behind       <span class="d">origin/main 4f0e7b1</span>
 <span class="r">error:</span> 3 commits wait on origin main; nothing changed
-<span class="c">next:</span> hal update</pre>
+<span class="c">next:</span> hal update
+hal apply: nothing published</pre>
       </figure>
       <figure>
         <figcaption><span class="tag new">neu</span> <code>hal update</code>: die wartenden Commits, die Dateien nach Wirkung, ein <code>yes</code> auf den genauen Hash</figcaption>
@@ -1089,7 +1090,7 @@ Type <span class="w">yes</span> to apply 1 change: yes
 <span class="b">  ~</span> hal code        2 files        <span class="d">hal's code and dependencies: the next hal command runs them</span>
 <span class="d">    pyproject.toml</span>
 <span class="d">    uv.lock</span>
-<span class="b">  ~</span> directory bind 1 file         <span class="d">under a directory bind: the merge changes them in place, a container that mounts the directory sees them at once, and whether its service uses them before its next restart depends on the service</span>
+<span class="b">  ~</span> directory bind  1 file         <span class="d">under a directory bind: the merge changes them in place, a container that mounts the directory sees them at once, and whether its service uses them before its next restart depends on the service</span>
 <span class="d">    legal/nginx/default.conf</span>
 Type <span class="w">yes</span> to update the checkout to 4f0e7b1: yes
 <span class="w">✓ checkout updated to 4f0e7b1 · dependencies synced</span>

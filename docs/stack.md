@@ -11,8 +11,8 @@ are German, the rest English.
 `~/srv/hal/bin/hal` runs `hal` of the checkout it lives in, from any directory: through
 `bin/hal-sync` it syncs that checkout's locked dependencies (`uv sync --locked`, never rewriting
 `uv.lock`) and then becomes `.venv/bin/hal`, from the same environment the systemd units call. A
-failed sync ends with exit 3 and an `error:`/`next:` pair that names the checkout. It is not on PATH: the operator links it as
-`hal` (`hal --help` lists its commands).
+failed sync ends with exit 3 and an `error:`/`next:` pair that names the checkout. It is not on
+PATH: the operator links it as `hal` (`hal --help` lists its commands).
 
 ## Configure
 
@@ -82,12 +82,12 @@ Keycloak user, credential and session and survives the rollback. Never run `down
 socket directory volume is tmpfs and holds nothing; remove its definition alone with
 `docker volume rm edge_socket-proxy-run`. Then revert the commit.
 
-## Exception E: where the five stack commands and `hal setup` deviate
+## Exception E: where five of the six stack commands and `hal setup` deviate
 
 `hal`'s exit codes are in `src/hal/grammar.py`, its error form in `src/hal/output/__init__.py`, and `hal --help` shows both. `hal apply`, `stop`, `start`,
 `offline` and `online` end with 0, 2 for a usage error, or with 3 for every outcome of the stack that
 is not "applied or nothing to do"; an uncaught Ctrl-C ends with 130. They deviate in exactly three
-ways:
+ways (`hal update`, the sixth, keeps the grammar: its section below):
 
 - **E1:** (until overnightworks/edge#50 classifies the stack's outcomes) a guard refusal decided by the stack ends with 3, not 4: no terminal, the apply lock is held,
   `yes` declined, the unit is disabled or not set up, a barrier is unproven, or the checkout is not the
@@ -173,9 +173,10 @@ ein laufender Container eingehaengt hat. Dann fragt es `Type yes to update the c
 Nur das genaue `yes` gilt (alles andere: `aborted, nothing changed`, Exit 1). Nach dem `yes` prueft es
 noch einmal, dass der Baum ein sauberes `main` auf dem geplanten HEAD ist und der gemerkte Hash ein
 Fast-Forward davon ist (sonst Exit 4, nichts geaendert). Dann merged es genau diesen vollen Hash
-(`merge --ff-only`, ohne Hooks, ohne ignorierte Dateien zu ueberschreiben), bei geblocktem SIGINT, prueft
-HEAD, Zweig und Baum, fuehrt `bin/hal-sync` des gemergten Baums aus (`uv sync --locked` in einer eigenen
-Prozessgruppe, ohne den Lock zu erben) und prueft HEAD noch einmal. Es endet mit
+(`merge --ff-only` in einer eigenen Sitzung, ohne Hooks, ohne ignorierte Dateien zu ueberschreiben), bei
+geblocktem SIGINT, prueft HEAD, Zweig und Baum, fuehrt `bin/hal-sync` des gemergten Baums aus
+(`uv sync --locked` in einer eigenen Prozessgruppe, ohne den Lock zu erben) und prueft HEAD noch einmal.
+Es endet mit
 `checkout updated to <Hash> · dependencies synced` und `next: hal apply`. Es schreibt nie `applied.json`
 und importiert nach dem Merge nichts mehr. Steht der Checkout schon auf `origin/main`, druckt es die Zeile
 `checkout current`, `nothing to update` und `next: hal apply` und endet mit 0, ohne Frage.
@@ -183,14 +184,19 @@ und importiert nach dem Merge nichts mehr. Steht der Checkout schon auf `origin/
 **Exit.** Die Codes der Grammatik: 0 aktualisiert oder nichts zu tun, 1 abgelehnt, 4 verweigert (ein
 Waechter oder die Pruefung nach dem `yes`), 3 Fehlschlag, 130 Ctrl-C. Ab dem Merge endet jeder behandelte
 Fehler mit 3 und einer `error:`-Zeile mit `partial`, dem vollen Hash und dem Schritt (`merge`,
-`check HEAD after the merge`, `sync the dependencies`, `check HEAD after the sync`), dazu `next: hal apply`;
-ein Ctrl-C endet mit 130 und denselben Angaben. "nothing changed" steht nur dort, wo HEAD, Zweig und Baum
+`check HEAD after the merge`, `sync the dependencies`, `check HEAD after the sync`,
+`write the closing verdict`), dazu `next: hal apply`; ein Ctrl-C endet mit 130 und denselben Angaben,
+auch einer, der kommt, waehrend ein Fehler oder die Abschlusszeile geschrieben wird; SIGINT bleibt dafuer
+bis zum Ende geblockt, ausser waehrend des Syncs. "nothing changed" steht nur dort, wo HEAD, Zweig und Baum
 es beweisen. Ein Sync, der scheitert, laesst HEAD auf dem Hash; der naechste `hal update` findet nichts
 Wartendes, endet mit 0 und nennt den Apply.
 
-**Nicht behandelbar.** SIGKILL, SIGTERM und SIGHUP nach dem Merge sowie Stromausfall beenden den Prozess
-ohne Meldung: der Merge bleibt, der Lock ist frei, `applied.json` unberuehrt. Der naechste `bin/hal`-Lauf
-synct und plant.
+**Nicht behandelbar.** SIGKILL, SIGTERM, SIGHUP und SIGQUIT nach dem Merge beenden den Prozess ohne
+Meldung: der Merge bleibt, der Lock ist frei, `applied.json` unberuehrt, und der naechste `bin/hal`-Lauf
+synct und plant. Ein Stromausfall nach dem Merge laesst ihn ebenso stehen; einer waehrend des Merges kann
+einen halb geschriebenen Baum und `.git/index.lock` hinterlassen. Den Baum verweigert der naechste Apply
+als nicht sauber, und an der liegengebliebenen Sperrdatei scheitert der naechste Merge, bis sie entfernt
+ist.
 
 **Ueber Revisionen hinweg** gilt ein Name: `bin/hal-sync <Checkout> [<Programm> [<Argument>...]]`. Der alte
 Code ruft das Skript des neuen Baums auf; die Form aendert sich nur, indem beide Schreibweisen fuer ein
@@ -243,10 +249,11 @@ unterbrochen wird, schaltet nichts (Exit 3); was es gemacht hat, bleibt auch nac
 noch laufende Einheit, die nicht eingerichtet ist, wird abgewiesen (`hal stop` noch einmal).
 
 **Exit.** `hal apply` endet mit 0 (angewendet und beobachtet oder nichts zu tun), mit 2 bei einem
-Aufruf, den hal nicht versteht, und mit 3 fuer alles andere: verweigert (auch: ein anderes Apply
-laeuft), abgebrochen, fehlgeschlagen, teilweise oder nicht planbar (falscher Checkout oder Zweig, Baum
-nicht sauber, `.env` abweichend oder unlesbar, keine Gruppe `docker`, `cloudflare.zone` ungueltig, git
-nicht befragbar, Abruf gescheitert, Checkout vor oder neben `origin/main`, Katalog oder Compose
+Aufruf, den hal nicht versteht, und mit 3 fuer alles andere: verweigert (auch: ein anderes
+`hal apply` oder ein `hal update` haelt `apply.lock`), abgebrochen, fehlgeschlagen, teilweise oder nicht
+planbar (falscher Checkout oder Zweig, Baum nicht sauber, `.env` abweichend oder unlesbar, keine Gruppe
+`docker`, `cloudflare.zone` ungueltig, git nicht befragbar, Abruf gescheitert, Checkout vor oder neben
+`origin/main`, Checkout hinter `origin/main` (dann mit `next: hal update`), Katalog oder Compose
 ungueltig, `traefik.yml` oder `traefik-mcp.yml` fehlt, ein Setup-Check, der es nicht sagen kann, u. a.).
 Die Zeile nennt den Grund. Das blosse `hal apply` bricht nach einem lokalen Teil, der nicht mit 0
 endete, ab ("nothing published"); die Zahl in "the publish did not end clean (exit N)" ist die der

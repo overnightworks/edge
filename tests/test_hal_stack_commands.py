@@ -97,7 +97,7 @@ def run_door(tmp_path: Path, guard: Guard, *arguments: str):
 # --- the door --------------------------------------------------------------------------------
 
 
-def test_the_help_lists_the_five_beside_version_and_stop_names_its_unit(
+def test_the_help_lists_the_six_beside_version_and_stop_names_its_unit(
     tmp_path, system_commands, empty_home
 ):
     """D1"""
