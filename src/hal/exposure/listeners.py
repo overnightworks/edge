@@ -12,7 +12,7 @@ _PROCESS = re.compile(r'users:\(\("([^"]+)",pid=(\d+)')
 _CGROUP = re.compile(r"cgroup:(\S+)")
 _LOCAL_ADDRESS_COLUMN = 4
 _SYSTEM_SLICE = "/system.slice/"
-_VERSION_SUFFIX = re.compile(r"[\d.]+$")
+_VERSION_CHARACTERS = "0123456789."
 _MODULE_OPTION = "-m"
 _INLINE_CODE_OPTIONS = frozenset({"-c", "-e", "-E", "-p", "--eval", "--print"})
 
@@ -141,7 +141,7 @@ def _parse_columns(line: str) -> Listener:
 def _interpreter(process: str | None) -> Interpreter | None:
     if process is None:
         return None
-    name = _VERSION_SUFFIX.sub("", process)
+    name = process.rstrip(_VERSION_CHARACTERS)
     return Interpreter(name) if name in set(Interpreter) else None
 
 
