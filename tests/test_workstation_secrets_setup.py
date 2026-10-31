@@ -603,7 +603,7 @@ def test_each_token_walk_prints_its_announce_why_briefing_and_browser_line_and_a
 def test_an_unverified_token_without_a_purpose_is_announced_with_no_why_line(
     tmp_path: Path, use_manifest, terminal: FakeTerminal, boundaries: Boundaries, capsys
 ) -> None:
-    use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\nrecreate = "https://x.example"\n')
+    use_manifest('[[secret]]\nname = "turn"\nkind = "unverified-token"\npaths = ["~/.secrets/turn"]\nread_by = []\npage = "https://x.example"\nrecreate = "https://x.example"\n')
     terminal.pastes = [PASTED_VALUE]
     assert run_wizard(tmp_path, boundaries) is WalkEnd.DONE
     output = capsys.readouterr().out

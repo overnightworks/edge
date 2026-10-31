@@ -68,6 +68,7 @@ NO_BROWSER = "no browser opened · open it yourself:"
 UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
 
 PASTE_AGAIN = "paste again or leave empty"
+NOT_CHECKED = "not checked, stored as pasted"
 PASSPHRASE_BYTES = 48
 VERIFY_TIMEOUT_SECONDS = 20
 RESPONSE_LIMIT_BYTES = 64 * 1024
@@ -75,7 +76,6 @@ RESPONSE_LIMIT_BYTES = 64 * 1024
 GITHUB_TOKEN_PAGE = "https://github.com/settings/personal-access-tokens/new"  # noqa: S105 - a page address and no credential
 GITHUB_API = "https://api.github.com"
 CLOUDFLARE_TOKEN_PAGE = "https://dash.cloudflare.com/profile/api-tokens"  # noqa: S105 - a page address and no credential
-CLOUDFLARE_DASHBOARD_PAGE = "https://dash.cloudflare.com/"
 CLOUDFLARE_VERIFY_URL = "https://api.cloudflare.com/client/v4/user/tokens/verify"
 CLOUDFLARE_ACTIVE = "active"
 NOT_YET_VALID = (
@@ -520,10 +520,10 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 
 
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
-    """O6: the value is asked hidden and stored without provider verification; no provider is asked, because the TURN key's token is no user token."""
-    _announce(entry, f"{PROVIDER_LABELS[Provider.CLOUDFLARE]} cannot check this one")
+    """O6: the value is asked hidden and stored without provider verification; no provider is asked."""
+    _announce(entry, NOT_CHECKED)
     write_detail(f"create: {entry.renewal}")
-    _offer_page(boundaries.terminal, CLOUDFLARE_DASHBOARD_PAGE)
+    _offer_page(boundaries.terminal, entry.page)
     value = _visible_paste(entry, boundaries.terminal)
     if not value:
         _skipped(entry)
