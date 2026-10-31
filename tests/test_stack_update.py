@@ -51,7 +51,6 @@ esac
 exec "$REAL_GIT" "$@"
 """
 APPLIED_RECORD = b'{"recorded": "before"}\n'
-START = "start the update"
 
 
 @dataclass
@@ -65,7 +64,6 @@ class World:
     def run(self, answer: str = "yes", **options) -> UpdateEnd:
         keyboard = Terminal(f"{answer}\n")
         keyboard.while_prompt_waits = options.pop("at_the_question", None)
-        self.keyboard = keyboard
         sys.stdin, sys.stdout = keyboard, self.output
         return update.update_checkout(
             self.state,
@@ -200,7 +198,6 @@ class Tamper:
 
 def test_without_a_terminal_it_refuses_with_that_line_only(world, capsys, monkeypatch):
     """U2: no terminal."""
-    world.keyboard = None
     sys.stdin = SimpleNamespace(isatty=lambda: False)
     sys.stdout = world.output
 
