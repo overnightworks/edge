@@ -150,7 +150,7 @@ class RetentionProbe(FailureProbe):
     def expect_nothing_retained(self, cell: str, tokens: Mapping[str, str]) -> None:
         found = self.sweep(tokens).found
         expect(not found, f"{cell}: canaries retained: {found}{self.excerpts(tokens, found)}")
-        self.clean.update(tokens)
+        self.clean.update({f"{cell} {label}": value for label, value in tokens.items()})
 
     def excerpts(self, tokens: Mapping[str, str], found: Mapping[str, tuple[str, ...]]) -> str:
         """The first 200 characters of each log line that holds a canary found in a log, the
@@ -328,7 +328,7 @@ class RetentionProbe(FailureProbe):
         self.steer()
         after = self.sweep(tokens).found
         expect(not during and not after, f"B4: retained during {during}, after {after}")
-        self.clean.update(tokens)
+        self.clean.update({f"B4 {label}": value for label, value in tokens.items()})
         self.hold("B4", "both canaries in no file and no log while F held the request and after; "
                   "the answer canary reached the client and the request canary F")  # fmt: skip
 
