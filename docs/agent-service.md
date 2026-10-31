@@ -233,8 +233,8 @@ has no `[api]` table.
   529, timeout, reset or broken answer, an untrusted certificate, a refused credential and
   Anthropic's billing refusal all end the run as `failed: provider_unavailable` on route `api`;
   the run never falls back to the subscription. A used-up balance therefore looks like an outage
-  until the operator checks his credit. A cancelled run ends `cancelled`, but LiteLLM does not pass
-  the close on to the provider, which finishes the request and bills it.
+  until the operator checks his credit. A cancelled run ends `cancelled` and starts no further provider
+  request; the cancel does not close the request in flight, which may finish and is billed.
 - **Rotating a key is a recreate.** A replaced provider key file reaches LiteLLM only through its
   recreate, until then it keeps sending the old key. A replaced service credential reaches each
   reader only through its own recreate, LiteLLM first, then `agent-service`; in between every run
