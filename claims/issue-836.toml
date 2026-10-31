@@ -1,8 +1,0 @@
-claim_id = "fc731eb8c0864f8fb721e407fa22b48b"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "64232050b7fc0c3a3572c10f98e7071f929fac78"
-branch = "claude/issue-836-hal-moves-to-appkit-v0-11-0-pin-and-five"
-scope = ["docs/naming.md", "keycloak/themes/hallucinai/account/theme.properties", "keycloak/themes/hallucinai/login/theme.properties", "legal/frame/datenschutz.html", "legal/frame/impressum.html", "legal/frame/nutzungsbedingungen.html", "pyproject.toml", "uv.lock"]
-opened_commit = "7174fc383e7d05b4f466c5a303b657c6619186b7"
-whole_reason = "One pin bump: the wheel pin and every link that names the served version move together, or the pages lose their stylesheet."
