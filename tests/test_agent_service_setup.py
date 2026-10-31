@@ -259,6 +259,8 @@ def test_two_fixes_that_recreate_each_others_gap_stop_the_run_at_the_first_repea
     build, narrow = setup.build_image, setup.narrow
 
     def build_and_open_the_secrets_folder() -> None:
+        # Bounds the test: a loop that misses the repeat would build again, and forever.
+        assert not docker.builds(), "setup rebuilt the image: the fix loop missed a repeated gap"
         build()
         (home / ".secrets").chmod(0o755)
 
