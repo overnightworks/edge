@@ -25,9 +25,13 @@ import shutil
 import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from hal.backup.docker import PROJECT_LABEL
 from hal.stack import catalog, checkout, compose
 
 APPLY_SECONDS = 600
@@ -52,6 +56,9 @@ GUARDED_COMPOSE_VERBS = {"up", "run", "down"}  # what creates or removes network
 GATEWAY_NETWORKS = ("egress", "litellm-egress")
 GATEWAY_SUBNET = re.compile(r"^ {2}(?P<network>[\w-]+):\n(?P<block>(?: {4}.*\n)+)", re.MULTILINE)
 PINNED_PREFIX = re.compile(r"subnet:\s+(\d+\.\d+\.\d+\.)0/24")
+# The loopback address a probe's Traefik listens on beside the live one: `lo` routes all of
+# 127.0.0.0/8, and the live listeners are bound to 127.0.0.1 only.
+PROBE_HOST = "127.0.0.2"
 
 
 class ProbeFailed(Exception):
@@ -72,6 +79,32 @@ def namespaced_compose(text: str, project: str) -> str:
     remaining = re.findall(rf"name:\s+{LIVE_NETWORK_PREFIX}\S*", namespaced)
     expect(not remaining, f"a hal_ network name remains after the rewrite: {remaining}")
     return namespaced
+
+
+def beside_the_live_edge(text: str, project: str) -> str:
+    """`text` of traefik.yml with every entrypoint address moved to `PROBE_HOST` (its own port
+    kept) and the Docker provider's constraint narrowed to `<live constraint> &&
+    Label(<PROJECT_LABEL>, <project>)`, so a Traefik started from it listens beside the live one
+    and routes only the probe's project. Every other byte stays. Refuses a text with no
+    entrypoint address or no Docker constraint, an address already on `PROBE_HOST`, and a value
+    found other than once."""
+    try:
+        document = yaml.safe_load(text)
+        addresses = [entry["address"] for entry in document["entryPoints"].values()]
+        constraint = document["providers"]["docker"]["constraints"]
+    except (yaml.YAMLError, KeyError, TypeError, AttributeError) as error:
+        raise ProbeFailed(
+            f"traefik.yml names no entrypoint address or Docker constraint: {error!r}"
+        ) from error
+    expect(bool(addresses), "traefik.yml names no entrypoint")
+    narrowed = f"{constraint} && Label(`{PROJECT_LABEL}`, `{project}`)"
+    moved = {address: f"{PROBE_HOST}:{address.rpartition(':')[2]}" for address in addresses}
+    moved[constraint] = narrowed
+    for live, replacement in moved.items():
+        expect(not live.startswith(f"{PROBE_HOST}:"), f"{live} is already on {PROBE_HOST}")
+        expect(text.count(live) == 1, f"traefik.yml holds {live!r} {text.count(live)} times")
+        text = text.replace(live, replacement)
+    return text
 
 
 def live_gateway_prefixes(text: str) -> dict[str, str]:
@@ -235,8 +268,8 @@ def free_subnet(candidates: Sequence[str], occupied: Sequence[str]) -> ipaddress
 
 class NetworkGuard:
     """Checks, before a compose call that starts or removes something, that what the call's files
-    and profiles resolve names only networks of the probe's project (P26). `run` returns the
-    stdout of a command. A command is resolved once unless `once` is false, for a file that
+    and profiles resolve is the probe's project and names only networks of it (P26). `run` returns
+    the stdout of a command. A command is resolved once unless `once` is false, for a file that
     changes between calls."""
 
     def __init__(self, project: str, run: Callable[[list[str]], str | bytes]) -> None:
@@ -247,9 +280,12 @@ class NetworkGuard:
     def expect(self, prefix: list[str], *, once: bool = True) -> None:
         key = tuple(prefix)
         if not once or key not in self.checked:
-            expect_project_networks(
-                json.loads(self.run([*prefix, "config", "--format", "json"])), self.project
+            resolved = json.loads(self.run([*prefix, "config", "--format", "json"]))
+            expect(
+                resolved["name"] == self.project,
+                f"the project is {resolved['name']!r}, not {self.project}",
             )
+            expect_project_networks(resolved, self.project)
             self.checked.add(key)
 
     def expect_clean_teardown(self) -> None:
@@ -271,6 +307,55 @@ def live_networks() -> set[str]:
         capture_output=True, check=True, text=True, timeout=APPLY_SECONDS,
     )  # fmt: skip
     return {name for name in listing.stdout.split() if name.startswith(LIVE_NETWORK_PREFIX)}
+
+
+@dataclass(frozen=True)
+class LiveProject:
+    """What a read-only look at the live Compose project saw: each container's name, id and start
+    time, and its volumes' names."""
+
+    name: str
+    containers: frozenset[tuple[str, str, str]]
+    volumes: frozenset[str]
+
+    def counts(self) -> str:
+        return f"{len(self.containers)} containers, {len(self.volumes)} volumes"
+
+
+def live_project(repository: Path) -> LiveProject:
+    """The live project of `repository`'s compose.yaml (its top-level `name`) as the daemon has it
+    now; empty when the live stack is down."""
+
+    def docker(*arguments: str) -> list[str]:
+        return subprocess.run(
+            ["docker", *arguments], capture_output=True, check=True, text=True,
+            timeout=APPLY_SECONDS,
+        ).stdout.splitlines()  # fmt: skip
+
+    name = yaml.safe_load((repository / "compose.yaml").read_text())["name"]
+    selector = f"label={PROJECT_LABEL}={name}"
+    identifiers = docker("container", "ls", "--all", "--quiet", "--no-trunc", "--filter", selector)
+    inspected = docker(
+        "container", "inspect", "--format", "{{.Name}} {{.Id}} {{.State.StartedAt}}", *identifiers
+    ) if identifiers else []  # fmt: skip
+    return LiveProject(
+        name,
+        frozenset(tuple(line.split(" ", 2)) for line in inspected),
+        frozenset(docker("volume", "ls", "--quiet", "--filter", selector)),
+    )
+
+
+def expect_live_project_unchanged(before: LiveProject, repository: Path) -> str:
+    """The line that shows the live project is as `before` saw it; refuses any container started,
+    replaced or gone, and any volume added or removed."""
+    after = live_project(repository)
+    expect(
+        after == before,
+        f"the live project {before.name} changed: containers "
+        f"{sorted(before.containers ^ after.containers)}, volumes "
+        f"{sorted(before.volumes ^ after.volumes)}",
+    )
+    return f"the live project {before.name} is untouched: {after.counts()}"
 
 
 def repository_copy(
@@ -418,18 +503,12 @@ def run_probe(
     create: Callable[[Path], Any],
     prove: Callable[[Any], int],
     passed: str,
-    blocker: Callable[[], str | None] = lambda: None,
 ) -> int:
-    """A probe's run in `scratch`: refuse a scratch that is not empty or a blocker the probe
-    names, create the probe, prove it, and tear it down even when `timeout` ends the proof with
-    SIGTERM. The exit code is the proof's, or 1 when the teardown fails; `passed` is printed on
-    success."""
+    """A probe's run in `scratch`: refuse a scratch that is not empty, create the probe, prove it,
+    and tear it down even when `timeout` ends the proof with SIGTERM. The exit code is the
+    proof's, or 1 when the teardown fails; `passed` is printed on success."""
     if any(scratch.iterdir()):
         print("PROBE FAILED: --scratch is not empty")
-        return NOT_RUNNABLE
-    reason = blocker()
-    if reason is not None:
-        print(f"PROBE FAILED: {reason}")
         return NOT_RUNNABLE
     probe = create(scratch)
     signal.signal(signal.SIGTERM, _raise_interrupt)
@@ -443,3 +522,16 @@ def run_probe(
     if exit_code == 0:
         print(passed)
     return exit_code
+
+
+def run_main(
+    description: str,
+    argv: Sequence[str] | None,
+    create: Callable[[Path], Any],
+    prove: Callable[[Any], int],
+    passed: str,
+) -> int:
+    """A probe's command line, `--scratch DIR`, and its `run_probe`."""
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("--scratch", type=scratch_directory, required=True)
+    return run_probe(parser.parse_args(argv).scratch, create, prove, passed)
