@@ -84,7 +84,7 @@ def move(plan: Plan, docker: Runner) -> Iterator[tuple[Stage, tuple[str, ...]]]:
     before the next stage."""
     if plan.needs_down:
         _call(docker, _down(plan.source), "docker compose down", compose.CHANGE_SECONDS)
-        yield Stage.DOWN, plan.containers
+        yield Stage.DOWN, plan.containers or plan.removed_networks
     for volume in plan.removed_volumes:
         command = ["docker", "volume", "rm", volume]
         _call(docker, command, f"docker volume rm {volume}", compose.CHANGE_SECONDS)

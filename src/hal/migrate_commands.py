@@ -64,12 +64,14 @@ def _write_plan(plan: Plan) -> None:
 
 
 def _write_done(stage: Stage, names: tuple[str, ...], plan: Plan) -> None:
+    removed_by_down = "containers" if plan.containers else "networks"
     subject, event, fact = {
-        Stage.DOWN: ("containers", Event.REMOVED, f"project {plan.source}"),
+        Stage.DOWN: (removed_by_down, Event.REMOVED, f"project {plan.source}"),
         Stage.VOLUME: ("volumes", Event.REMOVED, ", ".join(names)),
         Stage.START: ("core", Event.STARTED, f"project {plan.target}"),
     }[stage]
-    write_row(Row(Glyph.DONE, subject, event, fact))
+    details = names if stage is Stage.DOWN else ()
+    write_row(Row(Glyph.DONE, subject, event, fact, details=details))
 
 
 def _perform(plan: Plan, world: World) -> ExitCode:

@@ -151,17 +151,27 @@ def through_cli(docker, capsys, monkeypatch):
     return run
 
 
-def plan_rows(out: str) -> dict[tuple[str, str], set[str]]:
-    """The rows of the plan shown before `Type yes`: (subject, event) -> the names below it."""
+def rows_of(text: str) -> dict[tuple[str, str], set[str]]:
+    """The rows in `text`, (subject, event) -> the names below it; other lines are skipped."""
     rows: dict[tuple[str, str], set[str]] = {}
     names: set[str] = set()
-    for line in out.partition("Type yes")[0].splitlines():
+    for line in text.splitlines():
+        columns = re.split(r"\s{2,}", line.strip())
         if line.startswith("    "):
             names.add(line.strip())
-        else:
-            glyph_and_subject, event, *_ = re.split(r"\s{2,}", line.strip())
-            names = rows.setdefault((glyph_and_subject.split()[1], event), set())
+        elif len(columns) > 1:
+            names = rows.setdefault((columns[0].split()[1], columns[1]), set())
     return rows
+
+
+def plan_rows(out: str) -> dict[tuple[str, str], set[str]]:
+    """The rows of the plan shown before `Type yes`."""
+    return rows_of(out.partition("Type yes")[0])
+
+
+def done_rows(out: str) -> dict[tuple[str, str], set[str]]:
+    """The rows written after the answer to `Type yes ...:`."""
+    return rows_of(out.partition("Type yes")[2].partition(":")[2])
 
 
 def removed_volumes(docker) -> set[str]:
@@ -182,6 +192,7 @@ def test_the_plan_names_the_stack_and_one_yes_moves_it(through_cli, docker):
         "up",
     ]
     assert out.splitlines()[-1] == f"next: {command(Verb.APPLY)}"
+    assert done_rows(out)[("containers", "removed")] == {f"edge-{n}" for n in TEN_CONTAINERS}
 
 
 def test_the_plan_removes_what_compose_yaml_does_not_name_and_keeps_what_it_names(through_cli):
@@ -307,6 +318,16 @@ def test_a_rerun_after_a_partial_run_finishes_what_is_left_and_then_has_nothing_
     assert (code, finishing) == (ExitCode.OK, left)
     assert (again[0], docker.changes()) == (ExitCode.OK, [])
     assert "nothing to move" in again[1]
+
+
+def test_a_rerun_with_only_networks_left_names_them_in_the_done_row(through_cli, docker):
+    docker.fail = {"down networks"}
+    through_cli()
+    docker.fail = set()
+
+    _, out, _ = through_cli()
+
+    assert done_rows(out)[("networks", "removed")] == {"edge_default", "edge_internal"}
 
 
 def test_the_route_back_takes_hal_down_and_starts_the_core_of_edge(through_cli, docker):
