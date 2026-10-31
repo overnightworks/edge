@@ -118,6 +118,39 @@ def test_a_credential_the_gate_reader_refuses_is_refused_by_check_and_run_and_ke
         assert credential_path(home).read_bytes() == contents
 
 
+def padded_to(size: int) -> bytes:
+    """An accepted credential document followed by JSON whitespace up to `size` bytes."""
+    document = json.dumps({"shared_key": "dummy-shared-key-0123456789"}).encode()
+    return document + b" " * (size - len(document))
+
+
+@pytest.mark.parametrize("tail", [b"", b"x"], ids=["accepted document", "refused tail"])
+def test_a_credential_larger_than_the_reader_limit_is_refused_naming_the_limit(
+    make_setup, setup_module, home, terminal, tail
+):
+    limit = setup_module.MAX_SECRET_FILE_BYTES
+    write_token(home, DUMMY_TOKEN)
+    contents = padded_to(limit + 1) + tail
+    credential_path(home).write_bytes(contents)
+
+    for outcome in (make_setup().check(), make_setup().run(renew=False)):
+        assert outcome == 1
+        assert str(limit) in terminal.said[-1]
+        assert REPLACE in terminal.said[-1]
+        assert credential_path(home).read_bytes() == contents
+
+
+@pytest.mark.parametrize("tail", [b"", b"x"], ids=["accepted document", "refused tail"])
+def test_a_credential_at_the_reader_limit_is_judged_whole_as_the_gate_reader_does(
+    make_setup, setup_module, home, terminal, gate, tail
+):
+    write_token(home, DUMMY_TOKEN)
+    contents = padded_to(setup_module.MAX_SECRET_FILE_BYTES - len(tail)) + tail
+    credential_path(home).write_bytes(contents)
+
+    assert make_setup().check() == (0 if gate.shared_key_of(contents) else 1)
+
+
 def test_a_refused_credential_stops_the_run_before_the_token_is_touched(make_setup, home, terminal):
     write_token(home, DUMMY_TOKEN)
     base.token_path(home).unlink()
@@ -156,15 +189,6 @@ def test_a_credential_with_mode_0640_asks_for_the_operators_fix_and_keeps_its_mo
     assert make_setup().run(renew=False) == 1
     assert "not 0600" in terminal.said[-1]
     assert mode_of(credential_path(home)) == 0o640
-
-
-def test_a_credential_owned_by_another_user_asks_for_the_operators_fix(make_setup, home, terminal):
-    write_token(home, DUMMY_TOKEN)
-    setup = make_setup(service_uid=os.getuid() + 1)
-    setup.judge_directory = lambda *_: None  # the folders are mine; only the file's owner differs
-
-    assert setup.attempt(setup.api_credential.check, read_only=True) == 1
-    assert "owned by uid" in terminal.said[-1]
 
 
 def test_a_leftover_candidate_beside_an_accepted_credential_is_cleared_and_next_is_kept(

@@ -50,15 +50,14 @@ from enum import Enum, IntEnum
 from pathlib import Path
 
 from api_credential import API_DIRECTORY, ApiCredential
-from signing_key import (
+from secret_entry import (
     MAX_SECRET_FILE_BYTES,
-    SIGNING_DIRECTORY,
     CannotTell,
-    SigningKey,
     StepFailure,
     read_within_limit,
-    run_openssl,
+    size_refusal,
 )
+from signing_key import SIGNING_DIRECTORY, SigningKey, run_openssl
 
 REPO = Path(__file__).resolve().parents[1]
 SERVICE = "agent-service"
@@ -175,8 +174,8 @@ def line_is_json(line: str) -> bool:
 
 def refusal_of_token_bytes(contents: bytes) -> str | None:
     """The reader's verdict on the file's exact bytes, for a file read and for a paste to write."""
-    if len(contents) > MAX_SECRET_FILE_BYTES:
-        return f"is larger than {MAX_SECRET_FILE_BYTES} bytes"
+    if too_large := size_refusal(contents):
+        return too_large
     try:
         return refusal_of_token(contents.decode("utf-8"))
     except UnicodeDecodeError:
@@ -473,17 +472,18 @@ class AgentServiceSetup:
         def fix_everything() -> None:
             self.signing.preflight()
             self.api_credential.preflight()
-            for _ in range(len(GapKind) + 1):
-                if (gap := self.first_gap()) is not None:
-                    self.fix(gap)
-                elif renew and not self.pasted:
+            fixed = None
+            while (gap := self.first_gap()) is not None or (renew and not self.pasted):
+                if gap is None:
                     self.paste_token()
+                elif gap == fixed:
+                    raise StepFailure(f"{gap.line}, still after its fix")
                 else:
-                    self.signing.ensure()
-                    self.api_credential.ensure()
-                    self.tools.say("agent-service/setup: set up")
-                    return
-            raise StepFailure("still not set up after the fixes")
+                    self.fix(gap)
+                    fixed = gap
+            self.signing.ensure()
+            self.api_credential.ensure()
+            self.tools.say("agent-service/setup: set up")
 
         return self.attempt(fix_everything, read_only=False)
 

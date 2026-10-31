@@ -170,7 +170,7 @@ has asked:
 
 ```
 ~/.secrets/agent-service/api/                   0700, uid 1000
-~/.secrets/agent-service/api/credential.json    0600, uid 1000, UTF-8 JSON, only the field shared_key
+~/.secrets/agent-service/api/credential.json    0600, uid 1000, UTF-8 JSON, only the field shared_key, at most 16 KiB
 ```
 
 **The contract.** The file is what agent-runtime's reader accepts (`docs/operations.md` of
@@ -183,10 +183,13 @@ which refuses any existing entry. Every path is reached without following a link
 the folder. A plain run and `--renew` never replace a credential, and nothing is printed of it. Setup
 refuses, in one line that names the file, and changes nothing, `--renew` and the token included:
 
-- a credential the reader refuses (not UTF-8 JSON, an unknown or duplicate field, `app_keys` not an
-  object, a value outside the syntax): the line names `agent-service/setup --replace-api-credential`;
+- a credential the reader refuses (larger than its 16 KiB, not UTF-8 JSON, an unknown or duplicate
+  field, `app_keys` not an object, a value outside the syntax): the line names
+  `agent-service/setup --replace-api-credential`; a file within the limit is judged whole;
 - a wrong owner, a mode other than 0600, a link or no regular file: the line asks for the operator's
-  own fix, because setup never narrows or unlinks those.
+  own fix, because setup never narrows or unlinks those. A file setup may not open is judged by its
+  owner first; only one of the right owner that still cannot be read is a host failure (`--check`
+  exits 2).
 
 `agent-service/setup --check` changes nothing and exits 0 for an accepted credential and 1 for the
 first gap, a refusal or a leftover `credential.json.new`, which the next plain run clears.

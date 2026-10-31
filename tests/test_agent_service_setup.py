@@ -11,6 +11,7 @@ import os
 import stat
 import subprocess
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,8 @@ from support.agent_service_setup import (
     DUMMY_TOKEN,
     IMAGE,
     SECOND_TOKEN,
+    api_directory,
+    credential_path,
     login_directory,
     make_login_directory,
     mode_of,
@@ -161,6 +164,78 @@ def test_a_fresh_home_builds_makes_the_folders_takes_the_token_and_then_passes(
     assert mode_of(home / ".secrets" / "agent-service") == 0o700
     assert mode_of(login_directory(home)) == 0o700
     assert token_path(home).read_text() == DUMMY_TOKEN + "\n"
+
+
+@pytest.fixture
+def refuse_opening(monkeypatch) -> Callable[[Path], None]:
+    """Make the host refuse to open this secret file with a permission error, as it refuses another
+    user's 0600 file."""
+
+    def refuse(path: Path) -> None:
+        original = os.open
+
+        def open_unless_named(name, flags, *arguments, **keywords):
+            if name == path.name:
+                raise PermissionError(errno.EACCES, os.strerror(errno.EACCES), name)
+            return original(name, flags, *arguments, **keywords)
+
+        monkeypatch.setattr(os, "open", open_unless_named)
+
+    return refuse
+
+
+SECRET_FILES = {
+    "credential": (credential_path, "api_credential"),
+    "private key": (lambda home: signing_directory(home) / "private.pem", "signing"),
+}
+READABILITY = {"readable": (0o600, False), "mode 0000": (0o000, False), "refused": (0o600, True)}
+
+
+@pytest.mark.parametrize("readability", READABILITY)
+@pytest.mark.parametrize("secret_file", SECRET_FILES)
+def test_a_secret_file_of_another_owner_names_its_owner_whether_or_not_it_can_be_read(
+    make_setup, home, terminal, refuse_opening, secret_file, readability
+):
+    path_of, step = SECRET_FILES[secret_file]
+    mode, refused = READABILITY[readability]
+    write_token(home, DUMMY_TOKEN)
+    path_of(home).chmod(mode)
+    if refused:
+        refuse_opening(path_of(home))
+    setup = make_setup(service_uid=os.getuid() + 1)
+    setup.judge_directory = lambda *_: None  # the folders are mine; only the file's owner differs
+
+    assert setup.attempt(getattr(setup, step).check, read_only=True) == 1
+    assert "owned by uid" in terminal.said[-1]
+    assert str(path_of(home)) in terminal.said[-1]
+
+
+def test_a_host_with_every_gap_at_once_is_set_up_in_one_run(make_setup, home, docker, terminal):
+    docker.images.clear()
+    write_token(home, "a refused token with spaces", mode=0o644)
+    credential_path(home).unlink()
+    api_directory(home).rmdir()
+    for directory in (
+        home / ".secrets",
+        home / ".secrets" / "agent-service",
+        login_directory(home),
+        signing_directory(home),
+    ):
+        directory.chmod(0o755)
+
+    assert make_setup().run(renew=False) == 0
+    assert terminal.said[-1] == "agent-service/setup: set up"
+    assert make_setup().check() == 0
+
+
+def test_a_fix_that_leaves_its_gap_stops_the_run_after_one_try(make_setup, home, docker, terminal):
+    write_token(home, DUMMY_TOKEN)
+    docker.images.clear()
+    docker.tags_builds = False
+
+    assert make_setup().run(renew=False) == 1
+    assert len(docker.builds()) == 1
+    assert IMAGE in terminal.said[-1]
 
 
 def test_a_second_run_changes_nothing_and_asks_nothing(make_setup, home, docker, terminal):

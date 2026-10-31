@@ -34,6 +34,7 @@ class DockerHost:
     images: set[str] = field(default_factory=set)
     commands: list[list[str]] = field(default_factory=list)
     answers: bool = True
+    tags_builds: bool = True
 
     def __call__(self, command: list[str], timeout: int) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
@@ -51,7 +52,8 @@ class DockerHost:
                 command, 1, "[]", f"Error: No such image: {command[3]}"
             )
         assert command[:2] == ["docker", "build"], command
-        self.images.add(command[command.index("-t") + 1])
+        if self.tags_builds:
+            self.images.add(command[command.index("-t") + 1])
         return subprocess.CompletedProcess(command, 0, "", "")
 
     def builds(self) -> list[list[str]]:
