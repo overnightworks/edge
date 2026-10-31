@@ -40,6 +40,7 @@ Entry = tuple[str, str, bool]  # mount point, filesystem type, writable
 class Completed(NamedTuple):
     returncode: int
     stdout: bytes
+    stderr: bytes = b""  # only a log is read from it: a container's standard error
 
 
 Run = Callable[[Sequence[str], bytes | None], Completed]
@@ -225,7 +226,7 @@ class Census:
         if result.returncode != 0:
             sweep.problem(name, "the log could not be read")
             return
-        sweep.hit(contains(result.stdout, tokens), f"{name} log")
+        sweep.hit(contains(result.stdout + result.stderr, tokens), f"{name} log")
 
 
 def _last_line(result: Completed) -> dict | None:

@@ -239,6 +239,15 @@ def test_a_canary_in_the_log_of_a_container_is_found_as_the_log(retention) -> No
     assert sweep.found == {"answer": ("front log",)}
 
 
+def test_a_canary_on_the_standard_error_of_a_container_is_found_in_its_log(retention) -> None:
+    docker = FakeDocker(retention, front_answers())
+    docker.answers[("docker", "logs", "front")] = (0, LOG_CLEAN, ANSWER.encode())
+
+    sweep = retention.Census(docker, KEY).sweep((retention.Target("front", False),), TOKENS)
+
+    assert sweep.found == {"answer": ("front log",)}
+
+
 def test_a_log_that_cannot_be_read_is_an_unexamined_sink(retention) -> None:
     sweep, _ = sweep_of(retention, front_answers(**{"docker logs front": (1, b"")}))
 
