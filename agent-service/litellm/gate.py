@@ -61,7 +61,10 @@ def decide(
         return Verdict(False, "the body must be sent as one Content-Type: application/json")
     if any(name.lower().startswith(REFUSED_HEADER_PREFIXES) for name in header_names):
         return Verdict(False, "an x-litellm- or anthropic- header is not accepted")
-    shared_key = _shared_key(credential_file)
+    try:
+        shared_key = shared_key_of(credential_file.read_bytes())
+    except OSError:
+        shared_key = None
     if shared_key is None:
         return Verdict(False, "the service credential is missing or invalid")
     if not _bearer_matches(authorization, shared_key):
@@ -71,13 +74,11 @@ def decide(
     return Verdict(True, "")
 
 
-def _shared_key(credential_file: Path) -> str | None:
+def shared_key_of(document_bytes: bytes) -> str | None:
     """The `shared_key` of a credential document agent-runtime's reader would accept, else None."""
     try:
-        document = json.loads(
-            credential_file.read_bytes().decode("utf-8"), object_pairs_hook=_unique_fields
-        )
-    except (OSError, ValueError, RecursionError):
+        document = json.loads(document_bytes.decode("utf-8"), object_pairs_hook=_unique_fields)
+    except (ValueError, RecursionError):
         return None
     if not isinstance(document, dict) or document.keys() - CREDENTIAL_FIELDS:
         return None
