@@ -1,0 +1,8 @@
+claim_id = "7e835fd9f2b345d38786b3d554b30dbe"
+agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
+role = "builder"
+base = "e11c3dd09da942aebca602668f13a94b090a0fea"
+branch = "claude/issue-810-s2a-wizard-entry-page"
+scope = ["docs/design/hal-output.html", "docs/home.md", "src/hal/workstation/manifest_fields.py", "src/hal/workstation/secrets_manifest.toml", "src/hal/workstation/secrets_setup.py", "src/hal/workstation/secrets_view.py", "tests/test_workstation_app_secrets.py", "tests/test_workstation_secrets_setup.py"]
+opened_commit = "46cdc219095ed021d3001c54b1436fb83ac308c8"
+whole_reason = "S2a gives every unverified-token entry of the manifest its own page and adds the Anthropic provider key as the entry LiteLLM reads; the key, its parser, its one consumer in the wizard and the entry that needs it are one behaviour, proven by one scratch run."
