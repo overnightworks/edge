@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from enum import Enum
 from pathlib import Path
 
 
@@ -35,7 +36,7 @@ def https_link(path: Path, where: str, raw: Mapping[str, object], key: str) -> s
     return value
 
 
-def require_key_of_kind(path: Path, where: str, raw: Mapping[str, object], key: str, is_owner_kind: bool, owner_kind: str) -> None:
+def require_key_of_kind(path: Path, where: str, raw: Mapping[str, object], key: str, entry_kind: Enum, owner_kind: Enum) -> None:
     """A key that belongs to every entry of one kind and to no other."""
-    if is_owner_kind != (key in raw):
-        raise fail(path, where, f"{key} belongs to every {owner_kind} entry and to no other kind")
+    if (entry_kind is owner_kind) != (key in raw):
+        raise fail(path, where, f"{key} belongs to every {owner_kind.value} entry and to no other kind")

@@ -68,7 +68,7 @@ NO_BROWSER = "no browser opened · open it yourself:"
 UNSENDABLE_PASTE = "a token is visible ASCII only, without spaces; nothing checked"
 
 PASTE_AGAIN = "paste again or leave empty"
-NOT_CHECKED = "not checked, stored as pasted"
+UNVERIFIED_FACT = "not checked, stored as pasted"
 PASSPHRASE_BYTES = 48
 VERIFY_TIMEOUT_SECONDS = 20
 RESPONSE_LIMIT_BYTES = 64 * 1024
@@ -521,7 +521,7 @@ def _set_up_token(entry: SecretEntry, source: TokenSource, layout: Layout, bound
 
 def _set_up_unverified_token(entry: SecretEntry, layout: Layout, boundaries: Boundaries) -> bool:
     """O6: the value is asked hidden and stored without provider verification; no provider is asked."""
-    _announce(entry, NOT_CHECKED)
+    _announce(entry, UNVERIFIED_FACT)
     write_detail(f"create: {entry.renewal}")
     _offer_page(boundaries.terminal, entry.page)
     value = _visible_paste(entry, boundaries.terminal)

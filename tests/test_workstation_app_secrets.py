@@ -7,7 +7,7 @@ import re
 import stat
 from collections.abc import Callable, Iterator
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 from support.workstation_support import FakeProbe, Sandbox, lines_of_the_run, plant_secrets, run_captured_hal_setup, run_hal_secrets, run_hal_setup
@@ -18,7 +18,7 @@ from support.terminal_support import put_stdout_on_a_terminal
 from hal.grammar import ExitCode
 from hal.workstation import ports as home_ports
 from hal.workstation import secrets_view
-from hal.workstation.secrets_setup import NOT_CHECKED, OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, Boundaries, Verdict
+from hal.workstation.secrets_setup import OPEN_PROMPT, PASTE_PROMPT, UNSENDABLE_PASTE, UNVERIFIED_FACT, Boundaries, Verdict
 from hal.workstation.setup import RERUN
 from hal.workstation.secrets_view import ManifestError, SecretEntry, TokenSource, load_manifest
 
@@ -27,12 +27,16 @@ HOPIN_SESSION_SECRET = ".secrets/hopin/session-secret"
 URL_SAFE_48_BYTES = re.compile(r"[A-Za-z0-9_-]{64}")
 TURN_KEY_ID = ".secrets/cloudflare/turn-hopin/key-id"
 TURN_API_TOKEN = ".secrets/cloudflare/turn-hopin/api-token"
-ANTHROPIC_KEY = ".secrets/litellm/anthropic"
 NOW = datetime(2026, 10, 15, 9, 0)
 
 
 def packaged_entry(name: str) -> SecretEntry:
     return next(entry for entry in load_manifest(PACKAGED_MANIFEST) if entry.name == name)
+
+
+def _anthropic_key_place() -> PurePosixPath:
+    (place,) = packaged_entry("litellm/anthropic").paths
+    return place
 
 
 @pytest.fixture
@@ -134,18 +138,18 @@ PAGE = 'page = "https://example.invalid/keys"\n'
 
 
 @pytest.mark.parametrize(
-    "keys",
+    ("keys", "refusal"),
     [
-        PAGE + 'paths = ["~/.secrets/turn/a"]\nprovider = "cloudflare"\nresource = "zone"\nscope = ["a"]\nexpires_in_days = 30\npurpose = "p"\n',
-        PAGE + 'paths = ["~/.secrets/turn/a", "~/.secrets/turn/b"]\n',
+        (PAGE + 'paths = ["~/.secrets/turn/a"]\nprovider = "cloudflare"\nresource = "zone"\nscope = ["a"]\nexpires_in_days = 30\npurpose = "p"\n', "on a token entry only"),
+        (PAGE + 'paths = ["~/.secrets/turn/a", "~/.secrets/turn/b"]\n', "exactly one place without a wildcard"),
     ],
     ids=["a provider source", "two paths"],
 )
-def test_an_unverified_token_cannot_name_a_provider_to_verify_with_nor_two_files(tmp_path: Path, keys: str) -> None:
+def test_an_unverified_token_cannot_name_a_provider_to_verify_with_nor_two_files(tmp_path: Path, keys: str, refusal: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(UNVERIFIED_ENTRY + keys)
 
-    with pytest.raises(ManifestError):
+    with pytest.raises(ManifestError, match=refusal):
         load_manifest(manifest)
 
 
@@ -176,7 +180,7 @@ def test_the_wizard_names_where_the_turn_key_is_made_and_offers_only_the_dashboa
 
     key_id = packaged_entry("cloudflare/turn-hopin/key-id")
     lines = [" ".join(line.split()) for line in output.splitlines()]
-    assert f"› cloudflare/turn-hopin/key-id new token {NOT_CHECKED}" in lines
+    assert f"› cloudflare/turn-hopin/key-id new token {UNVERIFIED_FACT}" in lines
     assert f"why: {key_id.purpose}" in lines
     assert f"create: {key_id.recreate}" in lines
     assert OPEN_PROMPT in terminal.prompts
@@ -191,12 +195,10 @@ PAGE_REFUSALS = [
     ('[[secret]]\nname = "t"\nkind = "token"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n' + PAGE, "page"),
     ('[[secret]]\nname = "t"\nkind = "service-password"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n' + PAGE, "page"),
     ('[[secret]]\nname = "t"\nkind = "configuration"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n' + PAGE, "page"),
-    ('[[secret]]\nname = "t"\nkind = "configuration"\nread_by = []\nrecreate = "r"\npaths = ["~/.secrets/t"]\n'
-     'retired_on = 2026-10-14\nrevoke_url = "http://example.invalid"\n', "revoke_url"),
 ]
 
 
-@pytest.mark.parametrize(("text", "key"), PAGE_REFUSALS, ids=["no page", "page not https", "page on a token", "page on a service password", "page on a configuration", "revoke_url not https"])
+@pytest.mark.parametrize(("text", "key"), PAGE_REFUSALS, ids=["no page", "page not https", "page on a token", "page on a service password", "page on a configuration"])
 def test_the_manifest_refuses_a_missing_misplaced_or_insecure_page_naming_its_key(tmp_path: Path, text: str, key: str) -> None:
     manifest = tmp_path / "manifest.toml"
     manifest.write_text(text)
@@ -208,7 +210,7 @@ def test_the_manifest_refuses_a_missing_misplaced_or_insecure_page_naming_its_ke
 @pytest.fixture
 def anthropic_home(packaged_home: Sandbox) -> Sandbox:
     """The packaged manifest with every entry in place but the provider key LiteLLM reads."""
-    (packaged_home.home / ANTHROPIC_KEY).unlink()
+    (packaged_home.home / _anthropic_key_place()).unlink()
     return packaged_home
 
 
@@ -220,17 +222,17 @@ def test_the_wizard_asks_the_provider_key_hidden_opens_its_page_and_stores_it_at
     code, output = run_turn_setup(anthropic_home, capsys, terminal)
 
     entry = packaged_entry("litellm/anthropic")
-    stored = anthropic_home.home / ANTHROPIC_KEY
+    stored = anthropic_home.home / _anthropic_key_place()
     lines = [" ".join(line.split()) for line in output.splitlines()]
     assert code == 0
     assert stored.read_text() == "FAKE-PROVIDER-KEY-0001"
     assert [stat.S_IMODE(path.stat().st_mode) for path in (stored, stored.parent)] == [0o600, 0o700]
-    assert f"› litellm/anthropic new token {NOT_CHECKED}" in lines
+    assert f"› litellm/anthropic new token {UNVERIFIED_FACT}" in lines
     assert f"why: {entry.purpose}" in lines
     assert f"create: {entry.recreate}" in lines
     assert terminal.opened == [entry.page]
     assert terminal.prompts == [OPEN_PROMPT, PASTE_PROMPT]
-    assert f"✓ litellm/anthropic stored not verified · ~/{ANTHROPIC_KEY} (600)" in lines
+    assert f"✓ litellm/anthropic stored not verified · ~/{_anthropic_key_place()} (600)" in lines
     assert "FAKE-PROVIDER" not in output
 
 

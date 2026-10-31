@@ -301,8 +301,8 @@ def _entry(path: Path, index: int, raw: object) -> SecretEntry:
     if missing or unknown:
         raise fail(path, where, f"missing key(s) {missing}, unknown key(s) {unknown}")
     kind = _enum_value(path, where, raw, "kind", SecretKind)
-    require_key_of_kind(path, where, raw, "mirror_of", kind is SecretKind.DERIVED_MIRROR, SecretKind.DERIVED_MIRROR.value)
-    require_key_of_kind(path, where, raw, "page", kind is SecretKind.UNVERIFIED_TOKEN, SecretKind.UNVERIFIED_TOKEN.value)
+    require_key_of_kind(path, where, raw, "mirror_of", kind, SecretKind.DERIVED_MIRROR)
+    require_key_of_kind(path, where, raw, "page", kind, SecretKind.UNVERIFIED_TOKEN)
     retirement = _retirement(path, where, raw)
     source = _token_source(path, where, raw, kind)
     loosest_mode, loosest_mode_reason = _declared_mode(path, where, raw)
