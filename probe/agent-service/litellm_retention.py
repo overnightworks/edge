@@ -39,7 +39,6 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "agent-service"))
 
-from agent_networks import listeners_of  # noqa: E402
 from litellm import (  # noqa: E402
     CANARY_SECONDS,
     DEFAULT_APP,
@@ -53,6 +52,7 @@ from litellm import (  # noqa: E402
     SERVICE,
     ProbeFailed,
     expect,
+    listeners_of,
     mounted_file,
     run_scratch_probe,
 )
