@@ -221,17 +221,19 @@ stated in agent-runtime's section
 The content of
 a turn leaves this PC for Anthropic, which generates the answer.
 
-**The API route keeps no content, as evidence for the paths exercised only.** LiteLLM logs no
+**The API route keeps no content on the paths exercised, and keeps it on one.** LiteLLM logs no
 message and redacts exceptions, and neither it nor the front configures a callback, cache,
 database or spend log; the front logs at INFO without an access log. The retention census
 (`agent-service/retention_census.py`, driven by `probe/agent-service/litellm_retention.py` on the
 fake-only stack) searches a request and an answer canary in every writable mount and every log of
-the front, the gateway, LiteLLM and the service, after a success, an upstream 500, an upstream
-error body that echoes the request, a refused model, a cancel and a hook refusal. It finds none,
-and each search is proven by a control that plants a canary where it must be found. Memory holds
-the content while a run is in flight, and tmpfs may be paged to swap. The Docker log driver's
-retention is the daemon's (edge#167); the census proves that no content reaches the logs, not how
-long they live. Any other path is not covered by this.
+the front, the gateway, LiteLLM and the service. After a success, an upstream 500, a refused model,
+a cancel and a hook refusal it finds none, and each search is proven by a control that plants a
+canary where it must be found. After an upstream error whose body echoes the request it finds the
+request in LiteLLM's log: LiteLLM logs the upstream's error body at ERROR level, and its
+exception redaction covers the request's messages, not the upstream's text. That path is open.
+Memory holds the content while a run is in flight, and tmpfs may be paged to swap. The Docker log
+driver's retention is the daemon's (edge#167); the census proves that no content reaches the logs,
+not how long they live. Any other path is not covered by this.
 
 **Whose account.** Only the operator and his own test accounts are members of `/services/agent-service/subscription`, so his
 Claude subscription serves only his own use. Every other person reaches the service only through the
