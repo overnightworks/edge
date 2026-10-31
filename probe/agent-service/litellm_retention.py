@@ -49,12 +49,15 @@ from litellm import (  # noqa: E402
     REMAPPED_APP,
     ROUTE,
     SERVICE,
+    ProbeFailed,
     expect,
     mounted_file,
     run_scratch_probe,
 )
 from litellm_failures import FailureProbe  # noqa: E402
 from retention_census import Census, Completed, Sweep, Target  # noqa: E402
+
+from hal.output import write_line  # noqa: E402
 
 HOLD_SECONDS = 45  # B4's hold: below the service's 120 s idle timeout, over a scan of the route
 SCAN_DEADLINE_SECONDS = 60
@@ -141,8 +144,22 @@ class RetentionProbe(FailureProbe):
 
     def expect_nothing_retained(self, cell: str, tokens: Mapping[str, str]) -> None:
         found = self.sweep(tokens).found
-        expect(not found, f"{cell}: canaries retained: {found}")
+        expect(not found, f"{cell}: canaries retained: {found}{self.excerpts(tokens, found)}")
         self.clean.update(tokens)
+
+    def excerpts(self, tokens: Mapping[str, str], found: Mapping[str, tuple[str, ...]]) -> str:
+        """The first 200 characters of each log line that holds a canary found in a log, the
+        canary shown as its label: what a reviewer needs to see where the content was written."""
+        shown = []
+        for label, sinks in found.items():
+            for sink in (s for s in sinks if s.endswith(" log")):
+                log = self.run(["docker", "logs", sink.removesuffix(" log")], check=False)
+                lines = (log.stdout + log.stderr).splitlines()
+                shown += [
+                    f"[{label}] {line.replace(tokens[label], '<canary>')[:200]}"
+                    for line in lines if tokens[label] in line
+                ]  # fmt: skip
+        return "".join(f"\n  {line}" for line in shown)
 
     def failed_with(self, cell: str, app: str, options: tuple[str, ...]) -> dict[str, str]:
         run = self.canary(app, options)
@@ -172,12 +189,18 @@ class RetentionProbe(FailureProbe):
         for service in (SERVICE, LITELLM):
             self.wait_until(service, LISTENING)
         self.steer()
+        failed = []
         for step in (
             self.cell_b2, self.cells_b3, self.recreate_route, self.cell_b1, self.cell_b4,
             self.cell_b5, self.cell_b6, self.cell_b7, self.cell_b8, self.cell_b9, self.cell_b10,
             self.cell_b11,
         ):  # fmt: skip
-            step()
+            try:
+                step()
+            except ProbeFailed as problem:
+                failed.append(step.__name__)
+                write_line(f"{step.__name__} FAILED: {problem}", flush=True)
+        expect(not failed, f"cells failed: {', '.join(failed)}")
 
     def cell_b2(self) -> None:
         tokens = {"file in litellm": canary("b2-litellm"), "file in front": canary("b2-front")}
@@ -345,10 +368,17 @@ class RetentionProbe(FailureProbe):
         )
 
     def cell_b10(self) -> None:
-        result = self.sweep(self.clean)
-        expect(not result.found, f"B10: canaries of B4-B9 retained: {result.found}")
-        self.hold("B10", f"the logs of the front, the gateway, LiteLLM and the service over B4 to "
-                  f"B9 hold none of {len(self.clean)} canaries")  # fmt: skip
+        """The sinks of the front, the gateway and the service over B4 to B9. LiteLLM's own sinks
+        are judged by the cell that wrote them."""
+        found = self.sweep(self.clean).found
+        litellm = self.container_name(LITELLM)
+        elsewhere = {
+            label: [sink for sink in sinks if not sink.startswith(f"{litellm} ")]
+            for label, sinks in found.items()
+        }
+        expect(not any(elsewhere.values()), f"B10: retained outside LiteLLM: {elsewhere}")
+        self.hold("B10", f"the mounts and logs of the front, the gateway and the service hold none "
+                  f"of {len(self.clean)} canaries of B4 to B9")  # fmt: skip
 
     def cell_b11(self) -> None:
         litellm, front = self.container_name(LITELLM), self.container_name(FRONT)
