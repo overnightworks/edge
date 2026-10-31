@@ -1,7 +1,0 @@
-claim_id = "354f4e69da3c47e6aca6a81a4eddf68d"
-agent = "Claude afefb687-3c4a-4124-872d-0df87b0327e9"
-role = "builder"
-base = "7b9eb99f578105ca29c42369b4a6ccaa65c68199"
-branch = "docs/rule-9-per-resource"
-scope = ["docs/architecture.md"]
-opened_commit = "6e1fde330478e4404679654831d0f4b44db6be92"
