@@ -183,9 +183,10 @@ def test_the_guard_resolves_the_files_and_profiles_a_compose_call_runs_with(
         PROJECT, lambda command: seen.append(command) or json.dumps({"name": PROJECT})
     )
 
-    guard.expect_call([*prefix, *arguments])
+    runs = edge_copy.guarded_compose(Path("copy"), guard, arguments)
 
     assert seen == [[*prefix, *options, "config", "--format", "json"] for options in resolved]
+    assert ["docker", *runs] == [*prefix, *arguments]
 
 
 OCCUPIED = ["172.31.250.0/24", "172.31.251.0/24", "10.0.0.0/8"]

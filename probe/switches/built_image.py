@@ -105,7 +105,8 @@ class Drive:
         return result.stdout
 
     def compose(self, *arguments: str) -> str:
-        return self.docker("compose", "--profile", "*", *arguments)
+        every_profile = ("--profile", "*", *arguments)
+        return self.docker(*edge_copy.guarded_compose(self.copy, self.guard, every_profile))
 
     def engine(self) -> compose.Compose:
         """edge's own Compose reader, over the copy and the drive's project."""

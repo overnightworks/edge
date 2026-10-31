@@ -315,6 +315,15 @@ class NetworkGuard:
         expect(after == self.live_before, f"the hal_ networks changed: {self.live_before ^ after}")
 
 
+def guarded_compose(copy: Path, guard: NetworkGuard | None, arguments: Sequence[str]) -> list[str]:
+    """The arguments of `docker` for the compose `arguments` in `copy` (`copy_compose_prefix`),
+    once `guard`, when there is one yet, has checked what they start or remove."""
+    command = [*copy_compose_prefix(copy), *arguments]
+    if guard is not None:
+        guard.expect_call(command)
+    return command[1:]
+
+
 def live_networks() -> set[str]:
     """The names of the fixed `hal_*` networks the daemon has now."""
     listing = subprocess.run(

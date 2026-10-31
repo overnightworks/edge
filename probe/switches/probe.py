@@ -153,10 +153,7 @@ class Probe:
         return result
 
     def compose(self, *arguments: str) -> subprocess.CompletedProcess[bytes]:
-        command = [*edge_copy.copy_compose_prefix(self.copy), *arguments]
-        if self.guard is not None:
-            self.guard.expect_call(command)
-        return self.docker(*command[1:])
+        return self.docker(*edge_copy.guarded_compose(self.copy, self.guard, arguments))
 
     def container_ids(self) -> dict[str, str]:
         """The container id of each service that has one."""
