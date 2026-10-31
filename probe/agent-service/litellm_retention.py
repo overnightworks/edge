@@ -39,6 +39,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "agent-service"))
 
+from agent_networks import listeners_of  # noqa: E402
 from litellm import (  # noqa: E402
     CANARY_SECONDS,
     DEFAULT_APP,
@@ -99,7 +100,10 @@ def settings_of(text: str, section: str) -> dict[str, str]:
 
 
 class RetentionProbe(FailureProbe):
-    """litellm.py's stack with the census run over the route's containers."""
+    """litellm.py's stack with the census run over the route's containers, at the log level
+    compose.yaml ships."""
+
+    LITELLM_LOG_LEVEL = None
 
     def __init__(self, scratch: Path) -> None:
         super().__init__(scratch)
@@ -169,6 +173,21 @@ class RetentionProbe(FailureProbe):
 
     def request_canary_hits(self, since: int) -> int:
         return sum(request["request_canary_hits"] for request in self.provider_requests()[since:])
+
+    def wait_until(self, service: str, line: str, seconds: int = 60) -> None:
+        """LiteLLM at CRITICAL prints no start line, so its listening socket is the signal."""
+        if service != LITELLM:
+            super().wait_until(service, line, seconds)
+            return
+        deadline = time.monotonic() + seconds
+        while True:
+            try:
+                if listeners_of(self, LITELLM)["tcp"]:
+                    return
+            except ProbeFailed:
+                pass  # the container is not up yet
+            expect(time.monotonic() < deadline, f"LiteLLM did not listen in {seconds} seconds")
+            time.sleep(1)
 
     # --- life cycle ---------------------------------------------------------------------------
 
