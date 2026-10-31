@@ -1,5 +1,6 @@
 """The probes' network isolation (#346 P26): what probe/edge_copy.py moves and refuses."""
 
+import json
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -14,6 +15,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import edge_copy  # noqa: E402
 from support.git_support import committed_main, plain_git  # noqa: E402
 
+from hal.backup.docker import PROJECT_LABEL  # noqa: E402
 from hal.stack import catalog  # noqa: E402
 
 PROJECT = "edge-some-probe"
@@ -55,6 +57,137 @@ def test_a_resolved_network_outside_the_project_fails_the_guard():
 
 def test_a_resolved_configuration_inside_the_project_passes_the_guard():
     edge_copy.expect_project_networks({"networks": {"a": {"name": f"{PROJECT}_a"}}}, PROJECT)
+
+
+def entrypoint_addresses(text: str) -> dict[str, str]:
+    entrypoints = yaml.safe_load(text)["entryPoints"]
+    return {name: entry["address"] for name, entry in entrypoints.items()}
+
+
+def test_every_entrypoint_of_traefik_moves_to_the_probe_host_with_its_own_port():
+    live = (ROOT / "traefik.yml").read_text()
+
+    beside = edge_copy.beside_the_live_edge(live, PROJECT)
+
+    live_addresses, moved = entrypoint_addresses(live), entrypoint_addresses(beside)
+    assert moved.keys() == live_addresses.keys()
+    for name, address in moved.items():
+        host, _, port = address.rpartition(":")
+        assert host == edge_copy.PROBE_HOST
+        assert port == live_addresses[name].rpartition(":")[2]
+        assert address not in live_addresses.values()
+
+
+def test_the_probe_traefik_keeps_the_live_constraint_and_adds_its_project():
+    live = (ROOT / "traefik.yml").read_text()
+
+    beside = yaml.safe_load(edge_copy.beside_the_live_edge(live, PROJECT))
+
+    live_constraint = yaml.safe_load(live)["providers"]["docker"]["constraints"]
+    constraint = beside["providers"]["docker"]["constraints"]
+    assert constraint == f"{live_constraint} && Label(`{PROJECT_LABEL}`, `{PROJECT}`)"
+
+
+def test_the_probe_traefik_differs_from_the_live_one_in_addresses_and_constraint_only():
+    live = (ROOT / "traefik.yml").read_text()
+
+    beside = yaml.safe_load(edge_copy.beside_the_live_edge(live, PROJECT))
+
+    expected = yaml.safe_load(live)
+    for document in (beside, expected):
+        for entry in document["entryPoints"].values():
+            del entry["address"]
+        del document["providers"]["docker"]["constraints"]
+    assert beside == expected
+
+
+TRAEFIK_WITH_ONE_ENTRYPOINT = dedent(
+    """\
+    entryPoints:
+      edge:
+        address: "127.0.0.1:8081"
+    providers:
+      docker:
+        constraints: "LabelRegex(`edge.name`, `^[a-z]+$`)"
+    """
+)
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("entryPoints: {}\nproviders:\n  docker:\n    constraints: x\n", "no entrypoint"),
+        ("global: {}\n", "names no entrypoint address"),
+        (
+            TRAEFIK_WITH_ONE_ENTRYPOINT.replace("127.0.0.1", edge_copy.PROBE_HOST),
+            "already on",
+        ),
+        (
+            TRAEFIK_WITH_ONE_ENTRYPOINT.replace(
+                'constraints: "LabelRegex(`edge.name`, `^[a-z]+$`)"', "exposedByDefault: false"
+            ),
+            "names no entrypoint address or Docker constraint",
+        ),
+        (TRAEFIK_WITH_ONE_ENTRYPOINT + "# was 127.0.0.1:8081\n", "2 times"),
+        (TRAEFIK_WITH_ONE_ENTRYPOINT.replace("127.0.0.1", ""), "every address"),
+        (TRAEFIK_WITH_ONE_ENTRYPOINT.replace("127.0.0.1", "0.0.0.0"), "every address"),
+        (TRAEFIK_WITH_ONE_ENTRYPOINT.replace("127.0.0.1", "[::]"), "every address"),
+    ],
+    ids=[
+        "no entrypoint",
+        "no sections",
+        "address already moved",
+        "no constraint",
+        "found twice",
+        "no host",
+        "every IPv4 address",
+        "every IPv6 address",
+    ],
+)
+def test_a_traefik_text_the_move_cannot_follow_is_refused_with_its_reason(text, reason):
+    with pytest.raises(edge_copy.ProbeFailed, match=reason):
+        edge_copy.beside_the_live_edge(text, PROJECT)
+
+
+@pytest.mark.parametrize(
+    ("resolved", "reason"),
+    [('{"name": "edge", "networks": {}}', "not edge-some-probe"), ("{}", "names no project")],
+    ids=["another project", "no project"],
+)
+def test_a_guarded_call_that_resolves_no_or_another_project_is_refused(
+    monkeypatch, resolved, reason
+):
+    monkeypatch.setattr(edge_copy, "live_networks", set)
+    guard = edge_copy.NetworkGuard(PROJECT, lambda command: resolved)
+
+    with pytest.raises(edge_copy.ProbeFailed, match=reason):
+        guard.expect(["docker", "compose"])
+
+
+@pytest.mark.parametrize(
+    ("arguments", "resolved"),
+    [
+        (["--profile", "probe", "up", "--detach", "hello"], [["--profile", "probe"]]),
+        (["down", "--volumes"], [[]]),
+        (["--profile", "*", "ps", "--all"], []),
+    ],
+    ids=["up with its profile", "down with none", "ps"],
+)
+def test_the_guard_resolves_the_files_and_profiles_a_compose_call_runs_with(
+    monkeypatch, arguments, resolved
+):
+    monkeypatch.setattr(edge_copy, "live_networks", set)
+    prefix = edge_copy.copy_compose_prefix(Path("copy"))
+    seen = []
+    guard = edge_copy.NetworkGuard(
+        PROJECT, lambda command: seen.append(command) or json.dumps({"name": PROJECT})
+    )
+
+    runs = edge_copy.guarded_compose(Path("copy"), guard, arguments)
+
+    assert seen == [[*prefix, *options, "config", "--format", "json"] for options in resolved]
+    command = ["docker", *runs]
+    assert command == [*prefix, *arguments]
 
 
 OCCUPIED = ["172.31.250.0/24", "172.31.251.0/24", "10.0.0.0/8"]
