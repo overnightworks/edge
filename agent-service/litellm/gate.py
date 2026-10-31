@@ -79,7 +79,7 @@ def _shared_key(credential_file: Path) -> str | None:
         )
     except (OSError, ValueError, RecursionError):
         return None
-    if not isinstance(document, dict) or not document.keys() <= CREDENTIAL_FIELDS:
+    if not isinstance(document, dict) or document.keys() - CREDENTIAL_FIELDS:
         return None
     app_keys = document.get("app_keys", {})
     if not isinstance(app_keys, dict) or not all(map(_is_credential, app_keys.values())):
