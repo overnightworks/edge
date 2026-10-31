@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 import pytest
 import yaml
 
-from hal.stack import appkit_step, catalog, compose, unit_plans
+from hal.stack import appkit_step, catalog, compose, legal_section, unit_plans
 from hal.stack.realm import reconcile
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -170,7 +170,8 @@ def test_keycloaks_gzip_cache_is_a_tmpfs_owned_by_its_user_so_a_restart_empties_
 
 
 def theme_properties(path: Path) -> dict[str, str]:
-    lines = [line for line in path.read_text().splitlines() if line and not line.startswith("#")]
+    text = path.read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines() if line and not line.startswith("#")]
     return dict(line.split("=", 1) for line in lines)
 
 
@@ -469,6 +470,26 @@ def test_the_back_channel_cell_keeps_the_client_secret_out_of_the_exec_arguments
     ((arguments, stdin),) = calls
     assert secret not in " ".join(arguments)
     assert json.loads(stdin)["client_secret"] == secret
+
+
+@pytest.mark.parametrize("locale", ["de", "en"])
+def test_the_terms_page_of_the_login_links_the_legal_units_terms_page_on_the_catalogs_zone(locale):
+    """N8: Keycloak shows a title and a link, never a copy of the terms."""
+    zone = yaml.safe_load((REPOSITORY / "fleet.yaml").read_text())["cloudflare"]["zone"]
+    terms = next(page for page in legal_section.PAGES if "bedingungen" in page)
+    messages = theme_properties(
+        REPOSITORY / f"keycloak/themes/hallucinai/login/messages/messages_{locale}.properties"
+    )
+
+    assert re.findall(r'href="([^"]*)"', messages["termsText"]) == [f"https://{zone}/{terms}"]
+    assert messages["termsTitle"]
+
+
+def test_every_required_action_the_realm_declares_states_its_priority():
+    """config-cli writes 0 for a missing priority, so an unstated one would reorder the actions."""
+    realm = yaml.safe_load((REPOSITORY / "keycloak/realm.yaml").read_text())
+
+    assert all("priority" in action for action in realm["requiredActions"])
 
 
 # An SVG's xmlns names a namespace; no browser fetches it.
