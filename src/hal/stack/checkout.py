@@ -17,8 +17,9 @@ transfer profile, which keeps the global configuration for the operator's creden
 refuses a URL that carries a password and never prompts. From the fetch on, the fetched sha is
 pinned: the comparison with HEAD is read against it. The fetch writes only objects, FETCH_HEAD and
 `origin/main`; HEAD, the index and the tree stay as they are. Only `hal update` moves HEAD, with the
-merge profile: the isolation of the local profile, no kill timeout, since a killed merge could leave
-a half-updated tree. A credential is never printed: whatever stands before `@` in a URL is redacted.
+merge profile: the isolation of the local profile, in a session of its own so that nothing sent to
+the terminal's session reaches it, and no kill timeout, since a killed merge could leave a
+half-updated tree. A credential is never printed: whatever stands before `@` in a URL is redacted.
 """
 
 import contextlib
@@ -58,29 +59,28 @@ ORIGIN_MAIN = f"refs/remotes/{_ORIGIN}/{MAIN}"  # origin's `main` as the last fe
 class Profile(Enum):
     """LOCAL for every step but a fetch: no global or system configuration. TRANSFER for a fetch
     (S2.4b): the global configuration stays, for the operator's credential helper. MERGE for the
-    fast-forward of `hal update`: LOCAL's isolation and no timeout."""
+    fast-forward of `hal update`: LOCAL's isolation, a session of its own and no timeout."""
 
     LOCAL = "local"
     TRANSFER = "transfer"
     MERGE = "merge"
 
 
+_LOCAL_ENVIRONMENT = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+_LOCAL_ARGUMENTS = (
+    "-c", f"core.excludesFile={os.devnull}",
+    "-c", f"core.attributesFile={os.devnull}",
+)  # fmt: skip
 _PROFILE_ENVIRONMENT = {
-    Profile.LOCAL: {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+    Profile.LOCAL: _LOCAL_ENVIRONMENT,
     Profile.TRANSFER: {},
-    Profile.MERGE: {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+    Profile.MERGE: _LOCAL_ENVIRONMENT,
 }
 _PROFILE_ARGUMENTS = {
-    Profile.LOCAL: (
-        "-c", f"core.excludesFile={os.devnull}",
-        "-c", f"core.attributesFile={os.devnull}",
-    ),
+    Profile.LOCAL: _LOCAL_ARGUMENTS,
     Profile.TRANSFER: ("-c", "transfer.credentialsInUrl=die"),
-    Profile.MERGE: (
-        "-c", f"core.excludesFile={os.devnull}",
-        "-c", f"core.attributesFile={os.devnull}",
-    ),
-}  # fmt: skip
+    Profile.MERGE: _LOCAL_ARGUMENTS,
+}
 TIMEOUT_SECONDS: dict[Profile, float | None] = {
     Profile.LOCAL: 30,
     Profile.TRANSFER: 120,
@@ -132,16 +132,22 @@ def run_git(
     (#98 rule 2)."""
     command = ["git", "--no-pager", "-C", str(tree), *_ISOLATION, *_PROFILE_ARGUMENTS[profile],
                *arguments]  # fmt: skip
-    return run_in_own_group(command, git_environment(os.environ, profile), TIMEOUT_SECONDS[profile])
+    environment = git_environment(os.environ, profile)
+    own_session = profile is Profile.MERGE
+    return run_in_own_group(command, environment, TIMEOUT_SECONDS[profile], own_session=own_session)
 
 
 def run_in_own_group(
-    command: Sequence[str], environment: Mapping[str, str], timeout: float | None
+    command: Sequence[str],
+    environment: Mapping[str, str],
+    timeout: float | None,
+    *,
+    own_session: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
-    """`command` in its own process group with no stdin and its output captured; a call that does
-    not finish within `timeout` (None: never), or an exception while it waits, ends with the whole
-    group killed and every pipe read to its end before the exception goes on. Raises OSError when
-    it cannot start."""
+    """`command` in its own process group, or with `own_session` in a session of its own that it
+    leads, with no stdin and its output captured; a call that does not finish within `timeout`
+    (None: never), or an exception while it waits, ends with the whole group killed and every pipe
+    read to its end before the exception goes on. Raises OSError when it cannot start."""
     with subprocess.Popen(
         command,
         env=environment,
@@ -149,7 +155,8 @@ def run_in_own_group(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         close_fds=True,
-        process_group=0,
+        start_new_session=own_session,
+        process_group=None if own_session else 0,
     ) as child:
         try:
             stdout, stderr = child.communicate(timeout=timeout)

@@ -3,7 +3,7 @@ the questions about the waiting commits and the process-group runner both git an
 on real git in `tmp_path`."""
 
 import os
-import stat
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from support.git_support import (
     subjects,
     with_origin,
 )
+from support.process_support import is_gone
 
 from hal.stack import checkout
 
@@ -43,25 +44,28 @@ def git(main_tree: Path) -> checkout.Git:
     return checkout.Git(main_tree)
 
 
+@pytest.mark.parametrize(
+    "source", ["repository core.hooksPath", ".git/hooks", "global core.hooksPath"]
+)
 def test_a_merge_moves_head_index_and_tree_to_the_pinned_sha_and_runs_no_hook(
-    git, main_tree, origin, tmp_path
+    git, main_tree, origin, tmp_path, source
 ):
-    """M1: hooks of every kind are configured, a positive control shows they would run."""
-    hooks = tmp_path / "hooks"
-    hooks.mkdir()
-    sentinel = tmp_path / "hook-ran"
-    for name in ("post-merge", "reference-transaction", "post-checkout"):
-        hook = hooks / name
-        hook.write_text(f"#!/bin/sh\necho {name} >> {sentinel}\n")
-        hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
-    plain_git(main_tree, "config", "--global", "core.hooksPath", str(hooks))
+    """M1: a hook from each source runs in a plain merge of a copy of the checkout (the positive
+    control) and does not run in the merge."""
     tip = advance(origin, (b"waiting", {b"README.md": b"new\n"}))
     plain_git(main_tree, "fetch", "--quiet", "origin")
-    control = tmp_path / "control"
-    plain_git(tmp_path, "clone", "--quiet", main_tree.as_uri(), str(control))
-    plain_git(control, "fetch", "--quiet", origin.as_uri(), "main")
+    sentinel = tmp_path / "hook-ran"
+    hooks = main_tree / ".git" / "hooks" if source == ".git/hooks" else tmp_path / "hooks"
+    hooks.mkdir(exist_ok=True)
+    for name in ("post-merge", "reference-transaction"):
+        (hooks / name).write_text(f"#!/bin/sh\necho {name} >> {sentinel}\n")
+        (hooks / name).chmod(0o755)
+    if source != ".git/hooks":
+        scope = "--global" if source.startswith("global") else "--local"
+        plain_git(main_tree, "config", scope, "core.hooksPath", str(hooks))
+    control = shutil.copytree(main_tree, tmp_path / "control", symlinks=True)
     plain_git(control, "merge", "--quiet", "--ff-only", tip)
-    assert sentinel.exists(), "the positive control: a plain merge runs the hooks"
+    assert sentinel.exists(), "the positive control: a plain merge runs the hook"
     sentinel.unlink()
 
     git.merge_fast_forward(tip)
@@ -153,6 +157,31 @@ def test_a_call_that_does_not_finish_ends_with_its_whole_group_killed(tmp_path):
     with pytest.raises(subprocess.TimeoutExpired):
         checkout.run_in_own_group(["sh", "-c", script], dict(os.environ), 0.5)
 
-    child = int(pidfile.read_text())
-    with pytest.raises(ProcessLookupError):
-        os.kill(child, 0)
+    assert is_gone(int(pidfile.read_text()))
+
+
+SESSION_GIT = """#!/bin/sh
+ps -o pid=,pgid=,sid= -p $$ > "$IDS_LOG"
+exec "$REAL_GIT" "$@"
+"""
+
+
+@pytest.mark.parametrize("profile", list(checkout.Profile), ids=lambda profile: profile.name)
+def test_every_git_call_leads_its_own_group_and_only_the_merge_its_own_session(
+    main_tree, tmp_path, monkeypatch, profile
+):
+    """M4's premise: a terminal's Ctrl-C reaches no git call; the merge also leaves the terminal's
+    session, so nothing sent to that session reaches a merge that must run to its end."""
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "git").write_text(SESSION_GIT)
+    (shim / "git").chmod(0o755)
+    monkeypatch.setenv("REAL_GIT", shutil.which("git"))
+    monkeypatch.setenv("IDS_LOG", str(tmp_path / "ids"))
+    monkeypatch.setenv("PATH", f"{shim}{os.pathsep}{os.environ['PATH']}")
+
+    checkout.run_git(main_tree, ["status"], profile)
+
+    pid, group, session = (tmp_path / "ids").read_text().split()
+    assert group == pid
+    assert (session == pid) == (profile is checkout.Profile.MERGE)
